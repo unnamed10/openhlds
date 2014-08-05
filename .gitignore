@@ -1,6 +1,6 @@
 # game files
-.\cstrike\*
-.\valve\*
+valve/
+cstrike/
 
 # fpc
 *.cfp
