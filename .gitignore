@@ -1,0 +1,37 @@
+# game files
+.\cstrike\*
+.\valve\*
+
+# fpc
+*.cfp
+*.o
+*.pp
+*.ppu
+
+*.res
+
+# libimp
+*.a
+
+# delphi
+*.~*
+*.dcu
+*.dof
+
+*.cfg
+
+# local tracking
+issues.*
+outdated*.*
+
+oldfilters.txt
+
+# batch compiling presets
+deploy.bat
+d27015.bat
+d27017.bat
+r27015.bat
+r27017.bat
+
+# old backups
+openhlds*.zip
