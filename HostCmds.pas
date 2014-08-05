@@ -13,7 +13,7 @@ procedure Cmd_Maxplayers_F; cdecl;
 
 implementation
 
-uses Common, Console, FileSys, GameLib, Host, Info, MsgBuf, Network, Server, SVAuth, SVClient, SVEdict, SVExport;
+uses Common, Console, FileSys, GameLib, Host, Info, MathLib, MsgBuf, Network, Server, SVAuth, SVClient, SVEdict, SVExport, SVWorld;
 
 procedure Host_KillServer_F; cdecl;
 begin
@@ -602,6 +602,81 @@ if CmdSource = csServer then
  end;
 end;
 
+procedure Host_God_F; cdecl;
+begin
+if (CmdSource = csClient) and AllowCheats then
+ begin
+  SVPlayer.V.Flags := SVPlayer.V.Flags xor FL_GODMODE;
+  if (SVPlayer.V.Flags and FL_GODMODE) > 0 then
+   SV_ClientPrint('god: God mode is now enabled.')
+  else
+   SV_ClientPrint('god: God mode is now disabled.');
+ end;
+end;
+
+procedure Host_Notarget_F; cdecl;
+begin
+if (CmdSource = csClient) and AllowCheats then
+ begin
+  SVPlayer.V.Flags := SVPlayer.V.Flags xor FL_NOTARGET;
+  if (SVPlayer.V.Flags and FL_NOTARGET) > 0 then
+   SV_ClientPrint('notarget: No-targeting mode is now enabled.')
+  else
+   SV_ClientPrint('notarget: No-targeting mode is now disabled.');
+ end;
+end;
+
+function FindPassableSpace(var E: TEdict; const Angles: TVec3; Dir: Single): Boolean;
+var
+ I: UInt;
+begin
+for I := 1 to 32 do
+ begin
+  VectorMA(E.V.Origin, Dir, Angles, E.V.Origin);
+  if SV_TestEntityPosition(E) = nil then
+   begin
+    E.V.OldOrigin := E.V.Origin;
+    Result := True;
+    Exit;
+   end;
+ end;
+
+Result := False;
+end;
+
+procedure Host_Noclip_F; cdecl;
+var
+ Fwd, Right, Up: TVec3;
+begin
+if (CmdSource = csClient) and AllowCheats then
+ if SVPlayer.V.MoveType = MOVETYPE_NOCLIP then
+  begin
+   SVPlayer.V.MoveType := MOVETYPE_WALK;
+   SVPlayer.V.OldOrigin := SVPlayer.V.Origin;
+
+   if SV_TestEntityPosition(SVPlayer^) <> nil then
+    begin
+     AngleVectors(SVPlayer.V.VAngle, @Fwd, @Right, @Up);
+     if not FindPassableSpace(SVPlayer^, Fwd, 1) and
+        not FindPassableSpace(SVPlayer^, Fwd, -1) and
+        not FindPassableSpace(SVPlayer^, Right, 1) and
+        not FindPassableSpace(SVPlayer^, Right, -1) and
+        not FindPassableSpace(SVPlayer^, Up, 1) and
+        not FindPassableSpace(SVPlayer^, Up, -1) then
+      SV_ClientPrint('noclip: Can''t find the world.');
+
+     SVPlayer.V.Origin := SVPlayer.V.OldOrigin;
+    end;
+
+   SV_ClientPrint('noclip: No-clipping mode is now disabled.');
+  end
+ else
+  begin
+   SVPlayer.V.MoveType := MOVETYPE_NOCLIP;
+   SV_ClientPrint('noclip: No-clipping mode is now enabled.');
+  end;
+end;
+
 procedure Host_InitCommands;
 begin
 Cmd_AddCommand('shutdownserver', Host_KillServer_F);
@@ -623,6 +698,11 @@ Cmd_AddCommand('pause', Host_TogglePause_F);
 Cmd_AddCommand('kick', Host_Kick_F);
 Cmd_AddCommand('ping', Host_Ping_F);
 Cmd_AddCommand('setinfo', Host_SetInfo_F);
+
+Cmd_AddCommand('god', Host_God_F);
+Cmd_AddCommand('notarget', Host_Notarget_F);
+Cmd_AddCommand('noclip', Host_Noclip_F);
+
 
 Cmd_AddCommand('writefps', Host_WriteFPS_F);
 

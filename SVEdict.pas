@@ -466,7 +466,7 @@ for I := 1 to SV.NumEdicts - 1 do
     if (not P.Active and not P.Spawned) or P.HLTV then
      Continue;
    end;
-
+   
   if InPack >= MAX_PACKET_ENTITIES then
    begin
     DPrint('Too many entities in visible packet list.');

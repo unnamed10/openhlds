@@ -56,8 +56,6 @@ uses
 
 // SV_ClientPrint: #10
 
-var
- I: Single;
 begin
 DecimalSeparator := '.';
 Writeln;
