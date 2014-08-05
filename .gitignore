@@ -35,3 +35,8 @@ r27017.bat
 
 # old backups
 openhlds*.zip
+
+# binaries in rootdir
+HLDS.exe
+bzip2.dll
+libbz2.so.1
