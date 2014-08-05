@@ -1,0 +1,16 @@
+{$DEFINE Debug}
+{.$DEFINE Release}
+
+
+{$DEFINE CPUASM}
+{$DEFINE ENDIAN_AWARE}
+
+
+{$I Default.inc}
+
+
+{$IFDEF MSWINDOWS}
+ {$IMAGEBASE $600000}
+{$ENDIF}
+
+//{$DEFINE I386COMPAT} // 80386 compatibility
