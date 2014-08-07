@@ -45,7 +45,7 @@ This includes:
 - some clipping issue on de_nuke (CT spawn), possibly a misaligned clipping brush, possibly not even a server-side bug
 
 
-If you manage to find a bug, you can make an issue report. Go to "Issues" (https://github.com/unnamed10/openhlds/issues/new), press "New Issue" and enter the information about the bug: some background information, steps to reproduce, server console output. Every piece of information will be greatly appreciated.
+If you manage to find a bug, you can make an issue report. Go to "[Issues](https://github.com/unnamed10/openhlds/issues/new)", press "New Issue" and enter the information about the bug: some background information, steps to reproduce, server console output. Every piece of information will be greatly appreciated.
 
 
 ##License
