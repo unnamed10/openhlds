@@ -39,6 +39,14 @@ This includes:
 - mp_autokick ("kick" command required)
 - a single crash on roundend while using the latest Counter-Strike gamedll, cause is unknown
 
+- divbyzero at SV_ExtractFromUserInfo (thanks to some russian guy). Fixed, will commit later. The cause is the new cvar sv_defaultupdaterate that I forgot to register.
+- the first fullupdate always being blocked if the filter is active. Fixed, the filter is now greatly simpified.
+- player names can be seen in the scoreboard even when the player has already disconnected
+- some clipping issue on de_nuke (CT spawn), possibly a misaligned clipping brush, possibly not even a server-side bug
+
+
+If you manage to find a bug, you can make an issue report. Go to "Issues" (https://github.com/unnamed10/openhlds/issues/new), press "New Issue" and enter the information about the bug: some background information, steps to reproduce, server console output. Every piece of information will be greatly appreciated.
+
 
 ##License
 No license as for now.
