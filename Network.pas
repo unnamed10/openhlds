@@ -163,7 +163,7 @@ var
  // 1 - normal packets only
  // 2 - files only
  // 3 - packets & files
- net_compress: TCVar = (Name: 'net_compress'; Data: '3');  // disabled, bzip2 lib has some problems (or not)
+ net_compress: TCVar = (Name: 'net_compress'; Data: '3');
 
 function NET_LastError: Int;
 begin
@@ -655,7 +655,7 @@ if not AllowCheats and (fakelag.Value <> 0) then
   FakeLagTime := 0;
  end
 else
- if fakelag.Value <> FakeLagTime then
+ if AllowCheats and (fakelag.Value <> FakeLagTime) then
   begin
    D := fakelag.Value - FakeLagTime;
    SD := X * 200;
@@ -1498,12 +1498,13 @@ var
 begin
 Cmd_AddCommand('maxplayers', @Cmd_Maxplayers_F);
 
+CVar_RegisterVariable(clockwindow);
+
 CVar_RegisterVariable(net_address);
 CVar_RegisterVariable(ipname);
 CVar_RegisterVariable(ip_hostport);
 CVar_RegisterVariable(hostport);
 CVar_RegisterVariable(defport);
-CVar_RegisterVariable(clockwindow);
 CVar_RegisterVariable(ipx_hostport);
 CVar_RegisterVariable(fakelag);
 CVar_RegisterVariable(fakeloss);

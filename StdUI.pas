@@ -82,7 +82,6 @@ procedure WriteStats;
 var
  BufferInfo: TConsoleScreenBufferInfo;
  Pos: TCoord;
- Players: UInt;
  IntBuf1, IntBuf2, IntBuf3, ExpandBuf1, ExpandBuf2, ExpandBuf3: array[1..32] of LChar;
  Time, Hour, Min, Sec: UInt;
 begin
@@ -95,7 +94,6 @@ SetConsoleCursorPosition(TTextRec(Output).Handle, Pos);
 SetBkColor(5);
 SetTextColor(15);
 
-SV_CountPlayers(Players);
 Time := Trunc(RealTime);
 Sec := Time mod 60;
 Time := Time div 60;
@@ -103,7 +101,7 @@ Min := Time mod 60;
 Time := Time div 60;
 Hour := Time;
 
-Write('Server: ', Players, '/', SVS.MaxClients, ' ',
+Write('Server: ', SV_CountPlayers, '/', SVS.MaxClients, ' ',
       ExpandString(IntToStr(Hour, IntBuf1, SizeOf(IntBuf1)), @ExpandBuf1, SizeOf(ExpandBuf1), 2), ':',
       ExpandString(IntToStr(Min, IntBuf2, SizeOf(IntBuf2)), @ExpandBuf2, SizeOf(ExpandBuf2), 2), ':',
       ExpandString(IntToStr(Sec, IntBuf3, SizeOf(IntBuf3)), @ExpandBuf3, SizeOf(ExpandBuf3), 2));

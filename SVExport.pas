@@ -211,7 +211,7 @@ var
  MsgData: array[1..512] of Byte;
  MsgBuffer: TSizeBuf = (Name: 'MessageBegin/End'; AllowOverflow: []; Data: @MsgData; MaxSize: SizeOf(MsgData); CurrentSize: 0);
 
- LastSpawnCount: Int32;
+ LastSpawnCount: UInt32 = 0;
 
 function PF_PrecacheModel(Name: PLChar): UInt32; cdecl;
 var
@@ -1934,11 +1934,15 @@ for I := 0 to SVS.MaxClients - 1 do
     C.Connected := True;
     C.UserMsgReady := False;
 
+    C.ConnectSeq := 0;
+    C.SpawnSeq := 0;
+
     C.FakeClient := True;
     C.HLTV := False;
-    C.Protocol := 0;    
+    C.Protocol := 0;
+    C.SendEntsTime := 0;     
     C.SendResTime := 0;
-    C.SendEntsTime := 0;
+    C.FullUpdateTime := 0;
     C.UserID := CurrentUserID;
     Inc(CurrentUserID);
 
@@ -2310,7 +2314,7 @@ if (I >= 1) and (I <= SVS.MaxClients) then
  Result := Int32(SVS.Clients[I - 1].LW)
 else
  begin
-  Print(['PF_CanSkipPlayer: Bad client index (', I, ').']);
+  Print(['PF_CanSkipPlayer: Entity is not a client (index #', I, ').']);
   Result := 0;
  end;
 end;

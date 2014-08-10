@@ -603,7 +603,7 @@ end;
 
 procedure Cache_Flush;
 begin
-if Server.AllowCheats or (SVS.MaxClients <= 1) then
+if AllowCheats or (SVS.MaxClients <= 1) then
  Cache_Force_Flush
 else
  Print('Cache_Flush: Server must enable sv_cheats to activate the flush command in multiplayer games.');

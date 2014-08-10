@@ -343,8 +343,6 @@ if CmdSource = csServer then
 end;
 
 procedure Host_Map(Name: PLChar; Save: Boolean);
-var
- P: ^PUserMsg;
 begin
 Host_ShutdownServer(False);
 if not Save then
@@ -373,15 +371,7 @@ if SV_SpawnServer(Name, nil) then
      Exit;
    end;
 
-  if NewUserMsgs <> nil then
-   begin
-    P := @UserMsgs;
-    while P^ <> nil do
-     P := @(P^).Prev;
-
-    P^ := NewUserMsgs;
-    NewUserMsgs := nil;
-   end;
+  SV_LinkNewUserMsgs;
  end;
 end;
 

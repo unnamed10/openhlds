@@ -1233,6 +1233,90 @@ begin
 Result := CmdBase;
 end;
 
+procedure Cmd_Find; cdecl;
+var
+ ST: set of (stCVar, stCmd, stAlias);
+ Exact: Boolean;
+ I, Argc: UInt;
+ S: PLChar;
+ P: Pointer;
+begin
+Argc := Cmd_Argc;
+if Argc = 1 then
+ Print('Usage: find <substring> [cvar | cmd | alias] [exact]')
+else
+ begin
+  ST := [];
+  Exact := False;
+
+  for I := 2 to Argc - 1 do
+   begin
+    S := Cmd_Argv(I);
+    if StrIComp(S, 'cvar') = 0 then
+     Include(ST, stCVar)
+    else
+     if StrIComp(S, 'cmd') = 0 then
+      Include(ST, stCmd)
+     else
+      if StrIComp(S, 'alias') = 0 then
+       Include(ST, stAlias)
+      else
+       if StrIComp(S, 'exact') = 0 then
+        Exact := True;
+   end;
+
+  if ST = [] then
+   ST := [stCVar, stCmd, stAlias];
+
+  S := Cmd_Argv(1);
+  if S^ = #0 then
+   Print('find: Bad substring.')
+  else
+   begin
+    if stCVar in ST then
+     begin
+      Print('Searching cvars...');
+      P := CVarBase;
+      while P <> nil do
+       begin
+        if (Exact and ((StrComp(PCVar(P).Name, S) = 0) or (StrComp(PCVar(P).Data, S) = 0))) or
+           (not Exact and ((StrPos(PCVar(P).Name, S) <> nil) or (StrPos(PCVar(P).Data, S) <> nil))) then
+         Print([' found: ', PCVar(P).Name, ' = ', PCVar(P).Data]);
+        P := PCVar(P).Next;
+       end;
+     end;
+
+    if stCmd in ST then
+     begin
+      Print('Searching commands...');
+      P := CmdBase;
+      while P <> nil do
+       begin
+        if (Exact and (StrComp(PCommand(P).Name, S) = 0)) or (not Exact and (StrPos(PCommand(P).Name, S) <> nil)) then
+         Print([' found: ', PCommand(P).Name]);
+        P := PCommand(P).Next;
+       end;
+     end;
+
+    if stAlias in ST then
+     begin
+      Print('Searching aliases...');
+      P := AliasBase;
+
+      while P <> nil do
+       begin
+        if (Exact and ((StrComp(@PAlias(P).Name, S) = 0) or (StrComp(PAlias(P).Command, S) = 0))) or
+           (not Exact and ((StrPos(@PAlias(P).Name, S) <> nil) or (StrPos(PAlias(P).Command, S) <> nil))) then
+         Print([' found: ', PLChar(@PAlias(P).Name), ' = "', PAlias(P).Command, '"']);
+        P := PAlias(P).Next;
+       end;
+     end;
+
+    Print('Done.');
+   end;
+ end;
+end;
+
 procedure Cmd_Init;
 begin
 Cmd_AddCommand('stuffcmds', @Cmd_StuffCmds);
@@ -1242,6 +1326,7 @@ Cmd_AddCommand('alias', @Cmd_Alias);
 Cmd_AddCommand('cmd', @Cmd_ForwardToServer);
 Cmd_AddCommand('wait', @Cmd_Wait);
 Cmd_AddCommand('cmdlist', @Cmd_CmdList);
+Cmd_AddCommand('find', @Cmd_Find);
 LastPartialCmd[Low(LastPartialCmd)] := #0;
 end;
 

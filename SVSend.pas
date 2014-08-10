@@ -6,6 +6,8 @@ interface
 
 uses Default, SDK;
 
+procedure SV_LinkNewUserMsgs;
+
 procedure SV_StartParticle(const Origin, Direction: TVec3; Color, Count: UInt);
 procedure SV_StartSound(SkipSelf: Boolean; const E: TEdict; Channel: Int; Sample: PLChar; Volume: Int; Attn: Single; Flags: UInt; Pitch: Int);
 function SV_BuildSoundMsg(const E: TEdict; Channel: Int; Sample: PLChar; Volume: Int; Attn: Single; Flags: UInt; Pitch: Int; const Origin: TVec3; var SB: TSizeBuf): Boolean;
@@ -30,6 +32,21 @@ uses Common, Console, Edict, Host, Memory, Model, MsgBuf, Network, Server, SysMa
 var
  HashStringCollisions: UInt = 0;
  PacketSuppressed: UInt = 0;
+
+procedure SV_LinkNewUserMsgs;
+var
+ P: ^PUserMsg;
+begin
+if NewUserMsgs <> nil then
+ begin
+  P := @UserMsgs;
+  while P^ <> nil do
+   P := @(P^).Prev;
+
+  P^ := NewUserMsgs;
+  NewUserMsgs := nil;
+ end;
+end;
 
 procedure SV_StartParticle(const Origin, Direction: TVec3; Color, Count: UInt);
 var

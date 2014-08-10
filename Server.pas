@@ -53,7 +53,6 @@ var
 
  sv_cheats: TCVar = (Name: 'sv_cheats'; Data: '0'; Flags: [FCVAR_SERVER]);
 
- sv_stats: TCVar = (Name: 'sv_stats'; Data: '1');
  sv_version: TCVar = (Name: 'sv_version'; Data: ''; Flags: [FCVAR_SERVER]);
 
  // custom
@@ -63,6 +62,7 @@ var
 
  sv_sendentsinterval: TCVar = (Name: 'sv_sendentsinterval'; Data: '0.75');
  sv_sendresinterval: TCVar = (Name: 'sv_sendresinterval'; Data: '1.35');
+ sv_fullupdateinterval: TCVar = (Name: 'sv_fullupdateinterval'; Data: '1.1');
 
  NullString: PLChar = #0;
 
@@ -133,12 +133,12 @@ var
   InitGameDLL: Boolean; // +0, confirmed
   Clients: ^TClientArray; // +4, confirmed
   MaxClients, MaxClientsLimit: UInt32; // +8, +12; confirmed
-  SpawnCount: Int32; // +16, confirmed
+  SpawnCount: UInt32; // +16, confirmed
   ServerFlags: UInt32; // +20
   LogEnabled: Boolean; // +24
   LogToAddr: Boolean; // +28
   LogAddr: TNetAdr; // +32
-  LogFile: TFile; // +36
+  LogFile: TFile; // +52
 
   Stats: record
    NextStatClear, NextStatUpdate: Double;
@@ -152,6 +152,8 @@ var
    NumDrops: UInt32;
    AccumTimePlaying, AvgTimePlaying: Single;
    AccumLatency, AvgLatency: Single;
+
+   TimesFull, TimesEmpty: UInt32;
   end;
 
   Secure: UInt32;
@@ -364,7 +366,7 @@ var
 
 implementation
 
-uses Common, Console, Edict, Encode, GameLib, Host, HPAK, Memory, Model, Network, PMove, Resource, SVClient, SVCmds, SVDelta, SVEdict, SVMove, SVPacket, SVPhys, SVRcon, SVSend, SVWorld, SysArgs;
+uses Common, Console, Edict, Encode, GameLib, Host, HPAK, Memory, Model, Network, PMove, Resource, SVClient, SVCmds, SVDelta, SVEdict, SVMain, SVMove, SVPacket, SVPhys, SVRcon, SVSend, SVWorld, SysArgs;
 
 procedure SV_ServerDeactivate;
 begin
@@ -685,7 +687,6 @@ Cmd_AddCommand('fullupdate', @SV_FullUpdate_F);
 Cmd_AddCommand('entcount', @ED_Count);
 
 // Custom
-CVar_RegisterVariable(sv_pinginterval);
 CVar_RegisterVariable(sv_allow47p);
 CVar_RegisterVariable(sv_allow48p);
 CVar_RegisterVariable(sv_maxipsessions);
@@ -695,36 +696,62 @@ CVar_RegisterVariable(max_query_ips);
 CVar_RegisterVariable(sv_enableoldqueries);
 CVar_RegisterVariable(sv_mapcycle_length);
 CVar_RegisterVariable(sv_secureflag);
-CVar_RegisterVariable(sv_cmdcheckinterval);
 CVar_RegisterVariable(sv_sendmapcrc);
-CVar_RegisterVariable(sv_filterfullupdate);
 CVar_RegisterVariable(sv_fullupdateinterval);
-CVar_RegisterVariable(sv_fullupdatemaxcmds);
 CVar_RegisterVariable(sv_sendentsinterval);
 CVar_RegisterVariable(sv_sendresinterval);
+
+
+// Resource
+CVar_RegisterVariable(sv_allowdownload);
+CVar_RegisterVariable(sv_allowupload);
+CVar_RegisterVariable(sv_uploadmax);
 CVar_RegisterVariable(sv_uploadmaxnum);
 CVar_RegisterVariable(sv_uploadmaxsingle);
 CVar_RegisterVariable(sv_uploaddecalsonly);
+CVar_RegisterVariable(sv_send_logos);
+CVar_RegisterVariable(sv_send_resources);
+
+// SVClient
+CVar_RegisterVariable(sv_defaultplayername);
+CVar_RegisterVariable(sv_use2asnameprefix);
+CVar_RegisterVariable(sv_maxupdaterate);
+CVar_RegisterVariable(sv_minupdaterate);
+CVar_RegisterVariable(sv_defaultupdaterate);
+CVar_RegisterVariable(sv_maxrate);
+CVar_RegisterVariable(sv_minrate);
+CVar_RegisterVariable(sv_defaultrate);
+CVar_RegisterVariable(sv_failuretime);
+CVar_RegisterVariable(sv_pinginterval);
+CVar_RegisterVariable(sv_updatetime);
+
+// SVEdict
+CVar_RegisterVariable(sv_instancedbaseline);
+
+// SVMain custom
+CVar_RegisterVariable(sv_stats);
+CVar_RegisterVariable(sv_statsinterval);
+CVar_RegisterVariable(sv_statsmax);
+
+// SVMove
+CVar_RegisterVariable(sv_maxunlag);
+CVar_RegisterVariable(sv_unlag);
+CVar_RegisterVariable(sv_unlagpush);
+CVar_RegisterVariable(sv_unlagsamples);
+CVar_RegisterVariable(sv_cmdcheckinterval);
+
 
 
 // Default
 
-CVar_RegisterVariable(sv_failuretime);
 CVar_RegisterVariable(sv_voicecodec);
 CVar_RegisterVariable(sv_voiceenable);
 CVar_RegisterVariable(sv_voicequality);
 CVar_RegisterVariable(rcon_password);
 CVar_RegisterVariable(mp_consistency);
-CVar_RegisterVariable(sv_instancedbaseline);
 CVar_RegisterVariable(sv_contact);
 CVar_RegisterVariable(sv_region);
-CVar_RegisterVariable(sv_unlag);
-CVar_RegisterVariable(sv_maxunlag);
-CVar_RegisterVariable(sv_unlagpush);
-CVar_RegisterVariable(sv_unlagsamples);
 CVar_RegisterVariable(sv_filterban);
-CVar_RegisterVariable(sv_maxupdaterate);
-CVar_RegisterVariable(sv_minupdaterate);
 CVar_RegisterVariable(sv_logrelay);
 CVar_RegisterVariable(sv_lan);
 if PF_IsDedicatedServer > 0 then
@@ -774,11 +801,7 @@ if COM_CheckParm('-dev') > 0 then
  CVar_DirectSet(sv_cheats, '1');
 
 CVar_RegisterVariable(sv_spectatormaxspeed);
-CVar_RegisterVariable(sv_allowdownload);
-CVar_RegisterVariable(sv_allowupload);
-CVar_RegisterVariable(sv_uploadmax);
-CVar_RegisterVariable(sv_send_logos);
-CVar_RegisterVariable(sv_send_resources);
+
 CVar_RegisterVariable(sv_logbans);
 CVar_RegisterVariable(hpk_maxsize);
 
@@ -790,9 +813,6 @@ CVar_RegisterVariable(lservercfgfile);
 CVar_RegisterVariable(logsdir);
 CVar_RegisterVariable(bannedcfgfile);
 // rcon skipped
-
-CVar_RegisterVariable(sv_minrate);
-CVar_RegisterVariable(sv_maxrate);
 
 CVar_RegisterVariable(max_queries_sec);
 CVar_RegisterVariable(max_queries_sec_global);

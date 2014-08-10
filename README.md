@@ -44,6 +44,8 @@ This includes:
 - player names can be seen in the scoreboard even when the player has already disconnected
 - some clipping issue on de_nuke (CT spawn), possibly a misaligned clipping brush, possibly not even a server-side bug
 
+- failures in HPAK unit when changing the level, fixed
+- buffer overflow exploit (server reliable buffer), fixed
 
 If you manage to find a bug, you can make an issue report. Go to "[Issues](https://github.com/unnamed10/openhlds/issues/new)", press "New Issue" and enter the information about the bug: some background information, steps to reproduce, server console output. Every piece of information will be greatly appreciated.
 

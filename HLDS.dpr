@@ -56,6 +56,8 @@ uses
 
 // SV_ClientPrint: #10
 
+// SV_WriteClientDataToMessage: weapon delta field size is 5 on some outdated clients
+
 begin
 DecimalSeparator := '.';
 Writeln;

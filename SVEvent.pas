@@ -22,7 +22,7 @@ uses Common, Console, Delta, Edict, Host, MathLib, Memory, MsgBuf, Network, Serv
 procedure EV_PlayReliableEvent(var C: TClient; Index: Int; EventIndex: UInt16; Delay: Single; const Event: TEvent);
 var
  SB: TSizeBuf;
- SBData: array[1..1024] of Byte;
+ SBData: array[1..2048] of Byte;
  OldEvent, NewEvent: TEvent;
 begin
 if not C.FakeClient then
@@ -49,10 +49,11 @@ if not C.FakeClient then
    end;
   MSG_EndBitWriting;
 
-  if SB.CurrentSize + C.Netchan.NetMessage.CurrentSize <= C.Netchan.NetMessage.MaxSize then
-   SZ_Write(C.Netchan.NetMessage, SB.Data, SB.CurrentSize)
-  else
-   Netchan_CreateFragments(C.Netchan, SB);
+  if not (FSB_OVERFLOWED in SB.AllowOverflow) then
+   if SB.CurrentSize + C.Netchan.NetMessage.CurrentSize < C.Netchan.NetMessage.MaxSize then
+    SZ_Write(C.Netchan.NetMessage, SB.Data, SB.CurrentSize)
+   else
+    Netchan_CreateFragments(C.Netchan, SB);
  end;
 end;
 
@@ -210,11 +211,11 @@ else
    begin
     for I := 1 to MAX_EVENTS - 1 do
      begin
-      E := @SV.PrecachedEvents[I];            
+      E := @SV.PrecachedEvents[I];
       if E.Name = nil then
        begin
         if EventType <> 1 then
-         Host_Error('EV_Precache: Only file type #1 is supported.');
+         Host_Error('EV_Precache: The event type must be "1".');
 
         StrLCopy(@Buf, Name, SizeOf(Buf) - 1);
         COM_FixSlashes(@Buf);
@@ -263,7 +264,7 @@ for I := 1 to MAX_EVENTS - 1 do
  begin
   E := @SV.PrecachedEvents[I];
   if E.Name = nil then
-   Break
+   Exit
   else
    begin
     E.Name := nil;

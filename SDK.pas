@@ -2458,17 +2458,20 @@ type
 
 // clients
 const
- MAX_USERINFO_STRING = 256;
- MIN_CLIENT_RATE = 1000;
- MAX_CLIENT_RATE = 20000;
- AVG_CLIENT_RATE = 9999; // if not specified
+ MAX_USERINFO_STRING = 256; // client-side dependent
 
- MAX_PLAYER_NAME = 32;
+ MAX_PLAYER_NAME = 32; // client-side dependent
  MAX_WEAPON_DATA = 64; // writeclientdatatomessage
 
- MIN_CLIENT_UPDATERATE = 10;
+ MAX_UNLAG_SAMPLES = 16; // frames to calculate predicted origin against
 
- MAX_UNLAG_SAMPLES = 16;
+ // hardcoded limits for both client rates and server cvars.
+
+ MIN_CLIENT_RATE = 1000;
+ MAX_CLIENT_RATE = 30000;
+
+ MIN_CLIENT_UPDATERATE = 10;
+ MAX_CLIENT_UPDATERATE = 200;
 
 type
  TAuthType = (atUnknown = 0, atSteam, atValve, atHLTV);
@@ -2527,13 +2530,13 @@ type
 
  PClient = ^TClient; // 20488 W, 20200 L
  TClient = record
-  Active: Boolean; // +0, cf! ^^
-  Spawned: Boolean; // +4, cf! ^^
+  Active: Boolean; // +0, cf
+  Spawned: Boolean; // +4, cf
   SendInfo: Boolean; // +8 cf
   Connected: Boolean; // +12 cf
   HasMissingResources: Boolean; // +16 cf (need missing resources)
-  UserMsgReady: Boolean; // +20 cf! SV_New
-  SendConsistency: Boolean; // +24 cf! 
+  UserMsgReady: Boolean; // +20 cf SV_New
+  SendConsistency: Boolean; // +24 cf 
 
   Netchan: TNetchan; // +32?  124 is netmessage (92 + 32)
   ChokeCount: UInt32; // 9536 W, cf, unsigned
@@ -2579,7 +2582,7 @@ type
 
   UserInfo: array[1..MAX_USERINFO_STRING] of LChar; // 19392 W cf
   UpdateInfo: Boolean; // 19648 W cf
-  UpdateInfoTime: Single; // 19652 W   NCF!!!
+  UpdateInfoTime: Single; // 19652 W
   CDKey: array[1..64] of LChar; // +19656 cf
   NetName: array[1..32] of LChar; // 19720 W cf
   TopColor: Int32; // 19752 W cf
@@ -2602,18 +2605,20 @@ type
 
   // Custom fields
   Protocol: Byte; // for double-protocol support
+
+  // filters
   SendResTime: Double;
-  SendEntsTime: Double;  
-  
+  SendEntsTime: Double;
+  FullUpdateTime: Double;
+
+  // an experimental filter for "new" command, it restricts the command to being sent only once during the single server sequence.
+  ConnectSeq: UInt32;
+  SpawnSeq: UInt32;
+
  end;
  TClientArray = array[0..0] of TClient;
 
  TFragmentSizeFunc = function(Client: PClient): UInt32; cdecl;
-
-{const
- BadFileExt: array[1..12] of PLChar =
-  ('.cfg', '.lst', '.exe', '.vbs', '.com', '.bat', '.dll', '.ini', '.log', '.so',
-   '.dylib', '.cmd', '.gam', '.sys');}
 
 type
  PLogNode = ^TLogNode;
@@ -3087,26 +3092,33 @@ type
 
  THostParms = record
   BaseDir: PLChar;
-  P1: Int32; // not used, can be possibly removed
-  ArgCount: UInt32; // ^UInt32?
+  ArgCount: UInt;
   ArgData: ^PLChar;
   MemBase: Pointer;
-  MemSize: UInt32;
+  MemSize: UInt;
  end;
-
-
-
-
-
-
-// add descriptive text
 
 {$IFDEF MSME}
  {$MESSAGE WARN 'One of the fixed-size structures failed to pass validation check.'}
-{$ENDIF}
+ {$MESSAGE WARN 'This could usually mean that there was a change in one of these structures,'}
+ {$MESSAGE WARN 'or the compiler incorrectly assembles the type definitions.'}
+ {$MESSAGE WARN 'Compiling under a different platform or architecture can also be the cause.'}
 
-{$IFDEF MSMW}
- {$MESSAGE WARN 'One of the fixed-size structures failed to pass validation check, ignoring.'}
+ {$IFDEF FPC}
+  {$FATAL The compilation process was stopped.}
+ {$ELSE}
+  {$MESSAGE FATAL 'The compilation process was stopped.'}
+ {$ENDIF}
+{$ELSE}
+ {$IFDEF MSMW}
+  {$MESSAGE WARN 'One of the fixed-size structures failed to pass validation check.'}
+  {$MESSAGE WARN 'This could usually mean that there was a change in one of these structures,'}
+  {$MESSAGE WARN 'or the compiler incorrectly assembles the type definitions.'}
+  {$MESSAGE WARN 'Compiling under a different platform or architecture can also be the cause.'}
+
+  {$MESSAGE WARN 'However, the code that relies on these structures is expected to work fine,'}
+  {$MESSAGE WARN 'since there are no observed dependencies on game libraries or third-party components.'}
+ {$ENDIF}
 {$ENDIF}
 
 implementation

@@ -170,7 +170,7 @@ end;
 
 procedure SV_ParseDelta(var C: TClient);
 begin
-HostClient.UpdateMask := MSG_ReadByte;
+C.UpdateMask := MSG_ReadByte;
 end;
 
 end.

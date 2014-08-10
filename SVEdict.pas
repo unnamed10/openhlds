@@ -103,7 +103,7 @@ for I := 0 to MAX_MODELS - 1 do
  begin
   S := SV.PrecachedModelNames[I];
   if S = nil then
-   Break
+   Exit
   else
    if (StrIComp(S, 'models\player.mdl') = 0) or (StrIComp(S, 'models/player.mdl') = 0) then
     SVPlayerModel := I;
@@ -134,7 +134,7 @@ for I := 0 to SV.NumEdicts - 1 do
     else
      P.EntityType := ENTITY_NORMAL;
 
-    DLLFunctions.CreateBaseline(Int((I >= 1) and (UInt(I) <= SVS.MaxClients)), I, P, E^, SVPlayerModel, @PlayerMinS, @PlayerMaxS);
+    DLLFunctions.CreateBaseline(Int(SV_IsPlayerIndex(I)), I, P, E^, SVPlayerModel, @PlayerMinS, @PlayerMaxS);
     SVLastNum := I;
    end;
  end;
@@ -151,7 +151,7 @@ for I := 0 to SV.NumEdicts - 1 do
     MSG_WriteBits(I, 11);
     MSG_WriteBits(P.EntityType, 2);
 
-    if (not P.EntityType and 1) <> 0 then
+    if ((P.EntityType and ENTITY_BEAM) > 0) or (P.EntityType = 0) then
      D := CustomEntityDelta
     else
      if SV_IsPlayerIndex(I) then
@@ -372,7 +372,7 @@ while True do
 
   if DstEntNum = SrcEntNum then
    begin
-    B := ((DstPack.Ents[I].EntityType shr 1) and 1) > 0;
+    B := DstPack.Ents[I].EntityType = ENTITY_BEAM;
     SV_SetCallback(DstEntNum, False, B, @ESIndex, False, 0);
     if B then
      D := CustomEntityDelta
@@ -390,12 +390,12 @@ while True do
     begin
      SV_WriteDeltaHeader(SrcEntNum, True, False, @ESIndex, False, 0, False, 0);
      Inc(J);
-     Continue; // <- check this
+     Continue;
     end
    else
     begin
      DstEdict := EDICT_NUM(DstEntNum);
-     B := ((DstPack.Ents[I].EntityType shr 1) and 1) > 0;
+     B := DstPack.Ents[I].EntityType = ENTITY_BEAM;
      SV_SetCallback(DstEntNum, False, B, @ESIndex, SrcPack = nil, 0);
 
      Best := @SV.EntityState[DstEntNum];
@@ -473,7 +473,7 @@ for I := 1 to SV.NumEdicts - 1 do
     Break;
    end
   else
-   if DLLFunctions.AddToFullPack(ES[InPack], I, SV.Edicts[I], HostClient.Entity^, UInt(C.LW), UInt(IsPlayer), PVS) <> 0 then
+   if DLLFunctions.AddToFullPack(ES[InPack], I, SV.Edicts[I], C.Entity^, UInt(C.LW), UInt(IsPlayer), PVS) <> 0 then
     Inc(InPack);
  end;
 

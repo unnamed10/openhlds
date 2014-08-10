@@ -116,7 +116,7 @@ for I := 1 to Cmd_Argc - 1 do
     ExtInfo := True;
  end;
 
-SV_CountPlayers(Players);
+Players := SV_CountPlayers;
 
 Host_Status_PrintF(['- Server Status -']);
 if hostname.Data^ > #0 then
@@ -518,13 +518,16 @@ procedure Host_Ping_F; cdecl;
 var
  I, Num: Int;
  C: PClient;
- F: procedure(const Msg: array of const);
+
+ procedure F(const Msg: array of const);
+ begin
+  if CmdSource = csClient then
+   SV_ClientPrint(Msg, True)
+  else
+   Print(Msg);
+ end;
+
 begin
-if CmdSource = csClient then
- F := SV_ClientPrint
-else
- F := Print;
- 
 F(['Client ping times:']);
 Num := 0;
 for I := 0 to SVS.MaxClients - 1 do
@@ -546,16 +549,13 @@ end;
 procedure Host_SetInfo_F; cdecl;
 begin
 if CmdSource = csClient then
- if Cmd_Argc = 1 then
-  Info_Print(@HostClient.UserInfo)
+ if Cmd_Argc <> 3 then
+  SV_ClientPrint('Usage: setinfo [<key> <value>]')
  else
-  if Cmd_Argc <> 3 then
-   SV_ClientPrint('Usage: setinfo [<key> <value>]')
-  else
-   begin
-    Info_SetValueForKey(@HostClient.UserInfo, Cmd_Argv(1), Cmd_Argv(2), MAX_USERINFO_STRING);
-    HostClient.UpdateInfo := True;
-   end;
+  begin
+   Info_SetValueForKey(@HostClient.UserInfo, Cmd_Argv(1), Cmd_Argv(2), MAX_USERINFO_STRING);
+   HostClient.UpdateInfo := True;
+  end;
 end;
 
 procedure Host_WriteFPS_F; cdecl;
@@ -724,7 +724,6 @@ CVar_RegisterVariable(mp_logfile);
 CVar_RegisterVariable(mp_logecho);
 CVar_RegisterVariable(sv_log_onefile);
 CVar_RegisterVariable(sv_log_singleplayer);
-CVar_RegisterVariable(sv_stats);
 CVar_RegisterVariable(developer);
 CVar_RegisterVariable(deathmatch);
 CVar_RegisterVariable(coop);

@@ -85,16 +85,19 @@ if CmdSource <> csServer then
 
 if Cmd_Argc <> 3 then
  begin
-  Print('Usage: logaddress_add <ip> <port>' + LineBreak +
-        'Currently logging data to:');
+  Print('Usage: logaddress_add <ip> <port>');
 
-  I := 1;
-  P := FirstLog;
-  while P <> nil do
+  if FirstLog <> nil then
    begin
-    Print(['#', I, ': ', NET_AdrToString(P.Adr, AddrBuf, SizeOf(AddrBuf))]);
-    Inc(I);
-    P := P.Prev;
+    Print('Currently logging data to:');
+    I := 1;
+    P := FirstLog;
+    while P <> nil do
+     begin
+      Print(['#', I, ': ', NET_AdrToString(P.Adr, AddrBuf, SizeOf(AddrBuf))]);
+      Inc(I);
+      P := P.Prev;
+     end;
    end;
  end
 else
@@ -149,16 +152,19 @@ if CmdSource <> csServer then
 
 if Cmd_Argc <> 3 then
  begin
-  Print('Usage: logaddress_del <ip> <port>' + LineBreak +
-        'Currently logging data to:');
+  Print('Usage: logaddress_del <ip> <port>');
 
-  I := 1;
-  P := FirstLog;
-  while P <> nil do
+  if FirstLog <> nil then
    begin
-    Print(['#', I, ': ', NET_AdrToString(P.Adr, AddrBuf, SizeOf(AddrBuf))]);
-    Inc(I);
-    P := P.Prev;
+    Print('Currently logging data to:');
+    I := 1;
+    P := FirstLog;
+    while P <> nil do
+     begin
+      Print(['#', I, ': ', NET_AdrToString(P.Adr, AddrBuf, SizeOf(AddrBuf))]);
+      Inc(I);
+      P := P.Prev;
+     end;
    end;
  end
 else
@@ -187,7 +193,10 @@ else
           P.Next.Prev := P.Prev;
 
          if FirstLog = P then
-          FirstLog := P.Prev;
+          if P.Prev <> nil then
+           FirstLog := P.Prev
+          else
+           FirstLog := P.Next;
 
          Print(['logaddress_del: Deleted "', IP, ':', Port, '".']);
          Mem_Free(P);
@@ -241,7 +250,6 @@ procedure SV_Serverinfo_F; cdecl;
 var
  Key, Value: PLChar;
  P: PCVar;
- L: UInt;
 begin
 if CmdSource = csServer then
  if Cmd_Argc = 1 then
@@ -263,13 +271,7 @@ if CmdSource = csServer then
       Info_SetValueForKey(Info_ServerInfo, Key, Value, SizeOf(Info.ServerInfo));
       P := CVar_FindVar(Key);
       if P <> nil then
-       begin
-        Z_Free(P.Data);
-        L := StrLen(Value);
-        P.Data := Z_MAlloc(L + 1);
-        StrCopy(P.Data, Value);
-        P.Value := StrToFloatDef(P.Data, 0);
-       end;
+       CVar_DirectSet(P^, Value);
 
       SV_BroadcastCommand(['fullserverinfo "', Info_ServerInfo, '"#10']);
      end;
@@ -317,7 +319,8 @@ if CmdSource = csServer then
   Print('user: The server is not running.')
  else
   if Cmd_Argc <> 2 then
-   Print('Usage: user <username or #userid>')
+   Print('Usage: user <username or #userid>' + LineBreak +
+         'The userid should be prefixed with a "#".')
   else
    begin
     S := Cmd_Argv(1);
@@ -340,39 +343,39 @@ if CmdSource = csServer then
       if (C.Active or C.Spawned or C.Connected) and not C.FakeClient and
          (((UserID > 0) and (C.UserID = UserID)) or ((S^ > #0) and (StrComp(@C.NetName, S) = 0))) then
        begin
+        Print(['Userinfo for "', PLChar(@C.NetName), '" (#', C.UserID, '):']);
         Info_Print(@C.UserInfo);
         Exit;
        end;
      end;
 
-    Print('user: User not in server.');
+    if UserID > 0 then
+     Print(['user: Couldn''t find user #', UserID, '.'])
+    else
+     Print(['user: Couldn''t find user "', S, '".'])    
    end;
 end;
 
 procedure SV_Users_F; cdecl;
-const
- IndexPadding: array[0..10] of LChar = '    '#0#0#0#0#0#0#0;
- UserIDPadding: array[0..11] of LChar = '     '#0#0#0#0#0#0#0;
 var
  I, J: Int;
  C: PClient;
+ IntBuf, ExpandBuf: array[1..32] of LChar;
 begin
 if CmdSource = csServer then
  if not SV.Active then
   Print('users: The server is not running.')
  else
   begin
-   Print('index | userid | uniqueid | name' + LineBreak +
-         '----- | ------ | -------- | ----');
-
    J := 0;
-   for I := 1 to SVS.MaxClients do
+   for I := 0 to SVS.MaxClients - 1 do
     begin
-     C := @SVS.Clients[I - 1];
-     if (C.Active or C.Spawned or C.Connected) and not C.FakeClient and (C.NetName[Low(C.NetName)] > #0) then
+     C := @SVS.Clients[I];
+     if (C.Active or C.Spawned or C.Connected) and not C.FakeClient then
       begin
+       Print(['#', ExpandString(IntToStr(J + 1, IntBuf, SizeOf(IntBuf)), @ExpandBuf, SizeOf(ExpandBuf), 2), ': ', PLChar(@C.NetName),
+              ' (UserID: ', C.UserID, '; UniqueID: ', SV_GetClientIDString(C^), ').']);
        Inc(J);
-       Print([PLChar(@IndexPadding[Trunc(Log10(I))]), I, '   ', C.UserID, PLChar(@UserIDPadding[Trunc(Log10(C.UserID))]), '   ', SV_GetClientIDString(C^), '   ', PLChar(@C.NetName)]);
       end;
     end;
 
@@ -403,17 +406,19 @@ var
  C: PClient;
  I: Int;
 begin
-if (CmdSource = csServer) or (not HostClient.Active and HostClient.Spawned) then
+if (CmdSource = csServer) or (not HostClient.Active and HostClient.Spawned) or (HostClient.ConnectSeq = SVS.SpawnCount) then
  Exit;
 
 SB.Name := 'New Connection';
-SB.AllowOverflow := [];
+SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
 SB.Data := @SBData;
 SB.CurrentSize := 0;
 SB.MaxSize := SizeOf(SBData);
 
 HostClient.Connected := True;
 HostClient.ConnectTime := RealTime;
+HostClient.ConnectSeq := SVS.SpawnCount;
+
 SZ_Clear(HostClient.Netchan.NetMessage);
 SZ_Clear(HostClient.UnreliableMessage);
 Netchan_Clear(HostClient.Netchan);
@@ -448,8 +453,16 @@ if DLLFunctions.ClientConnect(HostClient.Entity^, @Name, @Address, @RejectReason
      SV_FullClientUpdate(C^, SB);
    end;
 
-  Netchan_CreateFragments(HostClient.Netchan, SB);
-  Netchan_FragSend(HostClient.Netchan);
+  if FSB_OVERFLOWED in SB.AllowOverflow then
+   begin
+    DPrint(['Connection buffer overflow on "', PLChar(@HostClient.NetName), '".']);
+    SV_DropClient(HostClient^, False, 'Connection buffer overflow.');
+   end
+  else
+   begin
+    Netchan_CreateFragments(HostClient.Netchan, SB);
+    Netchan_FragSend(HostClient.Netchan);
+   end;
  end
 else
  begin
@@ -474,29 +487,41 @@ if CmdSource = csClient then
  if Cmd_Argc <> 3 then
   SV_ClientPrint('Usage: spawn <seq> <crc>')
  else
-  begin
-   CRC := @HostClient.MapCRC;
-   CRC^ := StrToInt(Cmd_Argv(2));
-   COM_UnMunge2(CRC, SizeOf(CRC^), Byte(not SVS.SpawnCount));
+  if HostClient.SpawnSeq <> SVS.SpawnCount then
+   begin
+    HostClient.SpawnSeq := SVS.SpawnCount;
 
-   if StrToInt(Cmd_Argv(1)) <> SVS.SpawnCount then
-    SV_New_F
-   else
-    begin
-     SB.Name := 'Spawning';
-     SB.AllowOverflow := [];
-     SB.Data := @SBData;
-     SB.CurrentSize := 0;
-     SB.MaxSize := SizeOf(SBData);
+    CRC := @HostClient.MapCRC;
+    CRC^ := StrToInt(Cmd_Argv(2));
+    COM_UnMunge2(CRC, SizeOf(CRC^), Byte(not SVS.SpawnCount));
 
-     SZ_Write(SB, SV.Signon.Data, SV.Signon.CurrentSize);
+    if UInt(StrToInt(Cmd_Argv(1))) <> SVS.SpawnCount then
+     SV_New_F
+    else
+     begin
+      SB.Name := 'Spawning';
+      SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
+      SB.Data := @SBData;
+      SB.CurrentSize := 0;
+      SB.MaxSize := SizeOf(SBData);
 
-     SV_WriteSpawn(SB);
-     SV_WriteVoiceCodec(SB);
-     Netchan_CreateFragments(HostClient.Netchan, SB);
-     Netchan_FragSend(HostClient.Netchan);
-    end;
-  end;
+      SZ_Write(SB, SV.Signon.Data, SV.Signon.CurrentSize);
+
+      SV_WriteSpawn(SB);
+      SV_WriteVoiceCodec(SB);
+
+      if FSB_OVERFLOWED in SB.AllowOverflow then
+       begin
+        DPrint(['Spawn buffer overflow on "', PLChar(@HostClient.NetName), '".']);
+        SV_DropClient(HostClient^, False, 'Spawn buffer overflow.');
+       end
+      else
+       begin
+        Netchan_CreateFragments(HostClient.Netchan, SB);
+        Netchan_FragSend(HostClient.Netchan);
+       end;
+     end;
+   end;
 end;
 
 procedure SV_SendRes_F; cdecl;
@@ -537,10 +562,14 @@ end;
 
 procedure SV_FullUpdate_F; cdecl;
 begin
-if (CmdSource <> csServer) and HostClient.Active and SV_FilterFullClientUpdate(HostClient^) then
+if (CmdSource <> csServer) and HostClient.Active and (RealTime >= HostClient.FullUpdateTime) then
  begin
   SV_ForceFullClientsUpdate;
   DLLFunctions.ClientCommand(SVPlayer^);
+
+  if sv_fullupdateinterval.Value < 0 then
+   CVar_DirectSet(sv_fullupdateinterval, '0');
+  HostClient.FullUpdateTime := RealTime + sv_fullupdateinterval.Value;
  end;
 end;
 

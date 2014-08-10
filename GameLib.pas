@@ -121,9 +121,6 @@ function GetDispatch(Name: PLChar): Pointer;
 var
  I: Int;
 begin
-COM_Log('ents.txt', Name);
-
-
 for I := 0 to NumExtDLL - 1 do
  begin
   Result := Sys_GetProcAddress(ExtDLL[I].Handle, Name);
@@ -161,11 +158,14 @@ if FS_Open(F, 'liblist.gam', 'r') then
   FileSize := FS_Size(F);
   if FileSize = 0 then
    Sys_Error('Game listing file size is bogus (liblist.gam: size 0).');
+
   P := Mem_AllocN(FileSize + 1);
   if P = nil then
    Sys_Error(['Couldn''t allocate space for game listing file of ', FileSize, ' bytes.']);
+
   if FS_Read(F, P, FileSize) <> FileSize then
    Sys_Error('Error while reading game listing file.');
+   
   PLChar(UInt(P) + FileSize)^ := #0;
   COM_IgnoreColons := True;
   P2 := P;  

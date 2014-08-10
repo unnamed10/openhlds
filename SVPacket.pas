@@ -334,7 +334,7 @@ else
     I := StrToInt(S);
     if I = 1 then
      begin
-      SV_CountProxies(I);
+      I := SV_CountProxies;
       if (I >= sv_proxies.Value) and not Reconnect then
        begin
         if sv_proxies.Value <> 0 then
@@ -513,6 +513,7 @@ else
 
     C.SendResTime := 0;
     C.SendEntsTime := 0;
+    C.FullUpdateTime := 0;
 
     Netchan_Setup(NS_SERVER, C.Netchan, NetFrom, ClientIndex, C, SV_GetFragmentSize);
 
@@ -535,6 +536,9 @@ else
     C.SendInfo := False;
     C.Connected := True;
     C.HasMissingResources := False;
+
+    C.ConnectSeq := 0;
+    C.SpawnSeq := 0;
 
     Netchan_OutOfBandPrint(NS_SERVER, C.Netchan.Addr, [LChar(S2C_CONNECT), ' ', C.UserID, ' "', PLChar(@AddrBuf), '" 0']);
     LPrint(['"', PLChar(@UserName), '<', C.UserID, '><', SV_GetClientIDString(C^), '><>" connected (', PLChar(@AddrBuf), ').'#10]);
@@ -607,7 +611,10 @@ S := StrECopy(@Buf, (#$FF#$FF#$FF#$FF + S2C_CHALLENGE + '00000000 '));
 S := UIntToStrE(SV_DispatchChallenge(NetFrom).Challenge, S^, 32);
 
 if B then
- StrCopy(S, ' 3 0 0'#10)
+ if sv_secureflag.Value <> 0 then
+  StrCopy(S, ' 3 0 1'#10)
+ else
+  StrCopy(S, ' 3 0 0'#10)
 else
  StrCopy(S, ' 2'#10);
 
@@ -658,7 +665,6 @@ var
  SBData: array[1..1400] of Byte;
  NetAdrBuf: array[1..64] of LChar;
  SB: TSizeBuf;
- Players: UInt;
 begin
 SB.Name := 'SVC_Info';
 SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
@@ -685,8 +691,7 @@ else
 MSG_WriteString(SB, GameDir);
 MSG_WriteString(SB, DLLFunctions.GetGameDescription);
 
-SV_CountPlayers(Players);
-MSG_WriteByte(SB, Min(Players, High(Byte)));
+MSG_WriteByte(SB, Min(SV_CountPlayers, High(Byte)));
 if sv_visiblemaxplayers.Value < 0 then
  MSG_WriteByte(SB, Min(SVS.MaxClients, High(Byte)))
 else
@@ -955,7 +960,6 @@ var
  SBData: array[1..1400] of Byte;
  SB: TSizeBuf;
  Payload: PLChar;
- Players: UInt;
 begin
 Payload := MSG_ReadString;
 if MSG_BadRead or (StrComp(Payload, 'Source Engine Query') <> 0) then
@@ -981,8 +985,7 @@ MSG_WriteString(SB, GameDir);
 MSG_WriteString(SB, DLLFunctions.GetGameDescription);
 MSG_WriteShort(SB, GetGameAppID);
 
-SV_CountPlayers(Players);
-MSG_WriteByte(SB, Min(Players, High(Byte)));
+MSG_WriteByte(SB, Min(SV_CountPlayers, High(Byte)));
 if sv_visiblemaxplayers.Value < 0 then
  MSG_WriteByte(SB, Min(SVS.MaxClients, High(Byte)))
 else

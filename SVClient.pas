@@ -6,8 +6,8 @@ interface
 
 uses SysUtils, Default, SDK;
 
-procedure SV_CountPlayers(out Players: UInt);
-procedure SV_CountProxies(out Proxies: UInt);
+function SV_CountPlayers: UInt;
+function SV_CountProxies: UInt;
 function SV_GetFakeClientCount: UInt;
 function SV_CalcPing(const C: TClient): UInt;
 
@@ -28,11 +28,9 @@ procedure SV_ExtractFromUserInfo(var C: TClient);
 
 procedure SV_FullClientUpdate(const C: TClient; var SB: TSizeBuf);
 procedure SV_ForceFullClientsUpdate;
-function SV_FilterFullClientUpdate(const C: TClient): Boolean;
-procedure SV_ClearFullUpdateFilter;
 
-procedure SV_ClientPrint(Msg: PLChar); overload;
-procedure SV_ClientPrint(const Msg: array of const); overload;
+procedure SV_ClientPrint(Msg: PLChar; LineBreak: Boolean = True); overload;
+procedure SV_ClientPrint(const Msg: array of const; LineBreak: Boolean = True); overload;
 
 procedure SV_WriteSpawn(var SB: TSizeBuf);
 procedure SV_WriteVoiceCodec(var SB: TSizeBuf);
@@ -75,33 +73,33 @@ var
  sv_defaultplayername: TCVar = (Name: 'sv_defaultplayername'; Data: 'unnamed');
  sv_use2asnameprefix: TCVar = (Name: 'sv_use2asnameprefix'; Data: '0');
 
- sv_maxupdaterate: TCVar = (Name: 'sv_maxupdaterate'; Data: '30'; Flags: [FCVAR_SERVER]);
+ sv_defaultupdaterate: TCVar = (Name: 'sv_defaultupdaterate'; Data: '30');
+ sv_maxupdaterate: TCVar = (Name: 'sv_maxupdaterate'; Data: '60'; Flags: [FCVAR_SERVER]);
  sv_minupdaterate: TCVar = (Name: 'sv_minupdaterate'; Data: '10'; Flags: [FCVAR_SERVER]);
- sv_defaultupdaterate: TCVar = (Name: 'sv_defaultupdaterate'; Data: '20');
- sv_maxrate: TCVar = (Name: 'sv_maxrate'; Data: '0'; Flags: [FCVAR_SERVER]);
- sv_minrate: TCVar = (Name: 'sv_minrate'; Data: '0'; Flags: [FCVAR_SERVER]);
- sv_defaultrate: TCVar = (Name: 'sv_defaultrate'; Data: '9999');
 
- sv_filterfullupdate: TCVar = (Name: 'sv_filterfullupdate'; Data: '1');
- sv_fullupdateinterval: TCVar = (Name: 'sv_fullupdateinterval'; Data: '0.45');
- sv_fullupdatemaxcmds: TCVar = (Name: 'sv_fullupdatemaxcmds'; Data: '2');
+ sv_defaultrate: TCVar = (Name: 'sv_defaultrate'; Data: '10000');
+ sv_maxrate: TCVar = (Name: 'sv_maxrate'; Data: '20000'; Flags: [FCVAR_SERVER]);
+ sv_minrate: TCVar = (Name: 'sv_minrate'; Data: '3500'; Flags: [FCVAR_SERVER]);
 
  sv_failuretime: TCVar = (Name: 'sv_failuretime'; Data: '0.5');
 
- sv_pinginterval: TCVar = (Name: 'sv_pinginterval'; Data: '1');
+ // how often to send ping reports to the clients
+ sv_pinginterval: TCVar = (Name: 'sv_pinginterval'; Data: '1.0');
+
+ // min interval between sending userinfo broadcast updates
+ sv_updatetime: TCVar = (Name: 'sv_updatetime'; Data: '1.0');
 
 var
  CurrentUserID: UInt = 1;
 
 implementation
 
-uses Common, Console, Delta, Edict, Encode, GameLib, Info, Host, Memory, MsgBuf, Network, PMove, Resource, Server, SVAuth, SVDelta, SVEdict, SVMove, SVSend, SysArgs;
+uses Common, Console, Delta, Edict, Encode, GameLib, Info, Host, Memory, MsgBuf, Network, PMove, Resource, Server, SVAuth, SVDelta, SVEdict, SVMove, SVPacket, SVSend, SysArgs;
 
 const
- CLCommands: array[1..22] of PLChar =
-  ('status', 'god', 'notarget', 'fly', 'name', 'noclip', 'kill', 'pause', 'spawn', 'new',
-   'sendres', 'dropclient', 'kick', 'ping', 'dlfile', 'nextdl', 'setinfo', 'showinfo', 'sendents', 'fullupdate',
-   'setpause', 'unpause');
+ CLCommands: array[1..19] of PLChar =
+  ('god', 'notarget', 'noclip', 'new', 'spawn', 'sendents', 'sendres', 'pause', 'setpause', 'unpause',
+   'status', 'ping', 'kill', 'name', 'dropclient', 'kick', 'dlfile', 'setinfo', 'fullupdate');
 
  CLCFuncs: array[CLC_BAD..CLC_MESSAGE_END] of record Index: UInt; Name: PLChar; Func: procedure(var C: TClient); end =
   ((Index: 0; Name: 'clc_bad'; Func: nil),
@@ -117,42 +115,46 @@ const
    (Index: 10; Name: 'clc_cvarvalue'; Func: SV_ParseCVarValue),
    (Index: 11; Name: 'clc_cvarvalue2'; Func: SV_ParseCVarValue2));
  
-procedure SV_CountPlayers(out Players: UInt);
+function SV_CountPlayers: UInt;
 var
  I: Int;
  C: PClient;
 begin
-Players := 0;
+Result := 0;
 for I := 0 to SVS.MaxClients - 1 do
  begin
   C := @SVS.Clients[I];
   if C.Active or C.Spawned or C.Connected then
-   Inc(Players);
+   Inc(Result);
  end;
 end;
 
-procedure SV_CountProxies(out Proxies: UInt);
+function SV_CountProxies: UInt;
 var
  I: Int;
  C: PClient;
 begin
-Proxies := 0;
+Result := 0;
 for I := 0 to SVS.MaxClients - 1 do
  begin
   C := @SVS.Clients[I];
   if (C.Active or C.Spawned or C.Connected) and C.HLTV then
-   Inc(Proxies);
+   Inc(Result);
  end;
 end;
 
 function SV_GetFakeClientCount: UInt;
 var
  I: Int;
+ C: PClient; 
 begin
 Result := 0;
 for I := 0 to SVS.MaxClients - 1 do
- if SVS.Clients[I].FakeClient then
-  Inc(Result);
+ begin
+  C := @SVS.Clients[I];
+  if (C.Active or C.Spawned or C.Connected) and C.FakeClient then
+   Inc(Result);
+ end;
 end;
 
 procedure SV_DropClient(var C: TClient; SkipNotify: Boolean; Msg: PLChar);
@@ -180,7 +182,7 @@ if not SkipNotify then
   if (C.Entity <> nil) and C.Spawned then
    DLLFunctions.ClientDisconnect(C.Entity^);
 
-  Print(['Dropped ', PLChar(@C.NetName), ' from server.' + LineBreak +
+  Print(['Dropped "', PLChar(@C.NetName), '" from server.' + LineBreak +
          'Reason: ', Msg]);
 
   if not C.FakeClient then
@@ -188,18 +190,15 @@ if not SkipNotify then
  end;
 
 TimePlaying := RealTime - C.Netchan.FirstReceived;
-if TimePlaying > 60 then
+if TimePlaying > 0 then
  begin
   Inc(SVS.Stats.NumDrops);
   SVS.Stats.AccumTimePlaying := SVS.Stats.AccumTimePlaying + TimePlaying;
  end;
 
-SV_FullClientUpdate(C, SV.ReliableDatagram);
-
 COM_ClearCustomizationList(C.Customization);
 SV_ClearResourceList(C.UploadList);
 SV_ClearResourceList(C.DownloadList);
-
 Netchan_Clear(C.Netchan);
 
 C.ConnectTime := RealTime;
@@ -207,16 +206,27 @@ C.Active := False;
 C.Spawned := False;
 C.SendInfo := False;
 C.Connected := False;
+C.HasMissingResources := False;
 C.UserMsgReady := False;
+C.SendConsistency := False;
+
 C.FakeClient := False;
-C.NetName[Low(C.NetName)] := #0;
 C.HLTV := False;
+C.NetName[Low(C.NetName)] := #0;
+
+C.SkipThisUpdate := False;
+C.Entity := nil;
+C.Target := nil;
+
+C.UploadComplete := False;
+
 C.BlockedVoice := [];
 C.VoiceLoopback := False;
-C.Entity := nil;
 
 MemSet(C.UserInfo, SizeOf(C.UserInfo), 0);
 MemSet(C.PhysInfo, SizeOf(C.PhysInfo), 0);
+
+SV_FullClientUpdate(C, SV.ReliableDatagram);
 end;
 
 procedure SV_DropClient(var C: TClient; SkipNotify: Boolean; const Msg: array of const);
@@ -230,7 +240,7 @@ var
  C: PClient;
 begin
 if SV.Active then
- if StrLen(S) > 128 then
+ if StrLen(S) > 256+32 then // serverinfo size and some extra space
   Print('SV_BroadcastCommand: The command is too long, ignoring.')
  else
   for I := 0 to SVS.MaxClients - 1 do
@@ -287,31 +297,22 @@ end;
 
 procedure SV_ClearPacketEntities(var Frame: TClientFrame);
 begin
-if @Frame <> nil then
- begin
-  if Frame.Pack.Ents <> nil then
-   Mem_FreeAndNil(Frame.Pack.Ents);
-  Frame.Pack.NumEnts := 0;
- end;
+if Frame.Pack.Ents <> nil then
+ Mem_FreeAndNil(Frame.Pack.Ents);
+
+Frame.Pack.NumEnts := 0;
 end;
 
 procedure SV_AllocPacketEntities(var Frame: TClientFrame; NumEnts: UInt);
-var
- I: UInt;
 begin
-if @Frame <> nil then
- begin
-  if Frame.Pack.Ents <> nil then
-   Mem_Free(Frame.Pack.Ents);
+if Frame.Pack.Ents <> nil then
+ Mem_Free(Frame.Pack.Ents);
 
-  if NumEnts = 0 then
-   I := 1
-  else
-   I := NumEnts;
-
-  Frame.Pack.NumEnts := NumEnts;
-  Frame.Pack.Ents := Mem_ZeroAlloc(SizeOf(TEntityState) * I);
- end;
+Frame.Pack.NumEnts := NumEnts;
+if NumEnts > 1 then
+ Frame.Pack.Ents := Mem_ZeroAlloc(SizeOf(TEntityState) * NumEnts)
+else
+ Frame.Pack.Ents := Mem_ZeroAlloc(SizeOf(TEntityState));
 end;
 
 procedure SV_ClearFrames(var CF: TClientFrameArrayPtr);
@@ -329,8 +330,8 @@ end;
 
 procedure SV_SkipUpdates;
 var
- C: PClient;
  I: Int;
+ C: PClient;
 begin
 for I := 0 to SVS.MaxClients - 1 do
  begin
@@ -344,21 +345,38 @@ procedure SV_CheckUpdateRate(var P: Double);
 var
  F: Double;
 begin
-if sv_maxupdaterate.Value <> 0 then
- begin
-  if sv_maxupdaterate.Value < 1 then
-   CVar_DirectSet(sv_maxupdaterate, '30');
+// Keep the server cvars in hard-coded limits.
+if sv_defaultupdaterate.Value < MIN_CLIENT_UPDATERATE then
+ CVar_SetValue('sv_defaultupdaterate', MIN_CLIENT_UPDATERATE)
+else
+ if sv_defaultupdaterate.Value > MAX_CLIENT_UPDATERATE then
+  CVar_SetValue('sv_defaultupdaterate', MAX_CLIENT_UPDATERATE);
 
-  F := 1 / sv_maxupdaterate.Value;
-  if P < F then
-   P := F;
+if sv_maxupdaterate.Value < MIN_CLIENT_UPDATERATE then
+ CVar_SetValue('sv_maxupdaterate', MIN_CLIENT_UPDATERATE)
+else
+ if sv_maxupdaterate.Value > MAX_CLIENT_UPDATERATE then
+  CVar_SetValue('sv_maxupdaterate', MAX_CLIENT_UPDATERATE);
+
+if sv_minupdaterate.Value < MIN_CLIENT_UPDATERATE then
+ CVar_SetValue('sv_minupdaterate', MIN_CLIENT_UPDATERATE)
+else
+ if sv_minupdaterate.Value > MAX_CLIENT_UPDATERATE then
+  CVar_SetValue('sv_minupdaterate', MAX_CLIENT_UPDATERATE);
+
+if sv_maxupdaterate.Value < sv_minupdaterate.Value then
+ begin
+  Print('Warning: sv_minupdaterate is greater than sv_maxupdaterate. Swapping the values.');
+  F := sv_minupdaterate.Value;
+  CVar_SetValue('sv_minupdaterate', sv_maxupdaterate.Value);
+  CVar_SetValue('sv_maxupdaterate', F);
  end;
 
-if sv_minupdaterate.Value <> 0 then
+F := 1 / sv_maxupdaterate.Value;
+if P < F then
+ P := F
+else
  begin
-  if sv_minupdaterate.Value < 1 then
-   CVar_DirectSet(sv_minupdaterate, '1');
-
   F := 1 / sv_minupdaterate.Value;
   if P > F then
    P := F;
@@ -366,24 +384,40 @@ if sv_minupdaterate.Value <> 0 then
 end;
 
 procedure SV_CheckRate(var P: Double);
+var
+ F: Single;
 begin
-if (sv_maxrate.Value > 0) and (sv_maxrate.Value < P) then
- if sv_maxrate.Value > MAX_CLIENT_RATE then
-  P := MAX_CLIENT_RATE
- else
-  P := sv_maxrate.Value
+if sv_defaultrate.Value < MIN_CLIENT_RATE then
+ CVar_SetValue('sv_defaultrate', MIN_CLIENT_RATE)
 else
- if P > MAX_CLIENT_RATE then
-  P := MAX_CLIENT_RATE;
+ if sv_defaultrate.Value > MAX_CLIENT_RATE then
+  CVar_SetValue('sv_defaultrate', MAX_CLIENT_RATE);
 
-if (sv_minrate.Value > 0) and (sv_minrate.Value > P) then
- if sv_minrate.Value < MIN_CLIENT_RATE then
-  P := MIN_CLIENT_RATE
- else
-  P := sv_minrate.Value
+if sv_maxrate.Value < MIN_CLIENT_RATE then
+ CVar_SetValue('sv_maxrate', MIN_CLIENT_RATE)
 else
- if P < MIN_CLIENT_RATE then
-  P := MIN_CLIENT_RATE;
+ if sv_maxrate.Value > MAX_CLIENT_RATE then
+  CVar_SetValue('sv_maxrate', MAX_CLIENT_RATE);
+
+if sv_minrate.Value < MIN_CLIENT_RATE then
+ CVar_SetValue('sv_minrate', MIN_CLIENT_RATE)
+else
+ if sv_minrate.Value > MAX_CLIENT_RATE then
+  CVar_SetValue('sv_minrate', MAX_CLIENT_RATE);
+
+if sv_maxrate.Value < sv_minrate.Value then
+ begin
+  Print('Warning: sv_minrate is greater than sv_maxrate. Swapping the values.');
+  F := sv_minrate.Value;
+  CVar_SetValue('sv_minrate', sv_maxrate.Value);
+  CVar_SetValue('sv_maxrate', F);
+ end;
+
+if P > sv_maxrate.Value then
+ P := sv_maxrate.Value
+else
+ if P < sv_minrate.Value then
+  P := sv_minrate.Value;
 end;
 
 function SV_FilterPlayerName(Name: PLChar; IgnoreClient: Int = -1): Boolean;
@@ -414,9 +448,9 @@ while S^ > #0 do
 
 TrimSpace(Name, @Buf);
 
-if (Buf[1] <= ' ') or (StrIComp(@Buf, 'console') = 0) or
+if (Buf[1] <= ' ') or (StrIComp(@Buf, 'console') = 0) or (StrIComp(@Buf, 'server') = 0) or
    (StrIComp(@Buf, 'loopback') = 0) or (StrPos(@Buf, '..') <> nil) then
- if (sv_defaultplayername.Data <> nil) and (sv_defaultplayername.Data^ > #0) then
+ if sv_defaultplayername.Data^ > #0 then
   StrCopy(@Buf, sv_defaultplayername.Data)
  else
   StrCopy(@Buf, 'unnamed');
@@ -466,38 +500,35 @@ StrLCopy(@C.NetName, Info_ValueForKey(@C.UserInfo, 'name'), SizeOf(C.NetName) - 
 
 S := Info_ValueForKey(@C.UserInfo, 'rate');
 if (S <> nil) and (S^ > #0) then
- begin
-  I := StrToInt(S);
-  if I = 0 then
-   I := AVG_CLIENT_RATE
-  else
-   if I < MIN_CLIENT_RATE then
-    I := MIN_CLIENT_RATE
-   else
-    if I > MAX_CLIENT_RATE then
-     I := MAX_CLIENT_RATE;
-
-  C.Netchan.Rate := I;
- end;
+ C.Netchan.Rate := StrToInt(S)
+else
+ C.Netchan.Rate := sv_defaultrate.Value;
+SV_CheckRate(C.Netchan.Rate);
 
 S := Info_ValueForKey(@C.UserInfo, 'topcolor');
 if (S <> nil) and (S^ > #0) then
- C.TopColor := StrToInt(S);
+ C.TopColor := StrToInt(S)
+else
+ C.TopColor := 0;
 
 S := Info_ValueForKey(@C.UserInfo, 'bottomcolor');
 if (S <> nil) and (S^ > #0) then
- C.BottomColor := StrToInt(S);
+ C.BottomColor := StrToInt(S)
+else
+ C.BottomColor := 0;
 
 S := Info_ValueForKey(@C.UserInfo, 'cl_updaterate');
 if (S <> nil) and (S^ > #0) then
  begin
   I := StrToInt(S);
-  if I < MIN_CLIENT_UPDATERATE then
-   I := MIN_CLIENT_UPDATERATE;
-  C.UpdateRate := 1 / I;
+  if I > 0 then
+   C.UpdateRate := 1 / I
+  else
+   C.UpdateRate := 1 / sv_defaultupdaterate.Value;
  end
 else
  C.UpdateRate := 1 / sv_defaultupdaterate.Value;
+SV_CheckUpdateRate(C.UpdateRate);
 
 S := Info_ValueForKey(@C.UserInfo, 'cl_lw');
 if (S <> nil) and (S^ > #0) then
@@ -516,9 +547,6 @@ if (S <> nil) and (S^ > #0) then
  C.HLTV := StrToInt(S) = 1
 else
  C.HLTV := False;
-
-SV_CheckUpdateRate(C.UpdateRate);
-SV_CheckRate(C.Netchan.Rate);
 end;
 
 procedure SV_FullClientUpdate(const C: TClient; var SB: TSizeBuf);
@@ -543,12 +571,12 @@ end;
 procedure SV_ForceFullClientsUpdate;
 var
  SB: TSizeBuf;
- SBData: array[1..32768] of Byte;
+ SBData: array[1..(256+1+1+4+16) * MAX_PLAYERS + 32] of Byte;
  I: Int;
  C: PClient;
 begin
 SB.Name := 'Force Update';
-SB.AllowOverflow := [];
+SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
 SB.Data := @SBData;
 SB.CurrentSize := 0;
 SB.MaxSize := SizeOf(SBData);
@@ -557,7 +585,15 @@ for I := 0 to SVS.MaxClients - 1 do
  begin
   C := @SVS.Clients[I];
   if (C = HostClient) or C.Active or C.Spawned or C.Connected then
-   SV_FullClientUpdate(C^, SB);
+   begin
+    SV_FullClientUpdate(C^, SB);
+    if FSB_OVERFLOWED in SB.AllowOverflow then
+     begin
+      DPrint(['Client "', PLChar(@HostClient.NetName), '" (index #', (UInt(HostClient) - UInt(SVS.Clients)) div SizeOf(TClient) + 1,
+              ') requested fullupdate, but the temporary buffer had overflowed. Ignoring the request.']);
+      Exit;
+     end;
+   end;
  end;
 
 DPrint(['Client "', PLChar(@HostClient.NetName), '" (index #', (UInt(HostClient) - UInt(SVS.Clients)) div SizeOf(TClient) + 1,
@@ -566,75 +602,25 @@ Netchan_CreateFragments(HostClient.Netchan, SB);
 Netchan_FragSend(HostClient.Netchan);
 end;
 
-var
- LF: array[0..MAX_PLAYERS - 1] of record
-  Time: Double;
-  LastBlock: Double;  
-  NumCmds: Int;
- end;
-
-function SV_FilterFullClientUpdate(const C: TClient): Boolean;
-var
- I: UInt;
- F: Double;
-begin
-if sv_filterfullupdate.Value = 0 then
- begin
-  Result := True;
-  Exit;
- end;
-
-I := (UInt(@C) - UInt(SVS.Clients)) div SizeOf(TClient);
-
-F := SV.Time - LF[I].Time;
-if F < 0 then
- if LF[I].NumCmds <= 1 then
-  begin
-   LF[I].Time := 0;
-   F := SV.Time;
-  end
- else
-  F := 0;
-
-if (F < sv_fullupdateinterval.Value) and (SV.Time >= sv_fullupdateinterval.Value) then
- begin
-  if LF[I].NumCmds < sv_fullupdatemaxcmds.Value then
-   Inc(LF[I].NumCmds);
-
-  if LF[I].NumCmds > 1 then
-   LF[I].Time := SV.Time + (LF[I].NumCmds - 1) * sv_fullupdatemaxcmds.Value
-  else
-   LF[I].Time := SV.Time;
-  
-  Result := False;
- end
-else
- begin
-  LF[I].NumCmds := 0;
-  LF[I].Time := SV.Time;
-  Result := sv_fullupdatemaxcmds.Value <> 0;
- end;
-end;
-
-procedure SV_ClearFullUpdateFilter;
-begin
-MemSet(LF, SizeOf(LF), 0);
-end;
-
-procedure SV_ClientPrint(Msg: PLChar);
+procedure SV_ClientPrint(Msg: PLChar; LineBreak: Boolean = True);
 begin
 if not HostClient.FakeClient then
  begin
   MSG_WriteByte(HostClient.Netchan.NetMessage, SVC_PRINT);
-  MSG_WriteBuffer(HostClient.Netchan.NetMessage, StrLen(Msg), Msg);
-  MSG_WriteChar(HostClient.Netchan.NetMessage, #10);
-  MSG_WriteChar(HostClient.Netchan.NetMessage, #0);
+  if LineBreak then
+   begin
+    MSG_WriteBuffer(HostClient.Netchan.NetMessage, StrLen(Msg), Msg);
+    MSG_WriteChar(HostClient.Netchan.NetMessage, #10);
+    MSG_WriteChar(HostClient.Netchan.NetMessage, #0);
+   end
+  else
+   MSG_WriteString(HostClient.Netchan.NetMessage, Msg);
  end;
 end;
 
-procedure SV_ClientPrint(const Msg: array of const);
+procedure SV_ClientPrint(const Msg: array of const; LineBreak: Boolean = True);
 begin
-SV_ClientPrint(PLChar(StringFromVarRec(Msg)));
+SV_ClientPrint(PLChar(StringFromVarRec(Msg)), LineBreak);
 end;
 
 procedure SV_WriteClientDataToMessage(var C: TClient; var SB: TSizeBuf);
@@ -646,7 +632,6 @@ var
  I: UInt;
  OS: Pointer;
 begin
-MemSet(CD, SizeOf(CD), 0);
 E := C.Entity;
 Frame := @C.Frames[SVUpdateMask and C.Netchan.OutgoingSequence];
 
@@ -678,39 +663,40 @@ if E.V.FixAngle <> 0 then
  end;
 
 MemSet(Frame.ClientData, SizeOf(Frame.ClientData), 0);
-DLLFunctions.UpdateClientData(E^, Int32(HostClient.LW), Frame.ClientData);
+DLLFunctions.UpdateClientData(E^, Int32(C.LW), Frame.ClientData);
 MSG_WriteByte(SB, SVC_CLIENTDATA);
 if not C.HLTV then
  begin
+  MemSet(CD, SizeOf(CD), 0); 
   MSG_StartBitWriting(SB);
-  if HostClient.UpdateMask = -1 then
+  if C.UpdateMask = -1 then
    begin
     OS := @CD;
     MSG_WriteBits(0, 1);
    end
   else
    begin
-    OS := @HostClient.Frames[SVUpdateMask and C.UpdateMask].ClientData;
+    OS := @C.Frames[SVUpdateMask and C.UpdateMask].ClientData;
     MSG_WriteBits(1, 1);
-    MSG_WriteBits(HostClient.UpdateMask, 8);
+    MSG_WriteBits(C.UpdateMask, 8);
    end;
 
   Delta_WriteDelta(OS, @Frame.ClientData, True, ClientDelta^, nil);
-  if HostClient.LW then
+  if C.LW then
    begin
     MemSet(WD, SizeOf(WD), 0);
-    if DLLFunctions.GetWeaponData(HostClient.Entity^, Frame.WeaponData[0]) <> 0 then
+    if DLLFunctions.GetWeaponData(E^, Frame.WeaponData[0]) <> 0 then
      for I := 0 to MAX_WEAPON_DATA - 1 do
       begin
-       if HostClient.UpdateMask = -1 then
+       if C.UpdateMask = -1 then
         OS := @WD
        else
-        OS := @HostClient.Frames[SVUpdateMask and C.UpdateMask].WeaponData[I];
+        OS := @C.Frames[SVUpdateMask and C.UpdateMask].WeaponData[I];
 
        if Delta_CheckDelta(OS, @Frame.WeaponData[I], WeaponDelta^) <> 0 then
         begin
          MSG_WriteBits(1, 1);
-         MSG_WriteBits(I, 6); // <- ?   maybe 5?
+         MSG_WriteBits(I, 6); // <- ?
          Delta_WriteDelta(OS, @Frame.WeaponData[I], True, WeaponDelta^, nil);
         end;
       end;
@@ -732,7 +718,7 @@ if SV.SavedGame then
  begin
   if HostClient.HLTV then
    begin
-    Print('SV_WriteSpawn: HLTV proxies can''t work with a saved game.');
+    SV_DropClient(HostClient^, False, 'HLTV proxies can''t connect to a saved game.');
     Exit;
    end;
 
@@ -790,8 +776,8 @@ if not HostClient.HLTV then
     MSG_WriteByte(SB, SVC_RESTORE);
 
     StrLECopy(@Buf, Host_SaveGameDirectory, SizeOf(Buf) - 1);
-    StrLCat(@Buf, @SV.Map, SizeOf(Buf) - 1);
-    StrLCat(@Buf, '.HL2', SizeOf(Buf) - 1);
+    StrLCat(PLChar(@Buf), @SV.Map, SizeOf(Buf) - 1);
+    StrLCat(PLChar(@Buf), '.HL2', SizeOf(Buf) - 1);
     COM_FixSlashes(@Buf);
     MSG_WriteString(SB, @Buf);
     MSG_WriteByte(SB, SRD.ConnectionCount);
@@ -819,10 +805,7 @@ end;
 procedure SV_WriteVoiceCodec(var SB: TSizeBuf);
 begin
 MSG_WriteByte(SB, SVC_VOICEINIT);
-if SVS.MaxClients > 1 then
- MSG_WriteString(SB, sv_voicecodec.Data)
-else
- MSG_WriteString(SB, EmptyString);
+MSG_WriteString(SB, sv_voicecodec.Data);
 MSG_WriteByte(SB, Trunc(sv_voicequality.Value));
 end;
 
@@ -892,7 +875,7 @@ if (developer.Value <> 0) or (SVS.MaxClients > 1) then
    S := StrECopy(S, ' SERVER (0 CRC)'#10'Server # ')
   else
    begin
-    S := StrECopy(S, ' SERVER (');
+    S := StrECopy(S, ' SERVER (0x');
     S := StrECopy(S, COM_IntToHex(SV.WorldModelCRC, HexBuf));
     S := StrECopy(S, ' CRC)'#10'Server # ');
    end;
@@ -1154,7 +1137,6 @@ var
  C: PClient;
 begin
 SV_ClearClientFrames;
-SVS.MaxClients := 1;
 
 S := COM_ParmValueByName('-maxplayers');
 if (S <> nil) and (S^ > #0) then
@@ -1192,9 +1174,10 @@ if SVS.MaxClients <= 1 then
 else
  CVar_DirectSet(deathmatch, '1');
 
-SV_AllocClientFrames;
 if SVS.MaxClientsLimit < SVS.MaxClients then
  SVS.MaxClients := SVS.MaxClientsLimit;
+
+SV_AllocClientFrames;
 end;
 
 function SV_ValidateClientCommand(P: Pointer): Boolean;
@@ -1218,7 +1201,7 @@ var
  Buf: array[1..128] of LChar;
 begin
 S := MSG_ReadString;
-if S^ > #0 then
+if (S^ > #0) and not MSG_BadRead then
  if SV_ValidateClientCommand(S) then
   Cmd_ExecuteString(S, csClient)
  else
@@ -1232,41 +1215,35 @@ end;
 procedure SV_ParseVoiceData(var C: TClient);
 var
  I, Index: Int;
- J, Size: UInt;
+ Size: UInt;
  Buf: array[1..4096] of Byte;
  P: PClient;
 begin
 Index := (UInt(@C) - UInt(SVS.Clients)) div SizeOf(TClient);
 Size := MSG_ReadShort;
-if Size > SizeOf(Buf) then
+if (Size > SizeOf(Buf)) or MSG_BadRead then
  begin
   DPrint(['SV_ParseVoiceData: Invalid incoming packet from "', PLChar(@C.NetName), '".']);
   SV_DropClient(C, False, 'Invalid voice data.');
  end
 else
- begin
-  MSG_ReadBuffer(Size, @Buf);
-  if sv_voiceenable.Value <> 0 then
-   for I := 0 to SVS.MaxClients - 1 do
-    begin
-     P := @SVS.Clients[I];
-     if (P.Active and P.Connected and not (I in C.BlockedVoice)) or (I = Index) then
-      begin
-       if (I = Index) and not P.VoiceLoopback then
-        J := 0
-       else
-        J := Size;
-
-       if P.UnreliableMessage.CurrentSize + Size + 6 < P.UnreliableMessage.MaxSize then
+ if Size > 0 then
+  begin
+   MSG_ReadBuffer(Size, @Buf);
+   if not MSG_BadRead and (sv_voiceenable.Value <> 0) then
+    for I := 0 to SVS.MaxClients - 1 do
+     begin
+      P := @SVS.Clients[I];
+      if (P.Active and P.Connected and not (I in C.BlockedVoice)) or (I = Index) then
+       if ((I <> Index) or C.VoiceLoopback) and (P.UnreliableMessage.CurrentSize + Size + 4 < P.UnreliableMessage.MaxSize) then
         begin
          MSG_WriteByte(P.UnreliableMessage, SVC_VOICEDATA);
          MSG_WriteByte(P.UnreliableMessage, Index);
-         MSG_WriteShort(P.UnreliableMessage, J);
-         MSG_WriteBuffer(P.UnreliableMessage, J, @Buf);
+         MSG_WriteShort(P.UnreliableMessage, Size);
+         MSG_WriteBuffer(P.UnreliableMessage, Size, @Buf);
         end;
-      end;
-    end;    
- end;
+     end;
+  end;
 end;
 
 procedure SV_IgnoreHLTV(var C: TClient);
@@ -1329,6 +1306,7 @@ while True do
  if MSG_BadRead then
   begin
    Print(['SV_ExecuteClientMessage: badread on "', PLChar(@C.NetName), '".']);
+   SV_DropClient(C, False, 'Bad client message.');
    Break;
   end
  else
@@ -1356,7 +1334,7 @@ var
  Time: Double;
 begin
 if sv_timeout.Value < 1.5 then
- CVar_DirectSet(sv_timeout, '60');
+ CVar_DirectSet(sv_timeout, '1.5');
 
 Time := RealTime - sv_timeout.Value;
 for I := 0 to SVS.MaxClients - 1 do
@@ -1379,20 +1357,39 @@ procedure SV_UpdateToReliableMessages;
 var
  I: Int;
  C: PClient;
- P: ^PUserMsg;
+ SB: TSizeBuf;
+ SBData: array[1..4000] of Byte;
 begin
+SB.Name := 'Reliable tempbuffer';
+SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
+SB.Data := @SBData;
+SB.MaxSize := SizeOf(SBData);
+SB.CurrentSize := 0;
+
+if sv_updatetime.Value < 0.1 then
+ CVar_DirectSet(sv_updatetime, '1');
+ 
 for I := 0 to SVS.MaxClients - 1 do
  begin
   HostClient := @SVS.Clients[I];
   C := HostClient;
-  if C.Entity <> nil then
+  if C.Connected then
    begin
-    if C.UpdateInfo and (C.UpdateInfoTime <= RealTime) then
+    if C.UpdateInfo and (RealTime > C.UpdateInfoTime) then
      begin
-      C.UpdateInfo := False;
-      C.UpdateInfoTime := RealTime + 1;
       SV_ExtractFromUserInfo(C^);
-      SV_FullClientUpdate(C^, SV.ReliableDatagram);
+      SV_FullClientUpdate(C^, SB);
+
+      if (SB.CurrentSize + SV.ReliableDatagram.CurrentSize < SV.ReliableDatagram.MaxSize) and not (FSB_OVERFLOWED in SB.AllowOverflow) then
+       begin
+        SZ_Write(SV.ReliableDatagram, SB.Data, SB.CurrentSize);
+        C.UpdateInfo := False;
+        C.UpdateInfoTime := RealTime + sv_updatetime.Value;
+       end
+      else
+       C.UpdateInfoTime := RealTime + sv_updatetime.Value / (4 / 3); // 25% decrease if overflowed or was going to overflow
+
+      SZ_Clear(SB);
      end;
 
     if (NewUserMsgs <> nil) and (C.Active or C.Connected) and not C.FakeClient then
@@ -1400,15 +1397,7 @@ for I := 0 to SVS.MaxClients - 1 do
    end;
  end;
 
-if NewUserMsgs <> nil then
- begin
-  P := @UserMsgs;
-  while P^ <> nil do
-   P := @(P^).Prev;
-
-  P^ := NewUserMsgs;
-  NewUserMsgs := nil;
- end;
+SV_LinkNewUserMsgs;
 
 if FSB_OVERFLOWED in SV.Datagram.AllowOverflow then
  begin
@@ -1424,7 +1413,8 @@ if FSB_OVERFLOWED in SV.Spectator.AllowOverflow then
 
 for I := 0 to SVS.MaxClients - 1 do
  begin
-  C := @SVS.Clients[I];
+  HostClient := @SVS.Clients[I];
+  C := HostClient;
   if C.Active and not C.FakeClient then
    begin
     if SV.ReliableDatagram.CurrentSize + C.Netchan.NetMessage.CurrentSize < C.Netchan.NetMessage.MaxSize then
@@ -1437,8 +1427,11 @@ for I := 0 to SVS.MaxClients - 1 do
     else
      DPrint(['Ignoring unreliable datagram for "', PLChar(@C.NetName), '", would overflow.']);
 
-    if C.HLTV and (SV.Spectator.CurrentSize + C.UnreliableMessage.CurrentSize < C.UnreliableMessage.MaxSize) then
-     SZ_Write(C.UnreliableMessage, SV.Spectator.Data, SV.Spectator.CurrentSize);
+    if C.HLTV then
+     if SV.Spectator.CurrentSize + C.UnreliableMessage.CurrentSize < C.UnreliableMessage.MaxSize then
+      SZ_Write(C.UnreliableMessage, SV.Spectator.Data, SV.Spectator.CurrentSize)
+     else
+      DPrint(['Ignoring unreliable spectator datagram for "', PLChar(@C.NetName), '", would overflow.']);
    end;
  end;
 
@@ -1507,7 +1500,6 @@ var
  C: PClient;
 begin
 SV_UpdateToReliableMessages;
-HostClient := @SVS.Clients[0];
 
 for I := 0 to SVS.MaxClients - 1 do
  begin
@@ -1529,11 +1521,11 @@ for I := 0 to SVS.MaxClients - 1 do
        SV_BroadcastPrint(['"', PLChar(@C.NetName), '" overflowed.']);
        Print(['Warning: Reliable channel overflowed for "', PLChar(@C.NetName), '".']);
        SV_DropClient(C^, False, 'Reliable channel overflowed.');
-       C.NeedUpdate := True;
+       C.NeedUpdate := False;
        C.Netchan.ClearTime := 0;
       end
      else
-      if C.NeedUpdate and (sv_failuretime.Value < RealTime - C.Netchan.LastReceived) then
+      if C.NeedUpdate and (RealTime - C.Netchan.LastReceived > sv_failuretime.Value) then
        C.NeedUpdate := False;
 
      if C.NeedUpdate then

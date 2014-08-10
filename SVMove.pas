@@ -781,8 +781,14 @@ else
     if Cmd.Impulse > 0 then
      begin
       SVPlayer.V.Impulse := Cmd.Impulse;
-      if (Cmd.Impulse = 204) and SV_FilterFullClientUpdate(HostClient^) then
-       SV_ForceFullClientsUpdate;
+      if (Cmd.Impulse = 204) and (RealTime >= HostClient.FullUpdateTime) then
+       begin
+        SV_ForceFullClientsUpdate;
+        
+        if sv_fullupdateinterval.Value < 0 then
+         CVar_DirectSet(sv_fullupdateinterval, '0');
+        HostClient.FullUpdateTime := RealTime + sv_fullupdateinterval.Value;
+       end;
      end;
 
     SVPlayer.V.CLBaseVelocity := Vec3Origin;
@@ -1395,7 +1401,7 @@ if (sv_maxspeed.Value <> MoveVars.MaxSpeed) or
    (sv_skyvec_x.Value <> MoveVars.SkyVecX) or
    (sv_skyvec_y.Value <> MoveVars.SkyVecY) or
    (sv_skyvec_z.Value <> MoveVars.SkyVecZ) or
-   (StrComp(sv_skyname.Data, @MoveVars.SkyName) <> 0) then
+   (StrLComp(sv_skyname.Data, @MoveVars.SkyName, SizeOf(MoveVars.SkyName) - 1) <> 0) then
  begin
   SV_SetMoveVars;
   for I := 0 to SVS.MaxClients - 1 do
@@ -1416,9 +1422,9 @@ begin
 if sv_cmdcheckinterval.Value <= 0.05 then
  CVar_DirectSet(sv_cmdcheckinterval, '0.05');
 
-if RealTime - LastTimeReset >= 1 then
+if RealTime >= LastTimeReset then
  begin
-  LastTimeReset := RealTime;
+  LastTimeReset := RealTime + sv_cmdcheckinterval.Value;
   for I := 0 to SVS.MaxClients - 1 do
    begin
     C := @SVS.Clients[I];
@@ -1546,7 +1552,7 @@ else
          end
         else
          SVPlayer.V.VAngle := UserCmds[0].ViewAngles;
-
+         
         SVPlayer.V.Button := UserCmds[0].Buttons;
         SVPlayer.V.LightLevel := UserCmds[0].LightLevel;
         SV_EstablishTimeBase(HostClient^, @UserCmds, NetDrop, Backup, Cmds);
