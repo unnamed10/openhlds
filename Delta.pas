@@ -111,18 +111,17 @@ end;
 
 function Delta_TestDelta(OS, NS: Pointer; var Delta: TDelta): UInt;
 var
- I, I2: Int;
+ I, LastIndex: Int;
  F: PDeltaField;
- B, CmpString: Boolean;
+ B: Boolean;
  Bits: UInt;
 begin
 Bits := 0;
-I2 := -1;
+LastIndex := -1;
 
 for I := 0 to Delta.NumFields - 1 do
  begin
   F := @Delta.Fields[I];
-  CmpString := False;
   case F.FieldType and not DT_SIGNED of
    DT_TIMEWINDOW_8:
     B := Trunc(PSingle(UInt(OS) + F.Offset)^ * 100) = Trunc(PSingle(UInt(NS) + F.Offset)^ * 100);
@@ -141,8 +140,8 @@ for I := 0 to Delta.NumFields - 1 do
       begin
        Include(F.Flags, ffReady);
        Inc(Bits, (StrLen(PLChar(UInt(NS) + F.Offset)) + 1) * 8);
+       B := True;
       end;
-     CmpString := True;
     end
    else
     begin
@@ -151,15 +150,15 @@ for I := 0 to Delta.NumFields - 1 do
     end;
   end;
 
-  if not B and not CmpString then
+  if not B then
    begin
-    I2 := I;
+    LastIndex := I;
     Inc(Bits, F.Bits);
    end;
  end;
 
-if I2 <> -1 then
- Inc(Bits, (I2 and not 7) + 8);
+if LastIndex <> -1 then
+ Inc(Bits, (LastIndex and not 7) + 8);
 
 Result := Bits;
 end;
@@ -275,12 +274,12 @@ for I := 0 to Delta.NumFields - 1 do
      DT_INTEGER:
       begin
        if Signed then
-        if (F.Scale < 0.99989998) or (F.Scale > 1.0001) then
+        if (F.Scale < 0.9999) or (F.Scale > 1.0001) then
          MSG_WriteSBits(Trunc(PInt32(UInt(NS) + F.Offset)^ * F.Scale), F.Bits)
         else
          MSG_WriteSBits(PInt32(UInt(NS) + F.Offset)^, F.Bits)
        else
-        if (F.Scale < 0.99989998) or (F.Scale > 1.0001) then
+        if (F.Scale < 0.9999) or (F.Scale > 1.0001) then
          MSG_WriteBits(Trunc(PUInt32(UInt(NS) + F.Offset)^ * F.Scale), F.Bits)
         else
          MSG_WriteBits(PUInt32(UInt(NS) + F.Offset)^, F.Bits)

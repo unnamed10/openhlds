@@ -65,7 +65,7 @@ uses Common, Console, Edict, GameLib, Host, MathLib, Model, Server, SVMove, SVSe
 procedure SV_CheckVelocity(var E: TEdict);
 const
  NaNMask = $7F800000;
- Axis: array[0..2] of Char = 'XYZ';
+ Axis: array[0..2] of LChar = 'XYZ';
 var
  I: UInt;
 begin

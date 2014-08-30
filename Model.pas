@@ -1136,7 +1136,7 @@ for I := 0 to M.NumMiptex - 1 do
   else
    if (Max >= Ord('A')) and (Max <= Ord('J')) then
     begin
-     Dec(AltMax, Ord('A'));
+     AltMax := Ord(Max) - Ord('A');
      Max := 0;
      AltAnims[AltMax] := TX;
      Inc(AltMax);
