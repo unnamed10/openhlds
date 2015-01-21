@@ -42,7 +42,7 @@ var
 
 implementation
 
-uses Common, Console, Edict, FilterIP, GameLib, Host, Info, Memory, MsgBuf, Network, Resource, Server, SVAuth, SVClient, SVDelta, SVRcon, SVSend;
+uses Common, Console, Edict, FilterIP, GameLib, Host, Info, Memory, MsgBuf, Network, Resource, Server, SVAuth, SVClient, SVDelta, SVEvent, SVRcon, SVSend;
 
 const
  MAX_CHALLENGES = 1024;
@@ -144,25 +144,34 @@ end;
 
 function SV_GetFragmentSize(C: PClient): UInt32; cdecl;
 var
+ X: UInt;
  S: PLChar;
 begin
-if C.Active and C.Spawned and C.SendInfo and C.Connected then
+if C.Connected then
  begin
-  S := Info_ValueForKey(@C.UserInfo, 'cl_dlmax');
-  if (S = nil) or (S^ = #0) then
-   Result := 128
-  else
+  if not C.FragSizeUpdated then
    begin
-    Result := StrToInt(S);
-    if Result = 0 then
-     Result := 128
+    S := Info_ValueForKey(@C.UserInfo, 'cl_dlmax');
+    if (S = nil) or (S^ = #0) then
+     X := 128
     else
-     if Result < 64 then
-      Result := 64
-     else
-      if Result > 1024 then
-       Result := 1024;
+     begin
+      X := StrToInt(S);
+      if X = 0 then
+       X := 128
+      else
+       if X < 64 then
+        X := 64
+       else
+        if X > 1024 then
+         X := 1024;
+     end;
+
+    C.FragSize := X;
+    C.FragSizeUpdated := True;
    end;
+
+  Result := C.FragSize;
  end
 else
  Result := 1024;
@@ -232,7 +241,7 @@ J := 1;
 for I := 0 to SVS.MaxClients - 1 do
  begin
   C := @SVS.Clients[I];
-  if C.Connected and not C.SendInfo and NET_CompareBaseAdr(Addr, C.Netchan.Addr) then
+  if C.Connected and NET_CompareBaseAdr(Addr, C.Netchan.Addr) then
    Inc(J);
  end;
 
@@ -246,7 +255,7 @@ begin
 Result := True;
 end;
 
-function SV_CheckKeyInfo(const Addr: TNetAdr; ProtInfo: PLChar; out Port: UInt16; out Prot: UInt; AuthHash, CDKey: PLChar): Boolean;
+function SV_CheckKeyInfo(const Addr: TNetAdr; ProtInfo: PLChar; out Prot: UInt; AuthHash, CDKey: PLChar): Boolean;
 var
  S: PLChar;
 begin
@@ -276,8 +285,6 @@ else
     end
    else
     StrCopy(CDKey, S);
-
-  Port := 27005;
  end;
 end;
 
@@ -288,13 +295,12 @@ var
  Buf: array[1..MAX_PLAYER_NAME] of LChar;
  I: UInt;
 begin
-if (sv_password.Data <> nil) and (sv_password.Data^ > #0) and
-   (StrComp(sv_password.Data, 'none') <> 0) and not NET_IsLocalAddress(Addr) then
+if (sv_password.Data^ > #0) and (StrComp(sv_password.Data, 'none') <> 0) and not NET_IsLocalAddress(Addr) and not NET_CompareAdr(Addr, LocalIP) then
  begin
   S := Info_ValueForKey(UserInfo, 'password');
-  if (S = nil) or (S^ = #0) or (StrComp(sv_password.Data, S) <> 0) then
+  if (S^ = #0) or (StrComp(sv_password.Data, S) <> 0) then
    begin
-    if (S <> nil) and (S^ > #0) then
+    if S^ > #0 then
      Print([NET_AdrToString(Addr, AddrBuf, SizeOf(AddrBuf)), ': password failed (', S, ').'])
     else
      Print([NET_AdrToString(Addr, AddrBuf, SizeOf(AddrBuf)), ': password failed.']);
@@ -325,7 +331,7 @@ else
    SV_FilterPlayerName(@Buf, -1);
 
   StrCopy(Name, @Buf);
-  Info_SetValueForKey(UserInfo, 'name', @Buf, MAX_USERINFO_STRING);
+  Info_SetValueForKey(UserInfo, 'name', Name, MAX_USERINFO_STRING);
 
   Result := True;
   S := Info_ValueForKey(UserInfo, '*hltv');
@@ -374,7 +380,7 @@ for I := 0 to SVS.MaxClients - 1 do
    end;
  end;
 
-if (sv_fullservermsg.Data <> nil) and (sv_fullservermsg.Data^ > #0) then
+if sv_fullservermsg.Data^ > #0 then
  SV_RejectConnection(Addr, [sv_fullservermsg.Data, #10])
 else
  SV_RejectConnection(Addr, 'Server is full.'#10);
@@ -387,7 +393,6 @@ var
  Challenge: UInt32;
  AuthHash, CDKey: array[1..33] of LChar;
  ProtInfo, S: PLChar;
- Port: UInt16;
  Prot, ClientIndex: UInt;
  UserInfo: array[1..MAX_USERINFO_STRING] of LChar;
  Reconnect: Boolean;
@@ -420,7 +425,7 @@ else
 
     MemSet(AuthHash, SizeOf(AuthHash), 0);
     MemSet(CDKey, SizeOf(CDKey), 0);
-    if not SV_CheckKeyInfo(NetFrom, ProtInfo, Port, Prot, @AuthHash, @CDKey) then
+    if not SV_CheckKeyInfo(NetFrom, ProtInfo, Prot, @AuthHash, @CDKey) then
      Exit;
 
     if not SV_CheckIPRestrictions(NetFrom, Prot) then
@@ -453,67 +458,40 @@ else
        not SV_FinishCertificateCheck(NetFrom, Prot, @AuthHash, @UserInfo) then
      Exit;
 
+    if not SV_CheckIPConnectionReuse(NetFrom) then
+     Exit;
+
     if Reconnect then
      begin
       C := @SVS.Clients[ClientIndex];
       if (C.Active or C.Spawned) and (C.Entity <> nil) then
        DLLFunctions.ClientDisconnect(C.Entity^);
-       
-      Print([NET_AdrToString(NetFrom, AddrBuf, SizeOf(AddrBuf)), ': reconnect.']);
+
+      Print([PLChar(@UserName), ' (', NET_AdrToString(NetFrom, AddrBuf, SizeOf(AddrBuf)), '): reconnect.']);
      end
     else
      if not SV_FindEmptySlot(NetFrom, ClientIndex, C) then
       Exit;
 
-    if not SV_CheckIPConnectionReuse(NetFrom) then
-     Exit;
-
-    HostClient := C;
-    C.UserID := CurrentUserID;
-    Inc(CurrentUserID);
-
-    S := Info_ValueForKey(@UserInfo, '*hltv');
-    if (S <> nil) and (S^ > #0) then
-     begin
-      C.Auth.AuthType := atHLTV;
-      C.Auth.UniqueID := 0;
-      PUInt32(@C.Auth.IP)^ := PUInt32(@NetFrom.IP)^;
-     end
-    else
-     begin
-      C.Auth.AuthType := atSteam;
-      C.Auth.UniqueID := 0;
-
-      if NetFrom.AddrType = NA_LOOPBACK then
-       if sv_lan.Value = 0 then
-        PUInt32(@C.Auth.IP)^ := PUInt32(@LocalIP.IP)^
-       else
-        PUInt32(@C.Auth.IP)^ := $7F000001
-      else
-       PUInt32(@C.Auth.IP)^ := PUInt32(@NetFrom.IP)^;
-     end;
-
-    if NetFrom.Port <> 0 then
-     Port := NetFrom.Port;
-    C.Netchan.Addr.Port := Port;
-
-    SV_ClearResourceLists(C^);
-    if C.Frames <> nil then
-     SV_ClearFrames(C.Frames);
+    SV_ClearClient(C^);
     C.Frames := Mem_ZeroAlloc(SVUpdateBackup * SizeOf(TClientFrame));
 
-    C.DownloadList.Next := @C.DownloadList;
-    C.DownloadList.Prev := @C.DownloadList;
-    C.UploadList.Next := @C.UploadList;
-    C.UploadList.Prev := @C.UploadList;
-    C.Entity := EDICT_NUM(ClientIndex + 1);
+    C.UserID := CurrentUserID;
+    C.Auth.UniqueID := C.UserID;
+    Inc(CurrentUserID);
+    if CurrentUserID = 0 then
+     CurrentUserID := 1;
+    C.ChokeCount := 0;
 
+    C.NeedUpdate := False;
+    C.SkipThisUpdate := False;
+    C.FragSizeUpdated := False;
+
+    C.Entity := @SV.Edicts[ClientIndex + 1];
+    C.Entity.V.NetName := UInt(@C.NetName) - PRStrings;
+    C.Target := nil;
     C.FakeClient := False;
     C.Protocol := Protocol;
-
-    C.SendResTime := 0;
-    C.SendEntsTime := 0;
-    C.FullUpdateTime := 0;
 
     Netchan_Setup(NS_SERVER, C.Netchan, NetFrom, ClientIndex, C, SV_GetFragmentSize);
 
@@ -521,24 +499,22 @@ else
     C.NextUpdateTime := RealTime + 0.05;
     C.UpdateMask := -1;
     MemSet(C.UserCmd, SizeOf(C.UserCmd), 0);
+    MemSet(C.PhysInfo, SizeOf(C.PhysInfo), 0);
     C.NextPingTime := 0;
     StrLCopy(@C.CDKey, @CDKey, SizeOf(C.CDKey) - 1);
 
     NET_AdrToString(C.Netchan.Addr, AddrBuf, SizeOf(AddrBuf));
     
     if C.Netchan.Addr.AddrType = NA_LOOPBACK then
-     DPrint('Local connection.')
+     Print('Local connection.')
     else
-     DPrint(['Client ', PLChar(@UserName), ' connected (', PLChar(@AddrBuf), ').']);
+     if not Reconnect then
+      Print(['Client ', PLChar(@UserName), ' connected (', PLChar(@AddrBuf), ').'])
+     else
+      Print(['Client ', PLChar(@UserName), ' reconnected (', PLChar(@AddrBuf), ').']);
 
-    C.Active := False;
-    C.Spawned := False;
-    C.SendInfo := False;
     C.Connected := True;
-    C.HasMissingResources := False;
-
-    C.ConnectSeq := 0;
-    C.SpawnSeq := 0;
+    C.ConnectTime := RealTime;
 
     Netchan_OutOfBandPrint(NS_SERVER, C.Netchan.Addr, [LChar(S2C_CONNECT), ' ', C.UserID, ' "', PLChar(@AddrBuf), '" 0']);
     LPrint(['"', PLChar(@UserName), '<', C.UserID, '><', SV_GetClientIDString(C^), '><>" connected (', PLChar(@AddrBuf), ').'#10]);
@@ -547,13 +523,14 @@ else
     SV_ExtractFromUserInfo(C^);
 
     Info_SetValueForStarKey(@C.UserInfo, '*sid', PLChar(IntToStr(C.Auth.UniqueID)), MAX_USERINFO_STRING);
-
-    C.UnreliableMessage.AllowOverflow := [FSB_ALLOWOVERFLOW];
+    
     C.UnreliableMessage.Name := PLChar(@C.NetName);
+    C.UnreliableMessage.AllowOverflow := [FSB_ALLOWOVERFLOW];
     C.UnreliableMessage.Data := @C.UnreliableMessageData;
     C.UnreliableMessage.MaxSize := SizeOf(C.UnreliableMessageData);
     C.UnreliableMessage.CurrentSize := 0;
 
+    C.UpdateInfo := True;
     C.UpdateInfoTime := 0;
    end;
  end;
@@ -675,10 +652,7 @@ SB.CurrentSize := 0;
 MSG_WriteLong(SB, OUTOFBAND_TAG);
 MSG_WriteChar(SB, S2C_INFO);
 if NoIP then
- if NoIPX then
-  MSG_WriteString(SB, 'LOOPBACK')
- else
-  MSG_WriteString(SB, NET_AdrToString(LocalIPX, NetAdrBuf, SizeOf(NetAdrBuf)))
+ MSG_WriteString(SB, 'LOOPBACK')
 else
  MSG_WriteString(SB, NET_AdrToString(LocalIP, NetAdrBuf, SizeOf(NetAdrBuf)));
 
@@ -767,10 +741,7 @@ S := PLChar(UInt(@SBData) + SB.CurrentSize);
 S := StrECopy(S, '\protocol\48\address\');
 
 if NoIP then
- if NoIPX then
-  S := StrECopy(S, 'LOOPBACK')
- else
-  S := StrECopy(S, NET_AdrToString(LocalIPX, NetAdrBuf, SizeOf(NetAdrBuf)))
+ S := StrECopy(S, 'LOOPBACK')
 else
  S := StrECopy(S, NET_AdrToString(LocalIP, NetAdrBuf, SizeOf(NetAdrBuf)));
 
@@ -842,7 +813,7 @@ end;
 
 procedure SVC_PlayerInfo;
 var
- SBData: array[1..8192] of Byte;
+ SBData: array[1..16384] of Byte;
  SB: TSizeBuf;
  Players: UInt;
  I: Int;
@@ -877,11 +848,11 @@ else
     C := @SVS.Clients[I];
     if (C.Active or C.Spawned or C.Connected) and (C.Entity <> nil) then
      begin
-      Inc(Players);
       MSG_WriteByte(SB, Players);
       MSG_WriteString(SB, @C.NetName);
       MSG_WriteLong(SB, Trunc(C.Entity.V.Frags));
-      MSG_WriteFloat(SB, RealTime - C.Netchan.FirstReceived);
+      MSG_WriteFloat(SB, RealTime - C.ConnectTime);
+      Inc(Players);
      end;
    end;
  end;
@@ -892,7 +863,7 @@ end;
 
 procedure SVC_RuleInfo;
 var
- SBData: array[1..8192] of Byte;
+ SBData: array[1..16384] of Byte;
  SB: TSizeBuf;
  Num: UInt;
  P: PCVar;
@@ -1014,8 +985,7 @@ Challenge := MSG_ReadLong;
 if Challenge = $FFFFFFFF then
  SVC_GetChallenge_New
 else
- if SV_CheckChallenge(NetFrom, Challenge, False) then
-  SVC_PlayerInfo;
+ SVC_PlayerInfo;
 end;
 
 procedure SVC_RuleInfo_New;
@@ -1026,8 +996,7 @@ Challenge := MSG_ReadLong;
 if Challenge = $FFFFFFFF then
  SVC_GetChallenge_New
 else
- if SV_CheckChallenge(NetFrom, Challenge, False) then
-  SVC_RuleInfo;
+ SVC_RuleInfo;
 end;
 
 function SV_NewRequestQuery: Boolean;
@@ -1039,7 +1008,13 @@ if MSG_BadRead then
  Result := False
 else
  case C of
-  C2S_INFO_NEW: begin SVC_Info_New; Result := True; end;
+  C2S_INFO_NEW:
+   begin
+    SVC_Info_New;
+    if sv_enableoldqueries.Value <> 0 then
+     SVC_Info;
+    Result := True;
+   end;
   C2S_PLAYERS_NEW: begin SVC_PlayerInfo_New; Result := True; end;
   C2S_RULES_NEW: begin SVC_RuleInfo_New; Result := True; end;
   C2S_SERVERQUERY_GETCHALLENGE: begin SVC_GetChallenge_New; Result := True; end;
@@ -1068,7 +1043,7 @@ if CheckIP(NetFrom) then
   S2 := MSG_ReadStringLine;
   Cmd_TokenizeString(S2);
   S := Cmd_Argv(0);
-  if (S = nil) or (S^ = #0) or MSG_BadRead then
+  if (S^ = #0) or MSG_BadRead then
    Exit;
   C := PLChar(UInt(S) + 1)^;
 
@@ -1118,7 +1093,19 @@ if CheckIP(NetFrom) then
                begin
                 SVC_RuleInfo;
                 Exit;
-               end;
+               end
+              else
+               if StrComp(S, 'infostring') = 0 then
+                begin
+                 SVC_InfoString;
+                 Exit;
+                end
+               else
+                if StrComp(S, 'details') = 0 then
+                 begin
+                  SVC_Info;
+                  Exit;
+                 end;
 
             SVC_GameDllQuery(S2);
            end;
@@ -1173,7 +1160,13 @@ if CheckIP(NetFrom) then
          SVC_PlayerInfo
         else
          if StrComp(S, 'rules') = 0 then
-          SVC_RuleInfo;
+          SVC_RuleInfo
+         else
+          if StrComp(S, 'infostring') = 0 then
+           SVC_InfoString
+          else
+           if StrComp(S, 'details') = 0 then
+            SVC_Info;
  end;
 end;
 
@@ -1222,6 +1215,8 @@ while NET_GetPacket(NS_SERVER) do
            SV_ProcessFile(C^, @C.Netchan.FileName);
           end;
         end;
+
+       Break;
       end;
     end;    
 end;

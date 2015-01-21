@@ -11,53 +11,53 @@ function PF_PrecacheSound(Name: PLChar): UInt32; cdecl;
 procedure PF_SetModel(var E: TEdict; ModelName: PLChar); cdecl;
 function PF_ModelIndex(Name: PLChar): Int32; cdecl;
 function PF_ModelFrames(Index: Int32): Int32; cdecl;
-procedure PF_SetSize(var E: TEdict; const MinS, MaxS: TVec3); cdecl;
+procedure PF_SetSize(var E: TEdict; var MinS, MaxS: TVec3); cdecl;
 procedure PF_ChangeLevel(S1, S2: PLChar); cdecl;
 procedure PF_SetSpawnParms(var E: TEdict); cdecl;
 procedure PF_SaveSpawnParms(var E: TEdict); cdecl;
-function PF_VecToYaw(const V: TVec3): Double; cdecl;
-procedure PF_VecToAngles(const Fwd: TVec3; out Angles: TVec3); cdecl;
-procedure PF_MoveToOrigin(var E: TEdict; const Target: TVec3; Distance: Single; MoveType: Int32); cdecl;
+function PF_VecToYaw(var V: TVec3): Double; cdecl;
+procedure PF_VecToAngles(var Fwd: TVec3; out Angles: TVec3); cdecl;
+procedure PF_MoveToOrigin(var E: TEdict; var Target: TVec3; Distance: Single; MoveType: Int32); cdecl;
 procedure PF_ChangeYaw(var E: TEdict); cdecl;
 procedure PF_ChangePitch(var E: TEdict); cdecl;
-function PF_FindEntityByString(const E: TEdict; Key, Value: PLChar): PEdict; cdecl;
-function PF_GetEntityIllum(const E: TEdict): Int32; cdecl;
-function PF_FindEntityInSphere(const E: TEdict; const Origin: TVec3; Distance: Single): PEdict; cdecl;
-function PF_CheckClient(const E: TEdict): PEdict; cdecl;
-function PF_PVSFindEntities(const E: TEdict): PEdict; cdecl;
+function PF_FindEntityByString(var E: TEdict; Key, Value: PLChar): PEdict; cdecl;
+function PF_GetEntityIllum(var E: TEdict): Int32; cdecl;
+function PF_FindEntityInSphere(var E: TEdict; var Origin: TVec3; Distance: Single): PEdict; cdecl;
+function PF_CheckClient(var E: TEdict): PEdict; cdecl;
+function PF_PVSFindEntities(var E: TEdict): PEdict; cdecl;
 
-procedure PF_MakeVectors(const V: TVec3); cdecl;
-procedure PF_AngleVectors(const Angles: TVec3; Fwd, Right, Up: PVec3); cdecl;
+procedure PF_MakeVectors(var V: TVec3); cdecl;
+procedure PF_AngleVectors(var Angles: TVec3; Fwd, Right, Up: PVec3); cdecl;
 
 function PF_Spawn: PEdict; cdecl;
 procedure PF_Remove(var E: TEdict); cdecl;
 function PF_CreateNamedEntity(ClassName: TStringOfs): PEdict; cdecl;
 
 procedure PF_MakeStatic(var E: TEdict); cdecl;
-function PF_CheckBottom(const E: TEdict): Int32; cdecl;
+function PF_CheckBottom(var E: TEdict): Int32; cdecl;
 function PF_DropToFloor(var E: TEdict): Int32; cdecl;
 function PF_WalkMove(var E: TEdict; Yaw, Distance: Single; Mode: Int32): Int32; cdecl;
 
-procedure PF_SetOrigin(var E: TEdict; const Origin: TVec3); cdecl;
-procedure PF_Sound(const E: TEdict; Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
-procedure PF_AmbientSound(const E: TEdict; const Origin: TVec3; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
+procedure PF_SetOrigin(var E: TEdict; var Origin: TVec3); cdecl;
+procedure PF_Sound(var E: TEdict; Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
+procedure PF_AmbientSound(var E: TEdict; var Origin: TVec3; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
 
-procedure PF_TraceLine(const V1, V2: TVec3; MoveType: Int32; E: PEdict; out Trace: TTraceResult); cdecl;
-procedure PF_TraceToss(const E: TEdict; IgnoreEnt: PEdict; out Trace: TTraceResult); cdecl;
-function PF_TraceMonsterHull(const E: TEdict; const V1, V2: TVec3; MoveType: Int32; EntityToSkip: PEdict; out Trace: TTraceResult): Int32; cdecl;
-procedure PF_TraceHull(const V1, V2: TVec3; MoveType, HullNumber: Int32; EntityToSkip: PEdict; out Trace: TTraceResult); cdecl;
-procedure PF_TraceModel(const V1, V2: TVec3; HullNumber: Int32; var E: TEdict; out Trace: TTraceResult); cdecl;
-function PF_TraceTexture(E: PEdict; const V1, V2: TVec3): PLChar; cdecl;
-procedure PF_TraceSphere(const V1, V2: TVec3; MoveType: Int32; Radius: Single; EntityToSkip: PEdict; out Trace: TTraceResult); cdecl;
+procedure PF_TraceLine(var V1, V2: TVec3; MoveType: Int32; E: PEdict; out Trace: TTraceResult); cdecl;
+procedure PF_TraceToss(var E: TEdict; IgnoreEnt: PEdict; out Trace: TTraceResult); cdecl;
+function PF_TraceMonsterHull(var E: TEdict; var V1, V2: TVec3; MoveType: Int32; EntityToSkip: PEdict; out Trace: TTraceResult): Int32; cdecl;
+procedure PF_TraceHull(var V1, V2: TVec3; MoveType, HullNumber: Int32; EntityToSkip: PEdict; out Trace: TTraceResult); cdecl;
+procedure PF_TraceModel(var V1, V2: TVec3; HullNumber: Int32; var E: TEdict; out Trace: TTraceResult); cdecl;
+function PF_TraceTexture(E: PEdict; var V1, V2: TVec3): PLChar; cdecl;
+procedure PF_TraceSphere(var V1, V2: TVec3; MoveType: Int32; Radius: Single; EntityToSkip: PEdict; out Trace: TTraceResult); cdecl;
 
 procedure PF_Aim(E: PEdict; Speed: Single; out VOut: TVec3); cdecl;
 procedure PF_LocalCmd(S: PLChar); cdecl;
 procedure PF_LocalExec; cdecl;
-procedure PF_StuffCmd(const E: TEdict; S: PLChar); cdecl; // varargs
-procedure PF_Particle(const Origin, Direction: TVec3; Color, Count: Single); cdecl;
+procedure PF_StuffCmd(var E: TEdict; S: PLChar); cdecl; // varargs
+procedure PF_Particle(var Origin, Direction: TVec3; Color, Count: Single); cdecl;
 procedure PF_LightStyle(Style: Int32; Value: PLChar); cdecl;
 function PF_DecalIndex(DecalName: PLChar): Int32; cdecl;
-function PF_PointContents(const Point: TVec3): Int32; cdecl;
+function PF_PointContents(var Point: TVec3): Int32; cdecl;
 
 procedure PF_MessageBegin(Dest, MessageType: Int32; Origin: PVec3; E: PEdict); cdecl;
 procedure PF_MessageEnd; cdecl;
@@ -80,16 +80,16 @@ procedure PF_AlertMessage(AlertType: TAlertType; Msg: PChar); cdecl;
 procedure PF_EngineFPrintF(F: Pointer; Msg: PLChar); cdecl;
 
 function PF_PvAllocEntPrivateData(var E: TEdict; Size: Int32): Pointer; cdecl;
-function PF_PvEntPrivateData(const E: TEdict): Pointer; cdecl;
+function PF_PvEntPrivateData(var E: TEdict): Pointer; cdecl;
 procedure PF_FreeEntPrivateData(var E: TEdict); cdecl;
 function PF_SzFromIndex(Index: TStringOfs): PLChar; cdecl;
 function PF_AllocEngineString(S: PLChar): TStringOfs; cdecl;
-function PF_GetVarsOfEnt(const E: TEdict): PEntVars; cdecl;
+function PF_GetVarsOfEnt(var E: TEdict): PEntVars; cdecl;
 function PF_PEntityOfEntOffset(Offset: UInt32): PEdict; cdecl;
-function PF_EntOffsetOfPEntity(const E: TEdict): UInt32; cdecl;
+function PF_EntOffsetOfPEntity(var E: TEdict): UInt32; cdecl;
 function PF_IndexOfEdict(E: PEdict): Int32; cdecl;
 function PF_PEntityOfEntIndex(Index: Int32): PEdict; cdecl;
-function PF_FindEntityByVars(const E: TEntVars): PEdict; cdecl;
+function PF_FindEntityByVars(var E: TEntVars): PEdict; cdecl;
 
 function PF_GetModelPtr(E: PEdict): Pointer; cdecl;
 function PF_RegUserMsg(Name: PLChar; Size: Int32): Int32; cdecl;
@@ -98,7 +98,7 @@ procedure PF_GetBonePosition(var E: TEdict; Bone: Int32; out Origin: TVec3; out 
 function PF_FunctionFromName(Name: PLChar): Pointer; cdecl;
 function PF_NameForFunction(Func: Pointer): PLChar; cdecl;
 
-procedure PF_ClientPrintF(const E: TEdict; PrintType: TPrintType; Msg: PLChar); cdecl;
+procedure PF_ClientPrintF(var E: TEdict; PrintType: TPrintType; Msg: PLChar); cdecl;
 procedure PF_ServerPrint(Msg: PLChar); cdecl;
 function PF_Cmd_Args: PLChar; cdecl;
 function PF_Cmd_Argv(I: Int32): PLChar; cdecl;
@@ -114,9 +114,9 @@ function PF_CRC32_Final(CRC: TCRC): TCRC; cdecl;
 function PF_RandomLong(Low, High: Int32): Int32; cdecl;
 function PF_RandomFloat(Low, High: Single): Double; cdecl; // single?
 
-procedure PF_SetView(const Entity, Target: TEdict); cdecl;
+procedure PF_SetView(var Entity, Target: TEdict); cdecl;
 function PF_Time: Double; cdecl;
-procedure PF_CrosshairAngle(const Entity: TEdict; Pitch, Yaw: Single); cdecl;
+procedure PF_CrosshairAngle(var Entity: TEdict; Pitch, Yaw: Single); cdecl;
 function PF_LoadFileForMe(Name: PLChar; Length: PUInt32): Pointer; cdecl;
 procedure PF_FreeFile(Buffer: Pointer); cdecl;
 procedure PF_EndSection(Name: PLChar); cdecl;
@@ -124,55 +124,55 @@ function PF_CompareFileTime(S1, S2: PLChar; CompareResult: PInt32): Int32; cdecl
 procedure PF_GetGameDir(Buffer: PLChar); cdecl;
 
 procedure PF_CVar_RegisterVariable(var C: TCVar); cdecl;
-procedure PF_FadeVolume(const Entity: TEdict; FadePercent, FadeOutSeconds, HoldTime, FadeInSeconds: Int32); cdecl;
+procedure PF_FadeVolume(var Entity: TEdict; FadePercent, FadeOutSeconds, HoldTime, FadeInSeconds: Int32); cdecl;
 procedure PF_SetClientMaxSpeed(var E: TEdict; Speed: Single); cdecl;
 
 function PF_CreateFakeClient(Name: PLChar): PEdict; cdecl;
-procedure PF_RunPlayerMove(const FakeClient: TEdict; const Angles: TVec3; FwdMove, SideMove, UpMove: Single; Buttons: Int16; Impulse, MSec: Byte); cdecl;
+procedure PF_RunPlayerMove(var FakeClient: TEdict; var Angles: TVec3; FwdMove, SideMove, UpMove: Single; Buttons: Int16; Impulse, MSec: Byte); cdecl;
 function PF_NumberOfEntities: UInt32; cdecl;
 function PF_GetInfoKeyBuffer(E: PEdict): PLChar; cdecl;
 function PF_InfoKeyValue(Buffer, Key: PLChar): PLChar; cdecl;
 procedure PF_SetKeyValue(Buffer, Key, Value: PLChar); cdecl;
 procedure PF_SetClientKeyValue(Index: Int32; Buffer, Key, Value: PLChar); cdecl;
 function PF_IsMapValid(Name: PLChar): Int32; cdecl;
-procedure PF_StaticDecal(const Origin: TVec3; DecalIndex, EntityIndex, ModelIndex: Int32); cdecl;
+procedure PF_StaticDecal(var Origin: TVec3; DecalIndex, EntityIndex, ModelIndex: Int32); cdecl;
 function PF_PrecacheGeneric(Name: PLChar): UInt32; cdecl;
-function PF_GetPlayerUserID(const E: TEdict): Int32; cdecl;
-procedure PF_BuildSoundMsg(const E: TEdict; Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch, Dest, MessageType: Int32; const Origin: TVec3; MsgEnt: PEdict); cdecl;
+function PF_GetPlayerUserID(var E: TEdict): Int32; cdecl;
+procedure PF_BuildSoundMsg(var E: TEdict; Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch, Dest, MessageType: Int32; var Origin: TVec3; MsgEnt: PEdict); cdecl;
 function PF_IsDedicatedServer: Int32; cdecl;
 function PF_CVarGetPointer(Name: PLChar): PCVar; cdecl;
-function PF_GetPlayerWONID(const E: TEdict): Int32; cdecl;
+function PF_GetPlayerWONID(var E: TEdict): Int32; cdecl;
 
 procedure PF_RemoveKey(Data, Key: PLChar); cdecl;
-function PF_GetPhysicsKeyValue(const E: TEdict; Key: PLChar): PLChar; cdecl;
-procedure PF_SetPhysicsKeyValue(const E: TEdict; Key, Value: PLChar); cdecl;
-function PF_GetPhysicsInfoString(const E: TEdict): PLChar; cdecl;
+function PF_GetPhysicsKeyValue(var E: TEdict; Key: PLChar): PLChar; cdecl;
+procedure PF_SetPhysicsKeyValue(var E: TEdict; Key, Value: PLChar); cdecl;
+function PF_GetPhysicsInfoString(var E: TEdict): PLChar; cdecl;
 function PF_PrecacheEvent(EventType: Int32; Name: PLChar): UInt16; cdecl;
-procedure PF_PlaybackEvent(Flags: UInt32; const E: TEdict; EventIndex: UInt16; Delay: Single; const Origin, Angles: TVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32); cdecl;
+procedure PF_PlaybackEvent(Flags: UInt32; E: PEdict; EventIndex: UInt16; Delay: Single; Origin, Angles: PVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32); cdecl;
 
-function PF_SetFatPVS(const Origin: TVec3): PByte; cdecl;
-function PF_SetFatPAS(const Origin: TVec3): PByte; cdecl;
+function PF_SetFatPVS(var Origin: TVec3): PByte; cdecl;
+function PF_SetFatPAS(var Origin: TVec3): PByte; cdecl;
 function PF_CheckVisibility(var E: TEdict; VisSet: PByte): Int32; cdecl;
 
 procedure PF_Delta_SetField(var D: TDelta; FieldName: PLChar); cdecl;
 procedure PF_Delta_UnsetField(var D: TDelta; FieldName: PLChar); cdecl;
 procedure PF_Delta_AddEncoder(Name: PLChar; Func: TDeltaEncoder); cdecl;
 function PF_GetCurrentPlayer: Int32; cdecl;
-function PF_CanSkipPlayer(const E: TEdict): Int32; cdecl;
-function PF_Delta_FindField(const D: TDelta; FieldName: PLChar): Int32; cdecl;
+function PF_CanSkipPlayer(var E: TEdict): Int32; cdecl;
+function PF_Delta_FindField(var D: TDelta; FieldName: PLChar): Int32; cdecl;
 procedure PF_Delta_SetFieldByIndex(var D: TDelta; FieldNumber: UInt32); cdecl;
 procedure PF_Delta_UnsetFieldByIndex(var D: TDelta; FieldNumber: UInt32); cdecl;
 
 procedure PF_SetGroupMask(Mask, Op: Int32); cdecl;
-function PF_CreateInstancedBaseline(ClassName: UInt32; const Baseline: TEntityState): Int32; cdecl;
+function PF_CreateInstancedBaseline(ClassName: UInt32; var Baseline: TEntityState): Int32; cdecl;
 procedure PF_CVar_DirectSet(var C: TCVar; Value: PLChar); cdecl;
 procedure PF_ForceUnmodified(FT: TForceType; MinS, MaxS: PVec3; FileName: PLChar); cdecl;
-procedure PF_GetPlayerStats(const E: TEdict; out Ping, PacketLoss: Int32); cdecl;
+procedure PF_GetPlayerStats(var E: TEdict; out Ping, PacketLoss: Int32); cdecl;
 procedure PF_AddServerCommand(Name: PLChar; Func: TCmdFunction); cdecl;
 function PF_Voice_GetClientListening(Receiver, Sender: Int32): Int32; cdecl;
 function PF_Voice_SetClientListening(Receiver, Sender, IsListening: Int32): Int32; cdecl;
 
-function PF_GetPlayerAuthID(const E: TEdict): PLChar; cdecl;
+function PF_GetPlayerAuthID(var E: TEdict): PLChar; cdecl;
 
 function PF_SequenceGet(FileName, EntryName: PLChar): Pointer; cdecl;
 function PF_SequencePickSentence(GroupName: PLChar; PickMethod: Int32; var Picked: Int32): Pointer; cdecl;
@@ -211,8 +211,6 @@ var
  MsgData: array[1..512] of Byte;
  MsgBuffer: TSizeBuf = (Name: 'MessageBegin/End'; AllowOverflow: []; Data: @MsgData; MaxSize: SizeOf(MsgData); CurrentSize: 0);
 
- LastSpawnCount: UInt32 = 0;
-
 function PF_PrecacheModel(Name: PLChar): UInt32; cdecl;
 var
  B: Boolean;
@@ -221,7 +219,7 @@ begin
 if Name = nil then
  Host_Error('PF_PrecacheModel: NULL pointer.')
 else
- if PR_IsEmptyString(Name) then
+ if Name^ <= ' ' then
   Host_Error(['PF_PrecacheModel: Bad string "', Name, '".'])
  else
   begin
@@ -229,43 +227,32 @@ else
    if B then
     Inc(UInt(Name));
 
+   for I := 0 to MAX_MODELS - 1 do
+    if SV.PrecachedModelNames[I] = nil then
+     if SV.State <> SS_LOADING then
+      Break
+     else
+      begin
+       SV.PrecachedModelNames[I] := Name;
+       SV.PrecachedModels[I] := Mod_ForName(Name, True, True);
+       if not B then
+        Include(SV.PrecachedModelFlags[I], RES_FATALIFMISSING);
+
+       Result := I;
+       Exit;
+      end
+    else
+     if StrIComp(Name, SV.PrecachedModelNames[I]) = 0 then
+      begin
+       Result := I;
+       Exit;
+      end;
+
    if SV.State = SS_LOADING then
-    begin
-     for I := 0 to MAX_MODELS - 1 do
-      if SV.PrecachedModelNames[I] = nil then
-       begin
-        SV.PrecachedModelNames[I] := Name;
-        SV.PrecachedModels[I] := Mod_ForName(Name, True, True);
-        if not B then
-         Include(SV.PrecachedModelFlags[I], RES_FATALIFMISSING);
-
-        Result := I;
-        Exit;
-       end
-      else
-       if StrIComp(SV.PrecachedModelNames[I], Name) = 0 then
-        begin
-         Result := I;
-         Exit;
-        end;
-
-     Host_Error(['PF_PrecacheModel: Model "', Name, '" failed to precache because the item count is over the MAX_MODELS (', MAX_MODELS, ') limit.' + LineBreak +
-                 'Reduce the number of brush models and/or regular models in the map to correct this.']);
-    end
+    Host_Error(['PF_PrecacheModel: Model "', Name, '" failed to precache because the item count is over the MAX_MODELS (', MAX_MODELS, ') limit.' + LineBreak +
+                'Reduce the number of brush models and/or regular models in the map to correct this.'])
    else
-    begin
-     for I := 0 to MAX_MODELS - 1 do
-      if SV.PrecachedModelNames[I] = nil then
-       Break
-      else
-       if StrIComp(SV.PrecachedModelNames[I], Name) = 0 then
-        begin
-         Result := I;
-         Exit;
-        end;
-
-     Host_Error(['PF_PrecacheModel: "', Name, '": Precache can only be done in spawn functions, or when the server is loading.']);
-    end;
+    Host_Error(['PF_PrecacheModel: "', Name, '": Precache can only be done in spawn functions, or when the server is loading.']);
   end;
 
 Result := 0;
@@ -278,47 +265,36 @@ begin
 if Name = nil then
  Host_Error('PF_PrecacheSound: NULL pointer.')
 else
- if PR_IsEmptyString(Name) then
+ if Name^ <= ' ' then
   Host_Error(['PF_PrecacheSound: Bad string "', Name, '".'])
  else
   if Name^ = '!' then
    Host_Error(['PF_PrecacheSound: "', Name, '": Can''t precache sentence names.'])
   else
    begin
+    for I := 0 to MAX_SOUNDS - 1 do
+     if SV.PrecachedSoundNames[I] = nil then
+      if SV.State <> SS_LOADING then
+       Break
+      else
+       begin
+        SV.PrecachedSoundNames[I] := Name;
+        SV.SoundTableReady := False;
+        Result := I;
+        Exit;
+       end
+     else
+      if StrIComp(Name, SV.PrecachedSoundNames[I]) = 0 then
+       begin
+        Result := I;
+        Exit;
+       end;
+
     if SV.State = SS_LOADING then
-     begin
-      SV.SoundTableReady := False;
-      for I := 0 to MAX_SOUNDS - 1 do
-       if SV.PrecachedSoundNames[I] = nil then
-        begin
-         SV.PrecachedSoundNames[I] := Name;
-         Result := I;
-         Exit;
-        end
-       else
-        if StrIComp(SV.PrecachedSoundNames[I], Name) = 0 then
-         begin
-          Result := I;
-          Exit;
-         end;
-
-      Host_Error(['PF_PrecacheSound: Sound "', Name, '" failed to precache because the item count is over the MAX_SOUNDS (', MAX_SOUNDS, ') limit.' + LineBreak +
-                  'Reduce the number of sound entities and ambient sounds in the map to correct this.']);
-     end
+     Host_Error(['PF_PrecacheSound: Sound "', Name, '" failed to precache because the item count is over the MAX_SOUNDS (', MAX_SOUNDS, ') limit.' + LineBreak +
+                 'Reduce the number of sound entities and ambient sounds in the map to correct this.'])
     else
-     begin
-      for I := 0 to MAX_SOUNDS - 1 do
-       if SV.PrecachedSoundNames[I] = nil then
-        Break
-       else
-        if StrIComp(SV.PrecachedSoundNames[I], Name) = 0 then
-         begin
-          Result := I;
-          Exit;
-         end;
-
-      Host_Error(['PF_PrecacheSound: "', Name, '": Precache can only be done in spawn functions, or when the server is loading.']);
-     end;
+     Host_Error(['PF_PrecacheSound: "', Name, '": Precache can only be done in spawn functions, or when the server is loading.']);
    end;
 
 Result := 0;
@@ -328,22 +304,25 @@ procedure PF_SetModel(var E: TEdict; ModelName: PLChar); cdecl;
 var
  I: Int;
 begin
-for I := 0 to MAX_MODELS - 1 do
- if SV.PrecachedModelNames[I] = nil then
-  Break
- else
-  if StrIComp(SV.PrecachedModelNames[I], ModelName) = 0 then
-   begin
-    E.V.ModelIndex := I;
-    E.V.Model := UInt(ModelName) - PRStrings;
-    if SV.PrecachedModels[I] <> nil then
-     SetMinMaxSize(E, SV.PrecachedModels[I].MinS, SV.PrecachedModels[I].MaxS)
-    else
-     SetMinMaxSize(E, Vec3Origin, Vec3Origin);
-    Exit;
-   end;
+if (@E <> nil) and (ModelName <> nil) then
+ begin
+  for I := 0 to MAX_MODELS - 1 do
+   if SV.PrecachedModelNames[I] = nil then
+    Break
+   else
+    if StrIComp(ModelName, SV.PrecachedModelNames[I]) = 0 then
+     begin
+      E.V.ModelIndex := I;
+      E.V.Model := UInt(ModelName) - PRStrings;
+      if SV.PrecachedModels[I] <> nil then
+       SetMinMaxSize(E, SV.PrecachedModels[I].MinS, SV.PrecachedModels[I].MaxS)
+      else
+       SetMinMaxSize(E, Vec3Origin, Vec3Origin);
+      Exit;
+     end;
 
-Host_Error(['PF_SetModel: "', ModelName, '" is not precached.']);
+  Host_Error(['PF_SetModel: Model "', ModelName, '" is not precached.']);
+ end;
 end;
 
 function PF_ModelIndex(Name: PLChar): Int32; cdecl;
@@ -362,45 +341,55 @@ else
  Result := ModelFrameIndex(SV.PrecachedModels[Index]^);
 end;
 
-procedure PF_SetSize(var E: TEdict; const MinS, MaxS: TVec3); cdecl;
+procedure PF_SetSize(var E: TEdict; var MinS, MaxS: TVec3); cdecl;
 begin
-SetMinMaxSize(E, MinS, MaxS);
+if (@E <> nil) and (@MinS <> nil) and (@MaxS <> nil) then
+ SetMinMaxSize(E, MinS, MaxS);
 end;
 
+var
+ LastSpawnCount: UInt32 = 0;
+ 
 procedure PF_ChangeLevel(S1, S2: PLChar); cdecl;
 begin
-if LastSpawnCount <> SVS.SpawnCount then
+if (S1 <> nil) and (LastSpawnCount <> SVS.SpawnCount) then
  begin
   LastSpawnCount := SVS.SpawnCount;
   SV_SkipUpdates;
   if S2 <> nil then
-   CBuf_AddText(['changelevel2 ', S1, ' ', S2, #$A])
+   CBuf_AddText(['changelevel2 ', S1, ' ', S2, #10])
   else
-   CBuf_AddText(['changelevel ', S1, #$A]);
- end;  
+   CBuf_AddText(['changelevel ', S1, #10]);
+ end;
 end;
 
 procedure PF_SetSpawnParms(var E: TEdict); cdecl;
 var
  I: UInt;
 begin
-I := NUM_FOR_EDICT(E);
-if (I = 0) or (I > SVS.MaxClients) then
- Host_Error('PF_SetSpawnParms: Entity is not a client.');
+if @E <> nil then
+ begin
+  I := NUM_FOR_EDICT(E);
+  if (I = 0) or (I > SVS.MaxClients) then
+   Host_Error('PF_SetSpawnParms: Entity is not a client.');
+ end;
 end;
 
 procedure PF_SaveSpawnParms(var E: TEdict); cdecl;
 var
  I: UInt;
 begin
-I := NUM_FOR_EDICT(E);
-if (I = 0) or (I > SVS.MaxClients) then
- Host_Error('PF_SaveSpawnParms: Entity is not a client.');
+if @E <> nil then
+ begin
+  I := NUM_FOR_EDICT(E);
+  if (I = 0) or (I > SVS.MaxClients) then
+   Host_Error('PF_SaveSpawnParms: Entity is not a client.');
+ end;
 end;
 
-function PF_VecToYaw(const V: TVec3): Double; cdecl;
+function PF_VecToYaw(var V: TVec3): Double; cdecl;
 begin
-if (V[0] <> 0) or (V[1] <> 0) then
+if (@V <> nil) and ((V[0] <> 0) or (V[1] <> 0)) then
  begin
   Result := Trunc(ArcTan2(V[1], V[0]) * 180 / M_PI);
   if Result < 0 then
@@ -410,20 +399,25 @@ else
  Result := 0;
 end;
 
-procedure PF_VecToAngles(const Fwd: TVec3; out Angles: TVec3); cdecl;
+procedure PF_VecToAngles(var Fwd: TVec3; out Angles: TVec3); cdecl;
 begin
-VectorAngles(Fwd, Angles);
+if (@Fwd <> nil) and (@Angles <> nil) then
+ VectorAngles(Fwd, Angles);                
 end;
 
-procedure PF_MoveToOrigin(var E: TEdict; const Target: TVec3; Distance: Single; MoveType: Int32); cdecl;
+procedure PF_MoveToOrigin(var E: TEdict; var Target: TVec3; Distance: Single; MoveType: Int32); cdecl;
 begin
-SV_MoveToOrigin(E, Target, Distance, MoveType);
+if (@E <> nil) and (@Target <> nil) then
+ SV_MoveToOrigin(E, Target, Distance, MoveType);
 end;
 
 procedure PF_ChangeYaw(var E: TEdict); cdecl;
 var
  Ideal, Current, Move, Speed: Single;
 begin
+if @E = nil then
+ Exit;
+
 Current := AngleMod(E.V.Angles[1]);
 Ideal := E.V.IdealYaw;
 Speed := E.V.YawSpeed;
@@ -454,6 +448,9 @@ procedure PF_ChangePitch(var E: TEdict); cdecl;
 var
  Ideal, Current, Move, Speed: Single;
 begin
+if @E = nil then
+ Exit;
+ 
 Current := AngleMod(E.V.Angles[0]);
 Ideal := E.V.IdealPitch;
 Speed := E.V.PitchSpeed;
@@ -529,7 +526,10 @@ else
               if StrComp(Name, 'globalname') = 0 then
                Result := UInt(@TEntVars(nil^).GlobalName)
               else
-               Result := -1;
+               begin
+                DPrint(['GetIndex: Unknown key name ("', Name, '").']);
+                Result := -1;
+               end;
  end;
 end;
 
@@ -556,7 +556,7 @@ for I := EntIndex + 1 to SV.NumEdicts - 1 do
 Result := @SV.Edicts[0];
 end;  
 
-function PF_FindEntityByString(const E: TEdict; Key, Value: PLChar): PEdict; cdecl;
+function PF_FindEntityByString(var E: TEdict; Key, Value: PLChar): PEdict; cdecl;
 var
  Index: Int;
 begin
@@ -570,7 +570,7 @@ else
   Result := FindEntityByFieldIndex(0, Index, Value);
 end;
 
-function PF_GetEntityIllum(const E: TEdict): Int32; cdecl;
+function PF_GetEntityIllum(var E: TEdict): Int32; cdecl;
 begin
 if @E <> nil then
  if NUM_FOR_EDICT(E) > SVS.MaxClients then
@@ -581,13 +581,19 @@ else
  Result := -1;
 end;
 
-function PF_FindEntityInSphere(const E: TEdict; const Origin: TVec3; Distance: Single): PEdict; cdecl;
+function PF_FindEntityInSphere(var E: TEdict; var Origin: TVec3; Distance: Single): PEdict; cdecl;
 var
  J, K: UInt;
  I: Int;
  P: PEdict;
  F, F2, F3: Single;
 begin
+if @Origin = nil then
+ begin
+  Result := @SV.Edicts[0];
+  Exit;
+ end;
+
 if @E <> nil then
  K := NUM_FOR_EDICT(E) + 1
 else
@@ -666,7 +672,7 @@ Move(PVS^, CheckPVS, (SV.WorldModel.NumLeafs + 7) shr 3);
 Result := I;
 end;
 
-function PF_CheckClient(const E: TEdict): PEdict; cdecl;
+function PF_CheckClient(var E: TEdict): PEdict; cdecl;
 var
  P: PEdict;
  View: TVec3;
@@ -679,9 +685,9 @@ if SV.Time - SV.LastPVSCheckTime >= 0.1 then
  end;
 
 P := @SV.Edicts[SV.LastPVSClient];
-if (P.Free = 0) and (P.PrivateData <> nil) then
+if (P.Free = 0) and (P.PrivateData <> nil) and ((P.V.Flags and FL_NOTARGET) = 0) then
  begin
-  VectorAdd(E.V.ViewOfs, E.V.Origin, View);
+  VectorAdd(E.V.Origin, E.V.ViewOfs, View);
   Leaf := (UInt(Mod_PointInLeaf(View, SV.WorldModel^)) - UInt(SV.WorldModel.Leafs)) div SizeOf(TMLeaf) - 1;
   if (Leaf >= 0) and (((1 shl (Leaf and 7)) and CheckPVS[Leaf shr 3]) > 0) then
    begin
@@ -693,19 +699,24 @@ if (P.Free = 0) and (P.PrivateData <> nil) then
 Result := @SV.Edicts[0];
 end;
 
-function PF_PVSFindEntities(const E: TEdict): PEdict; cdecl;
+function PF_PVSFindEntities(var E: TEdict): PEdict; cdecl;
 begin
-Result := PVSFindEntities(E);
+if @E <> nil then
+ Result := PVSFindEntities(E)
+else
+ Result := nil;
 end;
 
-procedure PF_MakeVectors(const V: TVec3); cdecl;
+procedure PF_MakeVectors(var V: TVec3); cdecl;
 begin
-AngleVectors(V, @GlobalVars.Fwd, @GlobalVars.Right, @GlobalVars.Up);
+if @V <> nil then
+ AngleVectors(V, @GlobalVars.Fwd, @GlobalVars.Right, @GlobalVars.Up);
 end;
 
-procedure PF_AngleVectors(const Angles: TVec3; Fwd, Right, Up: PVec3); cdecl;
+procedure PF_AngleVectors(var Angles: TVec3; Fwd, Right, Up: PVec3); cdecl;
 begin
-AngleVectors(Angles, Fwd, Right, Up);
+if @Angles <> nil then
+ AngleVectors(Angles, Fwd, Right, Up);
 end;
 
 function PF_Spawn: PEdict; cdecl;
@@ -715,7 +726,8 @@ end;
 
 procedure PF_Remove(var E: TEdict); cdecl;
 begin
-ED_Free(E);
+if @E <> nil then
+ ED_Free(E);
 end;
 
 function PF_CreateNamedEntity(ClassName: TStringOfs): PEdict; cdecl;
@@ -724,29 +736,32 @@ var
  F: TEntityInitFunc;
 begin
 if ClassName = 0 then
- Sys_Error('PF_CreateNamedEntity: Invalid classname.');
-
-E := ED_Alloc;
-E.V.ClassName := ClassName;
-
-F := GetDispatch(PLChar(PRStrings + ClassName));
-if @F <> nil then
- begin
-  F(E.V);
-  Result := E;
- end
+ Sys_Error('PF_CreateNamedEntity: Invalid classname.')
 else
  begin
-  ED_Free(E^);
-  DPrint(['Can''t create entity: "', PLChar(PRStrings + ClassName), '".']);
-  Result := nil;
+  F := GetDispatch(PLChar(PRStrings + ClassName));
+  if @F <> nil then
+   begin
+    E := ED_Alloc;
+    E.V.ClassName := ClassName;
+    F(E.V);
+    Result := E;
+    Exit;
+   end
+  else
+   DPrint(['Can''t create entity: "', PLChar(PRStrings + ClassName), '".']);
  end;
+
+Result := nil;
 end;
 
 procedure PF_MakeStatic(var E: TEdict); cdecl;
 var
  I: UInt;
 begin
+if @E = nil then
+ Exit;
+
 MSG_WriteByte(SV.Signon, SVC_SPAWNSTATIC);
 MSG_WriteShort(SV.Signon, SV_ModelIndex(PLChar(PRStrings + E.V.Model)));
 MSG_WriteByte(SV.Signon, E.V.Sequence);
@@ -770,9 +785,12 @@ if E.V.RenderMode <> 0 then
 ED_Free(E);
 end;
 
-function PF_CheckBottom(const E: TEdict): Int32; cdecl;
+function PF_CheckBottom(var E: TEdict): Int32; cdecl;
 begin
-Result := Int32(SV_CheckBottom(E));
+if @E <> nil then
+ Result := Int32(SV_CheckBottom(E))
+else
+ Result := 0;
 end;
 
 function PF_DropToFloor(var E: TEdict): Int32; cdecl;
@@ -780,6 +798,12 @@ var
  V: TVec3;
  Trace: TTrace;
 begin
+if @E = nil then
+ begin
+  Result := 0;
+  Exit;
+ end;
+
 V[0] := E.V.Origin[0];
 V[1] := E.V.Origin[1];
 V[2] := E.V.Origin[2] - 256;
@@ -822,13 +846,16 @@ else
  Result := 0;
 end;
 
-procedure PF_SetOrigin(var E: TEdict; const Origin: TVec3); cdecl;
+procedure PF_SetOrigin(var E: TEdict; var Origin: TVec3); cdecl;
 begin
-E.V.Origin := Origin;
-SV_LinkEdict(E, False);
+if (@E <> nil) and (@Origin <> nil) then
+ begin
+  E.V.Origin := Origin;
+  SV_LinkEdict(E, False);
+ end;
 end;
 
-procedure PF_Sound(const E: TEdict; Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
+procedure PF_Sound(var E: TEdict; Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
 begin
 if (Volume < 0) or (Volume > 1) then
  Sys_Error(['PF_Sound: Volume = ', Volume, '.'])
@@ -845,11 +872,14 @@ else
 SV_StartSound(False, E, Channel, Sample, Trunc(Volume * 255), Attn, Flags, Pitch);
 end;
 
-procedure PF_AmbientSound(const E: TEdict; const Origin: TVec3; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
+procedure PF_AmbientSound(var E: TEdict; var Origin: TVec3; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
 var
  Index, I: Int;
  SB: PSizeBuf;
 begin
+if (@E = nil) or (@Origin = nil) or (Sample = nil) then
+ Exit;
+ 
 if Sample^ = '!' then
  begin
   Flags := Flags or SND_SENTENCE;
@@ -867,7 +897,7 @@ else
    if SV.PrecachedSoundNames[I] = nil then
     Break
    else
-    if StrIComp(SV.PrecachedSoundNames[I], Sample) = 0 then
+    if StrIComp(Sample, SV.PrecachedSoundNames[I]) = 0 then
      begin
       Index := I;
       Break;
@@ -884,6 +914,12 @@ if (Flags and SND_SPAWNING) > 0 then
  SB := @SV.Signon
 else
  SB := @SV.Datagram;
+
+if SB.CurrentSize > SB.MaxSize - 16 then
+ begin
+  DPrint('PF_AmbientSound call ignored, would overflow.');
+  Exit;
+ end;
 
 MSG_WriteByte(SB^, SVC_SPAWNSTATICSOUND);
 for I := 0 to 2 do
@@ -906,8 +942,11 @@ GlobalVars.TraceFlags := 0;
 SV_SetGlobalTrace(Trace);
 end;
 
-procedure PF_TraceLine(const V1, V2: TVec3; MoveType: Int32; E: PEdict; out Trace: TTraceResult); cdecl;
+procedure PF_TraceLine(var V1, V2: TVec3; MoveType: Int32; E: PEdict; out Trace: TTraceResult); cdecl;
 begin
+if (@V1 = nil) or (@V2 = nil) or (@Trace = nil) then
+ Exit;
+
 if E = nil then
  E := @SV.Edicts[0];
 
@@ -934,8 +973,11 @@ SV_Trace_Toss(Trace, E, IgnoreEnt);
 SV_SetGlobalTrace(Trace);
 end;
 
-procedure PF_TraceToss(const E: TEdict; IgnoreEnt: PEdict; out Trace: TTraceResult); cdecl;
+procedure PF_TraceToss(var E: TEdict; IgnoreEnt: PEdict; out Trace: TTraceResult); cdecl;
 begin
+if (@E = nil) or (@Trace = nil) then
+ Exit;
+
 if IgnoreEnt = nil then
  IgnoreEnt := @SV.Edicts[0];
 
@@ -954,32 +996,40 @@ Trace.EndPos := GlobalVars.TraceEndPos;
 Trace.PlaneNormal := GlobalVars.TracePlaneNormal;
 end;
 
-function PF_TraceMonsterHull(const E: TEdict; const V1, V2: TVec3; MoveType: Int32; EntityToSkip: PEdict; out Trace: TTraceResult): Int32; cdecl;
+function PF_TraceMonsterHull(var E: TEdict; var V1, V2: TVec3; MoveType: Int32; EntityToSkip: PEdict; out Trace: TTraceResult): Int32; cdecl;
 var
  T: TTrace;
 begin
-SV_Move(T, V1, E.V.MinS, E.V.MaxS, V2, MoveType, EntityToSkip, (E.V.Flags and FL_MONSTERCLIP) > 0);
-if @Trace <> nil then
+if (@E = nil) or (@V1 = nil) or (@V2 = nil) or (@Trace = nil) then
+ Result := 0
+else
  begin
-  Trace.AllSolid := T.AllSolid;
-  Trace.StartSolid := T.StartSolid;
-  Trace.InOpen := T.InOpen;
-  Trace.InWater := T.InWater;
-  Trace.Fraction := T.Fraction;
-  Trace.PlaneDist := T.Plane.Distance;
-  Trace.Entity := T.Ent;
-  Trace.HitGroup := T.HitGroup;
-  Trace.EndPos := T.EndPos;
-  Trace.PlaneNormal := T.Plane.Normal;
- end;
+  SV_Move(T, V1, E.V.MinS, E.V.MaxS, V2, MoveType, EntityToSkip, (E.V.Flags and FL_MONSTERCLIP) > 0);
+  if @Trace <> nil then
+   begin
+    Trace.AllSolid := T.AllSolid;
+    Trace.StartSolid := T.StartSolid;
+    Trace.InOpen := T.InOpen;
+    Trace.InWater := T.InWater;
+    Trace.Fraction := T.Fraction;
+    Trace.PlaneDist := T.Plane.Distance;
+    Trace.Entity := T.Ent;
+    Trace.HitGroup := T.HitGroup;
+    Trace.EndPos := T.EndPos;
+    Trace.PlaneNormal := T.Plane.Normal;
+   end;
 
-Result := Int32((T.AllSolid <> 0) or (T.Fraction <> 1));
+  Result := Int32((T.AllSolid <> 0) or (T.Fraction <> 1));
+ end;
 end;
 
-procedure PF_TraceHull(const V1, V2: TVec3; MoveType, HullNumber: Int32; EntityToSkip: PEdict; out Trace: TTraceResult); cdecl;
+procedure PF_TraceHull(var V1, V2: TVec3; MoveType, HullNumber: Int32; EntityToSkip: PEdict; out Trace: TTraceResult); cdecl;
 var
  T: TTrace;
 begin
+if (@V1 = nil) or (@V2 = nil) or (@Trace = nil) then
+ Exit;
+ 
 if (HullNumber < 0) or (HullNumber > 3) then
  HullNumber := 0;
 
@@ -996,12 +1046,15 @@ Trace.EndPos := T.EndPos;
 Trace.PlaneNormal := T.Plane.Normal;
 end;
 
-procedure PF_TraceModel(const V1, V2: TVec3; HullNumber: Int32; var E: TEdict; out Trace: TTraceResult); cdecl;
+procedure PF_TraceModel(var V1, V2: TVec3; HullNumber: Int32; var E: TEdict; out Trace: TTraceResult); cdecl;
 var
  P: PModel;
  Solid, MoveType: Int32;
  T: TTrace;
 begin
+if (@E = nil) or (@V1 = nil) or (@V2 = nil) or (@Trace = nil) then
+ Exit;
+
 if (HullNumber < 0) or (HullNumber > 3) then
  HullNumber := 0;
 
@@ -1038,12 +1091,12 @@ Trace.EndPos := T.EndPos;
 Trace.PlaneNormal := T.Plane.Normal;
 end;
 
-function PF_TraceTexture(E: PEdict; const V1, V2: TVec3): PLChar; cdecl;
+function PF_TraceTexture(E: PEdict; var V1, V2: TVec3): PLChar; cdecl;
 begin
 Result := SV_TraceTexture(E, V1, V2);
 end;
 
-procedure PF_TraceSphere(const V1, V2: TVec3; MoveType: Int32; Radius: Single; EntityToSkip: PEdict; out Trace: TTraceResult); cdecl;
+procedure PF_TraceSphere(var V1, V2: TVec3; MoveType: Int32; Radius: Single; EntityToSkip: PEdict; out Trace: TTraceResult); cdecl;
 begin
 Sys_Error('PF_TraceSphere: Obsolete API call.');
 end;
@@ -1056,11 +1109,14 @@ var
  I, J: Int;
  P: PEdict;
 begin
-if (E = nil) or ((E.V.Flags and FL_FAKECLIENT) > 0) then
- begin
-  VOut := GlobalVars.Fwd;
-  Exit;
- end;
+if @VOut = nil then
+ Exit
+else
+ if (E = nil) or ((E.V.Flags and FL_FAKECLIENT) > 0) then
+  begin
+   VOut := GlobalVars.Fwd;
+   Exit;
+  end;
 
 VectorAdd(E.V.Origin, E.V.ViewOfs, VStart);
 Dir := GlobalVars.Fwd;
@@ -1125,36 +1181,39 @@ begin
 CBuf_Execute;
 end;
 
-procedure PF_StuffCmd(const E: TEdict; S: PLChar); cdecl;
+procedure PF_StuffCmd(var E: TEdict; S: PLChar); cdecl;
 var
  Buf: array[1..1024] of LChar;
  I: UInt;
- SaveHostClient: PClient;
 begin
 if S = nil then
  Print('PF_StuffCmd: Invalid command.')
 else
- begin
-  S := StrLCopy(@Buf, S, SizeOf(Buf) - 1);
-  I := NUM_FOR_EDICT(E);
-  if (I < 1) or (I > SVS.MaxClients) then
-   Print(['PF_StuffCmd: Player index #', I, ' is out of range.'])
-  else
-   if not ValidCmd(S) then
-    Print(['PF_StuffCmd: Tried to stuff invalid command "', S, '" to player #', I, '.'])
+ if @E = nil then
+  Print('PF_StuffCmd: NULL pointer.')
+ else
+  begin
+   S := StrLCopy(@Buf, S, SizeOf(Buf) - 1);
+   I := NUM_FOR_EDICT(E);
+   if (I < 1) or (I > SVS.MaxClients) then
+    Print(['PF_StuffCmd: Player index #', I, ' is out of range.'])
    else
-    begin
-     SaveHostClient := HostClient;
-     HostClient := @SVS.Clients[I - 1];
-     Host_ClientCommands(S);
-     HostClient := SaveHostClient;
-    end;
- end;
+    if not ValidCmd(S) then
+     Print(['PF_StuffCmd: Tried to stuff invalid command "', S, '" to player #', I, '.'])
+    else
+     Host_ClientCommands(SVS.Clients[I - 1], S);
+  end;
 end;
 
-procedure PF_Particle(const Origin, Direction: TVec3; Color, Count: Single); cdecl;
+procedure PF_Particle(var Origin, Direction: TVec3; Color, Count: Single); cdecl;
 begin
-SV_StartParticle(Origin, Direction, Trunc(Color), Trunc(Count));
+if @Origin = nil then
+ Sys_Error('PF_Particle: Bad origin pointer.')
+else
+ if @Direction = nil then
+  Sys_Error('PF_Particle: Bad direction pointer.')
+ else
+  SV_StartParticle(Origin, Direction, Trunc(Color), Trunc(Count));
 end;
 
 procedure PF_LightStyle(Style: Int32; Value: PLChar); cdecl;
@@ -1186,18 +1245,24 @@ function PF_DecalIndex(DecalName: PLChar): Int32; cdecl;
 var
  I: Int;
 begin
-for I := 0 to SVDecalNameCount - 1 do
- if StrIComp(DecalName, @SVDecalNames[I]) = 0 then
-  begin
-   Result := I;
-   Exit;
-  end;
+if DecalName = nil then
+ Sys_Error('PF_DecalIndex: Bad decal name pointer.')
+else
+ for I := 0 to SVDecalNameCount - 1 do
+  if StrIComp(DecalName, @SVDecalNames[I]) = 0 then
+   begin
+    Result := I;
+    Exit;
+   end;
 
 Result := -1;
 end;
 
-function PF_PointContents(const Point: TVec3): Int32; cdecl;
+function PF_PointContents(var Point: TVec3): Int32; cdecl;
 begin
+if @Point = nil then
+ Sys_Error('PF_PointContents: Bad pointer.');
+
 Result := SV_PointContents(Point);
 end;
 
@@ -1211,49 +1276,76 @@ case Dest of
   begin
    I := NUM_FOR_EDICT(MsgEntity^);
    if (I < 1) or (I > SVS.MaxClients) then
-    Host_Error(['WriteDest_Parm: Tried to send MSG_ONE/MSG_ONE_UNRELIABLE to a client with invalid index #', I, '.']);
-   if Dest = MSG_ONE then
-    Result := @SVS.Clients[I - 1].Netchan.NetMessage
+    begin
+     DPrint(['WriteDest_Parm: Tried to send MSG_ONE/MSG_ONE_UNRELIABLE to a client with invalid index #', I, '.']);
+     Result := nil;
+    end
    else
-    Result := @SVS.Clients[I - 1].UnreliableMessage;
+    if Dest = MSG_ONE then
+     Result := @SVS.Clients[I - 1].Netchan.NetMessage
+    else
+     Result := @SVS.Clients[I - 1].UnreliableMessage;
   end;
  MSG_ALL: Result := @SV.ReliableDatagram;
  MSG_INIT: Result := @SV.Signon;
- MSG_PVS, MSG_PAS: Result := @SV.Multicast;
+ MSG_PVS, MSG_PAS, MSG_PVS_R, MSG_PAS_R: Result := @SV.Multicast;
  MSG_SPEC: Result := @SV.Spectator;
- else
-  begin
-   Host_Error(['WriteDest_Parm: Bad message destination "', Dest, '".']);
-   Result := nil;
-  end;
+ else Result := nil;
 end;
 end;
 
 procedure PF_MessageBegin(Dest, MessageType: Int32; Origin: PVec3; E: PEdict); cdecl;
+const
+ Desc: array[MSG_BROADCAST..MSG_SPEC] of PLChar =
+      ('MSG_BROADCAST', 'MSG_ONE', 'MSG_ALL', 'MSG_INIT', 'MSG_PVS', 'MSG_PAS',
+       'MSG_PVS_R', 'MSG_PAS_R', 'MSG_ONE_UNRELIABLE', 'MSG_SPEC');
 begin
-if ((Dest = MSG_ONE) or (Dest = MSG_ONE_UNRELIABLE)) and (E = nil) then
- Sys_Error('PF_MessageBegin: MSG_ONE or MSG_ONE_UNRELIABLE with no target entity.')
-else
- if (Dest <> MSG_ONE) and (Dest <> MSG_ONE_UNRELIABLE) and (E <> nil) then
-  Sys_Error('PF_MessageBegin: Cannot use broadcast messages with a target entity.')
- else
-  if MsgStarted then
-   Sys_Error(['PF_MessageBegin: New message started when message with type "', MsgType, '" has not been sent yet.'])
+case Dest of
+ MSG_ONE, MSG_ONE_UNRELIABLE:
+  if E = nil then
+   Sys_Error(['PF_MessageBegin: Tried to create ', Desc[Dest], ' with no target entity.'])
   else
-   if MessageType = 0 then
-    Sys_Error('PF_MessageBegin: Tried to create a message with a bogus type "0".');
+   if Origin <> nil then
+    DPrint(['PF_MessageBegin: Tried to create ', Desc[Dest], ' with an origin, ignoring the origin.']);
+
+ MSG_BROADCAST, MSG_ALL, MSG_INIT, MSG_SPEC:
+  if E <> nil then
+   DPrint(['PF_MessageBegin: Tried to create ', Desc[Dest], ' with a target entity, ignoring the entity.'])
+  else
+   if Origin <> nil then
+    DPrint(['PF_MessageBegin: Tried to create ', Desc[Dest], ' with an origin, ignoring the origin.']);
+
+ MSG_PVS, MSG_PAS, MSG_PVS_R, MSG_PAS_R:
+  if Origin = nil then
+   Sys_Error(['PF_MessageBegin: Tried to create ', Desc[Dest], ' with no origin.']);
+
+ else
+  Sys_Error(['PF_MessageBegin: Tried to create a message with a bogus destination type "', Dest, '".']);
+end;
+
+if MsgStarted then
+ Sys_Error(['PF_MessageBegin: New message started when message with type "', MsgType, '" has not been sent yet.'])
+else
+ if MessageType = 0 then
+  Sys_Error('PF_MessageBegin: Tried to create a message with a bogus ID "0".');
 
 MsgStarted := True;
 MsgType := MessageType;
-MsgEntity := E;
 MsgDest := Dest;
 
-if ((Dest = MSG_PVS) or (Dest = MSG_PAS)) and (Origin <> nil) then
- MsgOrigin := Origin^;
+if Dest in [MSG_PVS, MSG_PAS, MSG_PVS_R, MSG_PAS_R] then
+ MsgOrigin := Origin^
+else
+ MsgOrigin := Vec3Origin;
+
+if Dest in [MSG_ONE, MSG_ONE_UNRELIABLE, MSG_PVS, MSG_PAS, MSG_PVS_R, MSG_PAS_R] then
+ MsgEntity := E
+else
+ MsgEntity := nil;
 
 MsgBuffer.CurrentSize := 0;
-MsgBuffer.AllowOverflow := [FSB_ALLOWOVERFLOW];
 MsgBuffer.Data := @MsgData;
+MsgBuffer.AllowOverflow := [FSB_ALLOWOVERFLOW];
 end;
 
 procedure PF_MessageEnd; cdecl;
@@ -1261,17 +1353,20 @@ var
  NeedSize: Boolean;
  P: PUserMsg;
  SB: PSizeBuf;
- I: UInt;
  C: PClient;
 begin
 if not MsgStarted then
  Sys_Error('PF_MessageEnd: Called with no active message.');
+
 MsgStarted := False;
 if (MsgEntity <> nil) and ((MsgEntity.V.Flags and FL_FAKECLIENT) > 0) then
  Exit;
 
 if FSB_OVERFLOWED in MsgBuffer.AllowOverflow then
- Sys_Error('PF_MessageEnd: Message buffer from game library had overflowed.');
+ begin
+  DPrint('PF_MessageEnd: Message buffer from game library had overflowed, ignoring.');
+  Exit;
+ end;
 
 NeedSize := False;
 if MsgType > SVC_MESSAGE_END then
@@ -1283,49 +1378,51 @@ if MsgType > SVC_MESSAGE_END then
    else
     P := P.Prev;
 
+  if (P = nil) and (MsgDest = MSG_INIT) then
+   begin
+    P := NewUserMsgs;
+    while P <> nil do
+     if P.Index = MsgType then
+      Break
+     else
+      P := P.Prev;
+   end;
+
   if P = nil then
    begin
-    if MsgDest = MSG_INIT then
-     begin
-      P := NewUserMsgs;
-      while P <> nil do
-       if P.Index = MsgType then
-        Break
-       else
-        P := P.Prev;
-     end;
-
-    if P = nil then
-     begin
-      DPrint(['PF_MessageEnd: Unknown user message "', MsgType, '".']);
-      Exit;
-     end;
+    DPrint(['PF_MessageEnd: Unknown user message "', MsgType, '".']);
+    Exit;
    end;
-    
+
   if P.Size = -1 then
-   begin
-    NeedSize := True;
-    if MsgBuffer.CurrentSize > 192 then
-     Host_Error(['PF_MessageEnd: Refusing to send message "', PLChar(@P.Name), '" from game library with ',
-                 MsgBuffer.CurrentSize, ' bytes to client, user message size limit is 192 bytes.']);
-   end
+   if MsgBuffer.CurrentSize > MAX_USERMSG_SIZE then
+    begin
+     DPrint(['PF_MessageEnd: Refusing to send message "', PLChar(@P.Name), '" from game library with ',
+             MsgBuffer.CurrentSize, ' bytes to client, user message size limit is ', MAX_USERMSG_SIZE, ' bytes. Ignoring.']);
+     Exit;
+    end
+   else
+    NeedSize := True
   else
    if UInt(P.Size) <> MsgBuffer.CurrentSize then
-    Host_Error(['PF_MessageEnd: User message "', PLChar(@P.Name), '": Bad size. Written ', MsgBuffer.CurrentSize,
-                ' bytes, expected ', P.Size, ' bytes.']);
+    begin
+     DPrint(['PF_MessageEnd: Bad size specified in user message "', PLChar(@P.Name), '". Written ', MsgBuffer.CurrentSize,
+             ' bytes, expected ', P.Size, ' bytes. Ignoring.']);
+     Exit;
+    end;
  end;
 
 SB := WriteDest_Parm(MsgDest);
-if ((MsgDest = MSG_BROADCAST) and (MsgBuffer.CurrentSize + SB.CurrentSize > SB.MaxSize)) or (SB.Data = nil) then
+if (SB = nil) or (SB.Data = nil) then
+ Exit;
+
+if not (MsgDest in [MSG_ALL, MSG_PVS, MSG_PAS, MSG_ONE_UNRELIABLE, MSG_SPEC]) and
+  (MsgBuffer.CurrentSize + SB.CurrentSize > SB.MaxSize) then
  Exit;
 
 if (MsgType > SVC_MESSAGE_END) and ((MsgDest = MSG_ONE) or (MsgDest = MSG_ONE_UNRELIABLE)) then
  begin
-  I := NUM_FOR_EDICT(MsgEntity^);
-  if (I < 1) or (I > SVS.MaxClients) then
-   Host_Error(['PF_MessageEnd: Entity with index ', I, ' is not a client.']);
-
-  C := @SVS.Clients[I - 1];
+  C := @SVS.Clients[NUM_FOR_EDICT(MsgEntity^) - 1];
   if (not C.Active and not C.Spawned) or not C.UserMsgReady or C.FakeClient then
    Exit;
  end;
@@ -1339,7 +1436,7 @@ case MsgDest of
  MSG_PVS: SV_Multicast(MsgEntity^, MsgOrigin, MULTICAST_PVS, False);
  MSG_PAS: SV_Multicast(MsgEntity^, MsgOrigin, MULTICAST_PAS, False);
  MSG_PVS_R: SV_Multicast(MsgEntity^, MsgOrigin, MULTICAST_PVS, True);
- MSG_PAS_R: SV_Multicast(MsgEntity^, MsgOrigin, MULTICAST_PAS, True); 
+ MSG_PAS_R: SV_Multicast(MsgEntity^, MsgOrigin, MULTICAST_PAS, True);
 end;
 end;
 
@@ -1396,7 +1493,10 @@ begin
 if not MsgStarted then
  Sys_Error('PF_WriteString: Called with no active message.')
 else
- MSG_WriteString(MsgBuffer, S);
+ if S = nil then
+  Sys_Error('PF_WriteString: Called with a bad string pointer.')
+ else
+  MSG_WriteString(MsgBuffer, S);
 end;
 
 procedure PF_WriteEntity(Value: Int32); cdecl;
@@ -1409,7 +1509,9 @@ end;
 
 procedure PF_CVarRegister(var C: TCVar); cdecl;
 begin
-if @C <> nil then
+if @C = nil then
+ Sys_Error('PF_CVarRegister: Bad pointer.')
+else
  begin
   Include(C.Flags, FCVAR_EXTDLL);
   CVar_RegisterVariable(C);
@@ -1418,47 +1520,65 @@ end;
 
 function PF_CVarGetFloat(Name: PLChar): Single; cdecl;
 begin
+if Name = nil then
+ Sys_Error('PF_CVarGetFloat: Bad name pointer.');
+
 Result := CVar_VariableValue(Name);
 end;
 
 function PF_CVarGetString(Name: PLChar): PLChar; cdecl;
 begin
+if Name = nil then
+ Sys_Error('PF_CVarGetString: Bad name pointer.');
+
 Result := CVar_VariableString(Name);
 end;
 
 procedure PF_CVarSetFloat(Name: PLChar; Value: Single); cdecl;
 begin
+if Name = nil then
+ Sys_Error('PF_CVarSetFloat: Bad name pointer.');
+
 CVar_SetValue(Name, Value);
 end;
 
 procedure PF_CVarSetString(Name, Value: PLChar); cdecl;
 begin
+if Name = nil then
+ Sys_Error('PF_CVarSetString: Bad name pointer.')
+else
+ if Value = nil then
+  Sys_Error('PF_CVarSetString: Bad value pointer.');
+
 CVar_Set(Name, Value);
 end;
 
 procedure PF_AlertMessage(AlertType: TAlertType; Msg: PChar); cdecl;
 var
- Buf: array[1..1024] of LChar;
- L: UInt;
+ Buf: array[1..4096] of LChar;
+ S: PLChar;
 begin
-if (AlertType = atLogged) and (SVS.MaxClients > 1) then
- Log_PrintF(Msg)
+if Msg = nil then
+ Sys_Error('PF_AlertMessage: NULL message pointer.')
 else
- if developer.Value <> 0 then
-  begin
-   Buf[Low(Buf)] := #0;
-   case AlertType of
-    atNotice: StrCopy(@Buf, 'NOTE:  ');
-    atConsole: ;
-    atAIConsole: if developer.Value < 2 then Exit;
-    atWarning: StrCopy(@Buf, 'WARNING:  ');
-    atError: StrCopy(@Buf, 'ERROR:  ');
-   end;
+ if (AlertType = atLogged) and (SVS.MaxClients > 1) then
+  Log_PrintF(Msg)
+ else
+  if developer.Value <> 0 then
+   begin
+    S := @Buf;
+    case AlertType of
+     atNotice: S := StrECopy(S, 'NOTE:  ');
+     atAIConsole: if developer.Value < 2 then Exit;
+     atWarning: S := StrECopy(S, 'WARNING:  ');
+     atError: S := StrECopy(S, 'ERROR:  ');
+    end;
 
-   L := StrLen(@Buf);
-   StrLCopy(PLChar(UInt(@Buf) + L), Msg, SizeOf(Buf) - L - 1);
-   Print(@Buf);   
-  end; 
+    S := StrLECopy(S, Msg, SizeOf(Buf) - (UInt(S) - UInt(@Buf)) - 1);
+    if PLChar(UInt(S) - 1)^ in [#10, #13] then
+     PLChar(UInt(S) - 1)^ := #0;
+    Print(@Buf);
+   end;
 end;
 
 procedure PF_EngineFPrintF(F: Pointer; Msg: PLChar); cdecl;
@@ -1468,16 +1588,22 @@ end;
 
 function PF_PvAllocEntPrivateData(var E: TEdict; Size: Int32): Pointer; cdecl;
 begin
+if @E = nil then
+ Sys_Error('PF_PvAllocEntPrivateData: NULL pointer.');
+ 
 Result := PvAllocEntPrivateData(E, Size);
 end;
 
-function PF_PvEntPrivateData(const E: TEdict): Pointer; cdecl;
+function PF_PvEntPrivateData(var E: TEdict): Pointer; cdecl;
 begin
 Result := PvEntPrivateData(E);
 end;
 
 procedure PF_FreeEntPrivateData(var E: TEdict); cdecl;
 begin
+if @E = nil then
+ Sys_Error('PF_FreeEntPrivateData: NULL pointer.');
+
 FreeEntPrivateData(E);
 end;
 
@@ -1488,11 +1614,17 @@ end;
 
 function PF_AllocEngineString(S: PLChar): TStringOfs; cdecl;
 begin
+if S = nil then
+ Sys_Error('PF_AllocEngineString: NULL pointer.');
+
 Result := UInt(ED_NewString(S)) - PRStrings;
 end;
 
-function PF_GetVarsOfEnt(const E: TEdict): PEntVars; cdecl;
+function PF_GetVarsOfEnt(var E: TEdict): PEntVars; cdecl;
 begin
+if @E = nil then
+ Sys_Error('PF_GetVarsOfEnt: NULL pointer.');
+
 Result := @E.V;
 end;
 
@@ -1501,7 +1633,7 @@ begin
 Result := Pointer(UInt(SV.Edicts) + Offset);
 end;
 
-function PF_EntOffsetOfPEntity(const E: TEdict): UInt32; cdecl;
+function PF_EntOffsetOfPEntity(var E: TEdict): UInt32; cdecl;
 begin
 Result := UInt(@E) - UInt(SV.Edicts);
 end;
@@ -1510,8 +1642,11 @@ function PF_IndexOfEdict(E: PEdict): Int32; cdecl;
 begin
 if E <> nil then
  begin
+  if (UInt(E) - UInt(SV.Edicts)) mod SizeOf(E^) <> 0 then
+   DPrint('PF_IndexOfEdict: Misaligned entity pointer.');
+
   Result := (UInt(E) - UInt(SV.Edicts)) div SizeOf(E^);
-  if (Result < 0) or (Result >= Int32(SV.MaxEdicts)) then
+  if (Result < 0) or (UInt32(Result) >= SV.MaxEdicts) then
    Sys_Error('PF_IndexOfEdict: Bad entity.');
  end
 else
@@ -1525,31 +1660,30 @@ begin
 if (Index >= 0) and (UInt32(Index) < SV.MaxEdicts) then
  begin
   E := EDICT_NUM(Index);
-  Result := nil;
-
-  if E = nil then
-   Exit;
-
-  if (E.Free = 0) and (E.PrivateData <> nil) then
-   Result := E;
-
-  if (E.Free = 0) and (UInt(Index) <= SVS.MaxClients) then
-   Result := E;
+  if (E <> nil) and (E.Free = 0) and ((E.PrivateData <> nil) or (UInt(Index) <= SVS.MaxClients)) then
+   Result := E
+  else
+   Result := nil
  end
 else
  Result := nil;
 end;
 
-function PF_FindEntityByVars(const E: TEntVars): PEdict; cdecl;
+function PF_FindEntityByVars(var E: TEntVars): PEdict; cdecl;
 var
- I: Int;
+ Offset: UInt;
 begin
-for I := 0 to SV.NumEdicts - 1 do
- if @SV.Edicts[I].V = @E then
-  begin
-   Result := @SV.Edicts[I];
-   Exit;
-  end;
+if @E = nil then
+ Sys_Error('PF_FindEntityByVars: NULL pointer.')
+else
+ begin
+  Offset := UInt(@E) - UInt(@SV.Edicts[0].V);
+  if (Offset mod SizeOf(TEdict) = 0) and (Offset div SizeOf(TEdict) < SV.NumEdicts) then
+   begin
+    Result := PEdict(UInt(@E) - UInt(@TEdict(nil^).V));
+    Exit;
+   end;
+ end;
 
 Result := nil;
 end;
@@ -1566,7 +1700,8 @@ function PF_RegUserMsg(Name: PLChar; Size: Int32): Int32; cdecl;
 var
  P: PUserMsg;
 begin
-if (NextUserMsg >= MAX_USER_MESSAGE) or (Name = nil) or (StrLen(Name) >= 16) or (Size > 192) then
+if (NextUserMsg >= MAX_USER_MESSAGE) or (Name = nil) or (StrLen(Name) >= SizeOf(P.Name)) or
+   (Size > MAX_USERMSG_SIZE) then
  begin
   Result := 0;
   Exit;
@@ -1600,6 +1735,9 @@ end;
 
 procedure PF_GetBonePosition(var E: TEdict; Bone: Int32; out Origin: TVec3; out Angles: TVec3); cdecl;
 begin
+if @E = nil then
+ Sys_Error('PF_GetBonePosition: NULL pointer.');
+
 StudioHdr := Mod_ExtraData(SV.PrecachedModels[E.V.ModelIndex]^);
 SVBlendingAPI.SV_StudioSetupBones(SV.PrecachedModels[E.V.ModelIndex]^, E.V.Frame, E.V.Sequence, E.V.Angles, E.V.Origin, @E.V.Controller, @E.V.Blending, Bone, @E);
 if @Origin <> nil then
@@ -1617,6 +1755,9 @@ var
  I, J: Int;
  P: PExtLibData;
 begin
+if Name = nil then
+ Sys_Error('PF_FunctionFromName: NULL pointer.');
+
 for I := 0 to NumExtDLL - 1 do
  begin
   P := @ExtDLL[I];
@@ -1658,6 +1799,9 @@ function PF_FunctionFromName(Name: PLChar): Pointer; cdecl;
 var
  I: Int;
 begin
+if Name = nil then
+ Sys_Error('PF_FunctionFromName: NULL pointer.');
+
 for I := 0 to NumExtDLL - 1 do
  begin
   Result := dlsym(ExtDLL[I].Handle, Name);
@@ -1684,34 +1828,39 @@ end;
 
 {$ENDIF}
 
-procedure PF_ClientPrintF(const E: TEdict; PrintType: TPrintType; Msg: PLChar); cdecl;
+procedure PF_ClientPrintF(var E: TEdict; PrintType: TPrintType; Msg: PLChar); cdecl;
 var
  I: UInt;
  C: PClient;
 begin
-I := NUM_FOR_EDICT(E);
-if (I < 1) or (I > SVS.MaxClients) then
- Print(['PF_ClientPrintF: Tried to print to a non-client (index: ', I, ').'])
+if (@E = nil) or (Msg = nil) then
+ Print('PF_ClientPrintF: NULL pointer.')
 else
  begin
-  C := @SVS.Clients[I - 1];
-  if C.FakeClient then
-   Exit;
+  I := NUM_FOR_EDICT(E);
+  if (I < 1) or (I > SVS.MaxClients) then
+   Print(['PF_ClientPrintF: Tried to print to a non-client (index: ', I, ').'])
+  else
+   begin
+    C := @SVS.Clients[I - 1];
+    if not C.Connected or C.FakeClient then
+     Exit;
 
-  case PrintType of
-   PrintConsole, PrintChat:
-    begin
-     MSG_WriteByte(C.Netchan.NetMessage, SVC_PRINT);
-     MSG_WriteString(C.Netchan.NetMessage, Msg);
+    case PrintType of
+     PrintConsole, PrintChat:
+      begin
+       MSG_WriteByte(C.Netchan.NetMessage, SVC_PRINT);
+       MSG_WriteString(C.Netchan.NetMessage, Msg);
+      end;
+     PrintCenter:
+      begin
+       MSG_WriteByte(C.Netchan.NetMessage, SVC_CENTERPRINT);
+       MSG_WriteString(C.Netchan.NetMessage, Msg);
+      end;
+     else
+      Print(['PF_ClientPrintF: Invalid print type "', UInt(PrintType), '".']);
     end;
-   PrintCenter:
-    begin
-     MSG_WriteByte(C.Netchan.NetMessage, SVC_CENTERPRINT);
-     MSG_WriteString(C.Netchan.NetMessage, Msg);
-    end;
-   else
-    Print(['PF_ClientPrintF: Invalid print type "', UInt(PrintType), '".']);
-  end;
+   end;
  end;
 end;
 
@@ -1720,15 +1869,20 @@ var
  Buf: array[1..16384] of LChar;
  S: PLChar;
 begin
-S := StrLECopy(@Buf, Msg, SizeOf(Buf) - 1);
-if UInt(S) > UInt(@Buf) then
+if Msg = nil then
+ Sys_Error('PF_ServerPrint: NULL pointer.')
+else
  begin
-  Dec(UInt(S));
-  if S^ = #10 then
-   S^ := #0;
- end;
+  S := StrLECopy(@Buf, Msg, SizeOf(Buf) - 1);
+  if UInt(S) > UInt(@Buf) then
+   begin
+    Dec(UInt(S));
+    if S^ = #10 then
+     S^ := #0;
+   end;
 
-Print(@Buf);
+  Print(@Buf);
+ end;
 end;
 
 function PF_Cmd_Args: PLChar; cdecl;
@@ -1751,6 +1905,9 @@ var
  V: TVec3;
  P: PMStudioAttachment;
 begin
+if @E = nil then
+ Sys_Error('PF_GetAttachment: NULL pointer.');
+
 StudioHdr := Mod_ExtraData(SV.PrecachedModels[E.V.ModelIndex]^);
 V[0] := -E.V.Angles[0];
 V[1] := E.V.Angles[1];
@@ -1764,16 +1921,28 @@ end;
 
 procedure PF_CRC32_Init(out CRC: TCRC); cdecl;
 begin
+if @CRC = nil then
+ Sys_Error('PF_CRC32_Init: NULL pointer.');
+
 CRC32_Init(CRC);
 end;
 
 procedure PF_CRC32_ProcessBuffer(var CRC: TCRC; Buffer: Pointer; Size: UInt32); cdecl;
 begin
-CRC32_ProcessBuffer(CRC, Buffer, Size);
+if @CRC = nil then
+ Sys_Error('PF_CRC32_ProcessBuffer: NULL pointer.')
+else
+ if (Buffer = nil) and (Size > 0) then
+  Sys_Error('PF_CRC32_ProcessBuffer: NULL pointer.')
+ else
+  CRC32_ProcessBuffer(CRC, Buffer, Size);
 end;
 
 procedure PF_CRC32_ProcessByte(var CRC: TCRC; B: Byte); cdecl;
 begin
+if @CRC = nil then
+ Sys_Error('PF_CRC32_ProcessByte: NULL pointer.');
+
 CRC32_ProcessByte(CRC, B);
 end;
 
@@ -1792,18 +1961,19 @@ begin
 Result := RandomFloat(Low, High);
 end;
 
-procedure PF_SetView(const Entity, Target: TEdict); cdecl;
+procedure PF_SetView(var Entity, Target: TEdict); cdecl;
 var
  I: UInt;
  C: PClient;
 begin
+if (@Entity = nil) or (@Target = nil) then
+ Sys_Error('PF_SetView: NULL pointer.');
+
 I := NUM_FOR_EDICT(Entity);
-if (I < 1) or (I > SVS.MaxClients) then
- Host_Error(['PF_SetView: Bad client index (', I, ').'])
-else
+if (I >= 1) and (I <= SVS.MaxClients) then
  begin
   C := @SVS.Clients[I - 1];
-  if not C.FakeClient then
+  if C.Connected and not C.FakeClient then
    begin
     C.Target := @Target;
     MSG_WriteByte(C.Netchan.NetMessage, SVC_SETVIEW);
@@ -1817,16 +1987,19 @@ begin
 Result := Sys_FloatTime;
 end;
 
-procedure PF_CrosshairAngle(const Entity: TEdict; Pitch, Yaw: Single); cdecl;
+procedure PF_CrosshairAngle(var Entity: TEdict; Pitch, Yaw: Single); cdecl;
 var
  I: UInt;
  C: PClient;
 begin
+if @Entity = nil then
+ Sys_Error('PF_CrosshairAngle: NULL pointer.');
+
 I := NUM_FOR_EDICT(Entity);
 if (I >= 1) and (I <= SVS.MaxClients) then
  begin
   C := @SVS.Clients[I - 1];
-  if not C.FakeClient then
+  if C.Connected and not C.FakeClient then
    begin
     if Pitch > 180 then
      Pitch := Pitch - 360
@@ -1849,12 +2022,16 @@ end;
 
 function PF_LoadFileForMe(Name: PLChar; Length: PUInt32): Pointer; cdecl;
 begin
+if Name = nil then
+ Sys_Error('PF_LoadFileForMe: NULL pointer.');
+
 Result := COM_LoadFile(Name, FILE_ALLOC_MEMORY, Length);
 end;
 
 procedure PF_FreeFile(Buffer: Pointer); cdecl;
 begin
-COM_FreeFile(Buffer);
+if Buffer <> nil then
+ COM_FreeFile(Buffer);
 end;
 
 procedure PF_EndSection(Name: PLChar); cdecl;
@@ -1864,31 +2041,45 @@ end;
 
 function PF_CompareFileTime(S1, S2: PLChar; CompareResult: PInt32): Int32; cdecl;
 begin
-Result := Int32(COM_CompareFileTime(S1, S2, CompareResult^));
+if CompareResult = nil then
+ Sys_Error('PF_CompareFileTime: NULL pointer.');
+
+if (S1 <> nil) and (S2 <> nil) then
+ Result := Int32(COM_CompareFileTime(S1, S2, CompareResult^))
+else
+ begin
+  CompareResult^ := 0;
+  Result := 0;
+ end;
 end;
 
 procedure PF_GetGameDir(Buffer: PLChar); cdecl;
 begin
-StrLCopy(Buffer, GameDir, MAX_PATH_A - 1);
+if Buffer = nil then
+ Sys_Error('PF_GetGameDir: NULL pointer.')
+else
+ StrLCopy(Buffer, GameDir, MAX_PATH_A - 1);
 end;
 
 procedure PF_CVar_RegisterVariable(var C: TCVar); cdecl;
 begin
-CVar_RegisterVariable(C);
+if @C <> nil then
+ CVar_RegisterVariable(C);
 end;
 
-procedure PF_FadeVolume(const Entity: TEdict; FadePercent, FadeOutSeconds, HoldTime, FadeInSeconds: Int32); cdecl;
+procedure PF_FadeVolume(var Entity: TEdict; FadePercent, FadeOutSeconds, HoldTime, FadeInSeconds: Int32); cdecl;
 var
  I: UInt;
  C: PClient;
 begin
+if @Entity = nil then
+ Sys_Error('PF_FadeVolume: NULL pointer.');
+
 I := NUM_FOR_EDICT(Entity);
-if (I < 1) or (I > SVS.MaxClients) then
- Print(['PF_FadeVolume: Bad client index (', I, ').'])
-else
+if (I >= 1) and (I <= SVS.MaxClients) then
  begin
   C := @SVS.Clients[I - 1];
-  if not C.FakeClient then
+  if C.Connected and not C.FakeClient then
    begin
     MSG_WriteByte(C.Netchan.NetMessage, SVC_SOUNDFADE);
     MSG_WriteByte(C.Netchan.NetMessage, FadePercent);
@@ -1903,10 +2094,11 @@ procedure PF_SetClientMaxSpeed(var E: TEdict; Speed: Single); cdecl;
 var
  I: UInt;
 begin
+if @E = nil then
+ Sys_Error('PF_SetClientMaxSpeed: NULL pointer.');
+
 I := NUM_FOR_EDICT(E);
-if (I < 1) or (I > SVS.MaxClients) then
- Print(['PF_SetClientMaxSpeed: Bad client index (', I, ').'])
-else
+if (I >= 1) and (I <= SVS.MaxClients) then
  E.V.MaxSpeed := Speed;
 end;
 
@@ -1916,37 +2108,37 @@ var
  C: PClient;
  E: PEdict;
 begin
+if Name = nil then
+ Sys_Error('PF_CreateFakeClient: NULL pointer.');
+
 for I := 0 to SVS.MaxClients - 1 do
  begin
   C := @SVS.Clients[I];
   if not C.Active and not C.Spawned and not C.Connected then
    begin
     E := EDICT_NUM(I + 1);
+    
+    SV_ClearResourceLists(C^);
+    SV_SetResourceLists(C^);
     if C.Frames <> nil then
      SV_ClearFrames(C.Frames);
 
-    SV_SetResourceLists(C^);
+    C.UserID := CurrentUserID;
+    C.Auth.UniqueID := C.UserID;
+    Inc(CurrentUserID);
+    if CurrentUserID = 0 then
+     CurrentUserID := 1;
 
-    StrLCopy(@C.NetName, Name, SizeOf(C.NetName) - 1);
+    C.Entity := E;
+    C.ConnectTime := RealTime;
+    C.FakeClient := True;
+
     C.Active := True;
     C.Spawned := True;
     C.SendInfo := True;
     C.Connected := True;
-    C.UserMsgReady := False;
 
-    C.ConnectSeq := 0;
-    C.SpawnSeq := 0;
-
-    C.FakeClient := True;
-    C.HLTV := False;
-    C.Protocol := 0;
-    C.SendEntsTime := 0;     
-    C.SendResTime := 0;
-    C.FullUpdateTime := 0;
-    C.UserID := CurrentUserID;
-    Inc(CurrentUserID);
-
-    C.Entity := E;
+    StrLCopy(@C.NetName, Name, SizeOf(C.NetName) - 1);
     E.V.NetName := UInt(@C.NetName) - PRStrings;
     E.V.ContainingEntity := E;
     E.V.Flags := (FL_CLIENT or FL_FAKECLIENT);
@@ -1957,10 +2149,8 @@ for I := 0 to SVS.MaxClients - 1 do
     Info_SetValueForKey(@C.UserInfo, 'bottomcolor', '1', MAX_USERINFO_STRING);
 
     C.UpdateInfo := True;
+    C.UpdateInfoTime := 0;
     SV_ExtractFromUserInfo(C^);
-
-    C.Auth.UniqueID := SV_CreateSID(C^);
-    C.Auth.AuthType := atSteam;
 
     Result := E;
     Exit;
@@ -1970,13 +2160,16 @@ for I := 0 to SVS.MaxClients - 1 do
 Result := nil;
 end;
 
-procedure PF_RunPlayerMove(const FakeClient: TEdict; const Angles: TVec3; FwdMove, SideMove, UpMove: Single; Buttons: Int16; Impulse, MSec: Byte); cdecl;
+procedure PF_RunPlayerMove(var FakeClient: TEdict; var Angles: TVec3; FwdMove, SideMove, UpMove: Single; Buttons: Int16; Impulse, MSec: Byte); cdecl;
 var
  OldHostClient: PClient;
  OldSVPlayer: PEdict;
  UserCmd: TUserCmd;
  Index: UInt;
 begin
+if (@FakeClient = nil) or (@Angles = nil) then
+ Sys_Error('PF_RunPlayerMove: NULL pointer.');
+
 Index := NUM_FOR_EDICT(FakeClient);
 if (Index < 1) or (Index > SVS.MaxClients) then
  Print(['PF_RunPlayerMove: Bad client index (#', Index, ').'])
@@ -2033,7 +2226,7 @@ if E <> nil then
    else
     Result := @SVS.Clients[I - 1].UserInfo
   else
-   Result := Info_ServerInfo;
+   Result := @ServerInfo;
  end
 else
  Result := @LocalInfo;
@@ -2041,38 +2234,53 @@ end;
 
 function PF_InfoKeyValue(Buffer, Key: PLChar): PLChar; cdecl;
 begin
+if (Buffer = nil) or (Key = nil) then
+ Sys_Error('PF_InfoKeyValue: NULL pointer.');
+
 Result := Info_ValueForKey(Buffer, Key);
 end;
 
 procedure PF_SetKeyValue(Buffer, Key, Value: PLChar); cdecl;
 begin
 if Buffer = @LocalInfo then
- Info_SetValueForKey(Buffer, Key, Value, SizeOf(@LocalInfo))
+ Info_SetValueForKey(Buffer, Key, Value, SizeOf(LocalInfo))
 else
  if Buffer = @ServerInfo then
-  Info_SetValueForKey(Buffer, Key, Value, SizeOf(@ServerInfo))
+  Info_SetValueForKey(Buffer, Key, Value, SizeOf(ServerInfo))
  else
   Sys_Error('PF_SetKeyValue: Keys can only be set in LocalInfo or ServerInfo.');
 end;
 
 procedure PF_SetClientKeyValue(Index: Int32; Buffer, Key, Value: PLChar); cdecl;
 begin
-if (Buffer <> @LocalInfo) and (Buffer <> @ServerInfo) and (Index > 0) and (UInt(Index) <= SVS.MaxClients) and
+if (Buffer <> nil) and (Key <> nil) and (Value <> nil) and (Buffer <> @LocalInfo) and
+   (Buffer <> @ServerInfo) and (Index >= 1) and (UInt(Index) <= SVS.MaxClients) and
    (StrComp(Info_ValueForKey(Buffer, Key), Value) <> 0) then
  begin
   Info_SetValueForKey(Buffer, Key, Value, MAX_USERINFO_STRING);
   SVS.Clients[Index - 1].UpdateInfo := True;
-  SVS.Clients[Index - 1].UpdateInfoTime := 0;
+  SVS.Clients[Index - 1].FragSizeUpdated := False;
  end;
 end;
 
 function PF_IsMapValid(Name: PLChar): Int32; cdecl;
+var
+ Buf: array[1..MAX_PATH_A] of LChar;
 begin
-Result := Int32(IsMapValid(Name));
+if (Name <> nil) and (Name^ > #0) then
+ begin
+  StrCopy(StrLECopy(StrECopy(@Buf, 'maps' + CorrectSlash), Name, MAX_MAP_NAME), '.bsp');
+  Result := Int32(FS_FileExists(@Buf));
+ end
+else
+ Result := 0;
 end;
 
-procedure PF_StaticDecal(const Origin: TVec3; DecalIndex, EntityIndex, ModelIndex: Int32); cdecl;
+procedure PF_StaticDecal(var Origin: TVec3; DecalIndex, EntityIndex, ModelIndex: Int32); cdecl;
 begin
+if @Origin = nil then
+ Sys_Error('PF_StaticDecal: NULL pointer.');
+
 MSG_WriteByte(SV.Signon, SVC_TEMPENTITY);
 MSG_WriteByte(SV.Signon, TE_BSPDECAL);
 MSG_WriteCoord(SV.Signon, Origin[0]);
@@ -2091,50 +2299,41 @@ begin
 if Name = nil then
  Host_Error('PF_PrecacheGeneric: NULL pointer.')
 else
- if PR_IsEmptyString(Name) then
+ if Name^ <= ' ' then
   Host_Error(['PF_PrecacheGeneric: Bad string "', Name, '".'])
  else
-  if SV.State = SS_LOADING then
-   begin
-    for I := 0 to MAX_GENERIC_ITEMS - 1 do
-     if SV.PrecachedGeneric[I] = nil then
+  begin
+   for I := 0 to MAX_GENERIC_ITEMS - 1 do
+    if SV.PrecachedGeneric[I] = nil then
+     if SV.State <> SS_LOADING then
+      Break
+     else
       begin
        SV.PrecachedGeneric[I] := Name;
        Result := I;
        Exit;
       end
-     else
-      if StrIComp(SV.PrecachedGeneric[I], Name) = 0 then
-       begin
-        Result := I;
-        Exit;
-       end;
+    else
+     if StrIComp(Name, SV.PrecachedGeneric[I]) = 0 then
+      begin
+       Result := I;
+       Exit;
+      end;
 
-    Host_Error(['PF_PrecacheGeneric: Generic item "', Name, '" failed to precache because the item count is over the ', MAX_GENERIC_ITEMS, ' limit.']);
-   end
-  else
-   begin
-    for I := 0 to MAX_GENERIC_ITEMS - 1 do
-     if SV.PrecachedGeneric[I] = nil then
-      Break
-     else
-      if StrIComp(SV.PrecachedGeneric[I], Name) = 0 then
-       begin
-        Result := I;
-        Exit;
-       end;
-
+   if SV.State = SS_LOADING then
+    Host_Error(['PF_PrecacheGeneric: Generic item "', Name, '" failed to precache because the item count is over the ', MAX_GENERIC_ITEMS, ' limit.'])
+   else
     Host_Error(['PF_PrecacheGeneric: "', Name, '": Precache can only be done in spawn functions, or when the server is loading.']);
-   end;
+  end;
 
 Result := 0;
 end;
 
-function PF_GetPlayerUserID(const E: TEdict): Int32; cdecl;
+function PF_GetPlayerUserID(var E: TEdict): Int32; cdecl;
 var
  I: Int;
 begin
-if SV.Active and (@E <> nil) and (SVS.MaxClients > 0) then
+if (@E <> nil) and SV.Active then
  for I := 0 to SVS.MaxClients - 1 do
   if SVS.Clients[I].Entity = @E then
    begin
@@ -2145,11 +2344,16 @@ if SV.Active and (@E <> nil) and (SVS.MaxClients > 0) then
 Result := -1;
 end;
 
-procedure PF_BuildSoundMsg(const E: TEdict; Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch, Dest, MessageType: Int32; const Origin: TVec3; MsgEnt: PEdict); cdecl;
+procedure PF_BuildSoundMsg(var E: TEdict; Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch, Dest, MessageType: Int32; var Origin: TVec3; MsgEnt: PEdict); cdecl;
 begin
-PF_MessageBegin(Dest, MessageType, @Origin, MsgEnt);
-SV_BuildSoundMsg(E, Channel, Sample, Trunc(Volume), Attn, Flags, Pitch, Origin, MsgBuffer);
-PF_MessageEnd;
+if (@E = nil) or (Sample = nil) then
+ Sys_Error('PF_BuildSoundMsg: NULL pointer.')
+else
+ begin
+  PF_MessageBegin(Dest, MessageType, @Origin, MsgEnt);
+  SV_BuildSoundMsg(E, Channel, Sample, Trunc(Volume), Attn, Flags, Pitch, Origin, MsgBuffer);
+  PF_MessageEnd;
+ end;
 end;
 
 function PF_IsDedicatedServer: Int32; cdecl;
@@ -2159,80 +2363,123 @@ end;
 
 function PF_CVarGetPointer(Name: PLChar): PCVar; cdecl;
 begin
-Result := CVar_FindVar(Name);
+if Name <> nil then
+ Result := CVar_FindVar(Name)
+else
+ Result := nil;
 end;
 
-function PF_GetPlayerWONID(const E: TEdict): Int32; cdecl;
+function PF_GetPlayerWONID(var E: TEdict): Int32; cdecl;
 begin
 Result := -1;
 end;
 
 procedure PF_RemoveKey(Data, Key: PLChar); cdecl;
 begin
-Info_RemoveKey(Data, Key);
+if (Data <> nil) and (Key <> nil) then
+ Info_RemoveKey(Data, Key)
+else
+ DPrint('PF_RemoveKey: NULL pointer.');
 end;
 
-function PF_GetPhysicsKeyValue(const E: TEdict; Key: PLChar): PLChar; cdecl;
+function PF_GetPhysicsKeyValue(var E: TEdict; Key: PLChar): PLChar; cdecl;
 const
  EmptyString: PLChar = '';
 var
  I: UInt;
 begin
-I := NUM_FOR_EDICT(E);
-if (I >= 1) and (I <= SVS.MaxClients) then
- Result := Info_ValueForKey(@SVS.Clients[I - 1].PhysInfo, Key)
-else
+if (@E <> nil) and (Key <> nil) then
  begin
-  Print(['PF_GetPhysicsKeyValue: Bad client index #', I, '.']);
-  Result := EmptyString;
- end;
+  I := NUM_FOR_EDICT(E);
+  if (I >= 1) and (I <= SVS.MaxClients) then
+   begin
+    Result := Info_ValueForKey(@SVS.Clients[I - 1].PhysInfo, Key);
+    Exit;
+   end
+  else
+   DPrint(['PF_GetPhysicsKeyValue: Bad client index #', I, '.']);
+ end
+else
+ DPrint('PF_GetPhysicsKeyValue: NULL pointer.');
+
+Result := EmptyString;
 end;
 
-procedure PF_SetPhysicsKeyValue(const E: TEdict; Key, Value: PLChar); cdecl;
+procedure PF_SetPhysicsKeyValue(var E: TEdict; Key, Value: PLChar); cdecl;
 var
  I: UInt;
 begin
-I := NUM_FOR_EDICT(E);
-if (I >= 1) and (I <= SVS.MaxClients) then
- Info_SetValueForKey(@SVS.Clients[I - 1].PhysInfo, Key, Value, MAX_PHYSINFO_STRING)
+if (@E <> nil) and (Key <> nil) and (Value <> nil) then
+ begin
+  I := NUM_FOR_EDICT(E);
+  if (I >= 1) and (I <= SVS.MaxClients) then
+   Info_SetValueForKey(@SVS.Clients[I - 1].PhysInfo, Key, Value, MAX_PHYSINFO_STRING)
+  else
+   DPrint(['PF_SetPhysicsKeyValue: Bad client index #', I, '.']);
+ end
 else
- Print(['PF_SetPhysicsKeyValue: Bad client index #', I, '.']);
+ DPrint('PF_SetPhysicsKeyValue: NULL pointer.');
 end;
 
-function PF_GetPhysicsInfoString(const E: TEdict): PLChar; cdecl;
+function PF_GetPhysicsInfoString(var E: TEdict): PLChar; cdecl;
 const
  EmptyString: PLChar = '';
 var
  I: UInt;
 begin
-I := NUM_FOR_EDICT(E);
-if (I >= 1) and (I <= SVS.MaxClients) then
- Result := @SVS.Clients[I - 1].PhysInfo
-else
+if @E <> nil then
  begin
-  Print(['PF_GetPhysicsInfoString: Bad client index #', I, '.']);
-  Result := EmptyString;
- end;
+  I := NUM_FOR_EDICT(E);
+  if (I >= 1) and (I <= SVS.MaxClients) then
+   begin
+    Result := @SVS.Clients[I - 1].PhysInfo;
+    Exit;
+   end
+  else
+   DPrint(['PF_GetPhysicsInfoString: Bad client index #', I, '.']);
+ end
+else
+ DPrint('PF_GetPhysicsInfoString: NULL pointer.');
+
+Result := EmptyString;
 end;
 
 function PF_PrecacheEvent(EventType: Int32; Name: PLChar): UInt16; cdecl;
 begin
-Result := EV_Precache(EventType, Name);
+if Name <> nil then
+ Result := EV_Precache(EventType, Name)
+else
+ begin
+  DPrint('PF_PrecacheEvent: NULL pointer.');
+  Result := 0;
+ end;
 end;
 
-procedure PF_PlaybackEvent(Flags: UInt32; const E: TEdict; EventIndex: UInt16; Delay: Single; const Origin, Angles: TVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32); cdecl;
+procedure PF_PlaybackEvent(Flags: UInt32; E: PEdict; EventIndex: UInt16; Delay: Single; Origin, Angles: PVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32); cdecl;
 begin
-EV_Playback(Flags, E, EventIndex, Delay, Origin, Angles, FParam1, FParam2, IParam1, IParam2, BParam1, BParam2);
+EV_Playback(Flags, E^, EventIndex, Delay, Origin^, Angles^, FParam1, FParam2, IParam1, IParam2, BParam1, BParam2);
 end;
 
-function PF_SetFatPVS(const Origin: TVec3): PByte; cdecl;
+function PF_SetFatPVS(var Origin: TVec3): PByte; cdecl;
 begin
-Result := SV_FatPVS(Origin);
+if @Origin <> nil then
+ Result := SV_FatPVS(Origin)
+else
+ begin
+  DPrint('PF_SetFatPVS: NULL pointer.');
+  Result := nil;
+ end;
 end;
 
-function PF_SetFatPAS(const Origin: TVec3): PByte; cdecl;
+function PF_SetFatPAS(var Origin: TVec3): PByte; cdecl;
 begin
-Result := SV_FatPAS(Origin);
+if @Origin <> nil then
+ Result := SV_FatPAS(Origin)
+else
+ begin
+  DPrint('PF_SetFatPAS: NULL pointer.');
+  Result := nil;
+ end;
 end;
 
 function PF_CheckVisibility(var E: TEdict; VisSet: PByte): Int32; cdecl;
@@ -2240,62 +2487,74 @@ var
  I: Int;
  LeafIndex: UInt32;
 begin
-if VisSet = nil then
- begin
-  Result := 1;
-  Exit;
- end;
-
-if E.HeadNode < 0 then
- begin
-  for I := 0 to E.NumLeafs - 1 do
-   if ((1 shl (E.LeafNums[I] and 7)) and PByte(UInt(VisSet) + UInt(E.LeafNums[I] shr 3))^) > 0 then
-    begin
-     Result := 1;
-     Exit;
-    end;
-
-  Result := 0;
- end
-else
- begin
-  for I := 0 to MAX_ENT_LEAFS - 1 do
+if @E <> nil then
+ if VisSet = nil then
+  Result := 1
+ else
+  if E.HeadNode < 0 then
    begin
-    LeafIndex := I;
-    if E.LeafNums[I] = CONTENTS_EMPTY then
-     Break;
+    for I := 0 to E.NumLeafs - 1 do
+     if ((1 shl (E.LeafNums[I] and 7)) and PByte(UInt(VisSet) + UInt(E.LeafNums[I] shr 3))^) > 0 then
+      begin
+       Result := 1;
+       Exit;
+      end;
 
-    if ((1 shl (E.LeafNums[I] and 7)) and PByte(UInt(VisSet) + UInt(E.LeafNums[I] shr 3))^) > 0 then
-     begin
-      Result := 1;
-      Exit;
-     end;
-   end;
-
-  if CM_HeadnodeVisible(@SV.WorldModel.Nodes[E.HeadNode], VisSet, @LeafIndex) then
-   begin
-    E.LeafNums[E.NumLeafs] := LeafIndex;
-    E.NumLeafs := (E.NumLeafs + 1) mod MAX_ENT_LEAFS;
-    Result := 2;
+    Result := 0;
    end
   else
-   Result := 0;
+   begin
+    for I := 0 to MAX_ENT_LEAFS - 1 do
+     begin
+      LeafIndex := I;
+      if E.LeafNums[I] = CONTENTS_EMPTY then
+       Break
+      else
+       if ((1 shl (E.LeafNums[I] and 7)) and PByte(UInt(VisSet) + UInt(E.LeafNums[I] shr 3))^) > 0 then
+        begin
+         Result := 1;
+         Exit;
+        end;
+     end;
+
+    if CM_HeadnodeVisible(@SV.WorldModel.Nodes[E.HeadNode], VisSet, @LeafIndex) then
+     begin
+      E.LeafNums[E.NumLeafs] := LeafIndex;
+      E.NumLeafs := (E.NumLeafs + 1) mod MAX_ENT_LEAFS;
+      Result := 2;
+     end
+    else
+     Result := 0;
+   end
+else
+ begin
+  DPrint('PF_CheckVisibility: NULL pointer.');
+  Result := 0;
  end;
 end;
 
 procedure PF_Delta_SetField(var D: TDelta; FieldName: PLChar); cdecl;
 begin
-Delta_SetField(D, FieldName);
+if (@D <> nil) and (FieldName <> nil) then
+ Delta_SetField(D, FieldName)
+else
+ DPrint('PF_Delta_SetField: NULL pointer.');
 end;
 
 procedure PF_Delta_UnsetField(var D: TDelta; FieldName: PLChar); cdecl;
 begin
-Delta_UnsetField(D, FieldName);
+if (@D <> nil) and (FieldName <> nil) then
+ Delta_UnsetField(D, FieldName)
+else
+ DPrint('PF_Delta_UnsetField: NULL pointer.');
 end;
 
 procedure PF_Delta_AddEncoder(Name: PLChar; Func: TDeltaEncoder); cdecl;
 begin
-Delta_AddEncoder(Name, Func);
+if Name <> nil then
+ Delta_AddEncoder(Name, Func)
+else
+ DPrint('PF_Delta_AddEncoder: NULL pointer.');
 end;
 
 function PF_GetCurrentPlayer: Int32; cdecl;
@@ -2305,33 +2564,58 @@ if (Result < 0) or (UInt(Result) >= SVS.MaxClients) then
  Result := -1;
 end;
 
-function PF_CanSkipPlayer(const E: TEdict): Int32; cdecl;
+function PF_CanSkipPlayer(var E: TEdict): Int32; cdecl;
 var
  I: UInt;
 begin
-I := NUM_FOR_EDICT(E);
-if (I >= 1) and (I <= SVS.MaxClients) then
- Result := Int32(SVS.Clients[I - 1].LW)
-else
+if @E <> nil then
  begin
-  Print(['PF_CanSkipPlayer: Entity is not a client (index #', I, ').']);
-  Result := 0;
- end;
+  I := NUM_FOR_EDICT(E);
+  if (I >= 1) and (I <= SVS.MaxClients) then
+   begin
+    Result := Int32(SVS.Clients[I - 1].LW);
+    Exit;
+   end
+  else
+   Print(['PF_CanSkipPlayer: Bad client index #', I, '.']);
+ end
+else
+ DPrint('PF_CanSkipPlayer: NULL pointer.');
+
+Result := 0;
 end;
 
-function PF_Delta_FindField(const D: TDelta; FieldName: PLChar): Int32; cdecl;
+function PF_Delta_FindField(var D: TDelta; FieldName: PLChar): Int32; cdecl;
 begin
-Result := Delta_FindFieldIndex(D, FieldName);
+if (@D <> nil) and (FieldName <> nil) then
+ Result := Delta_FindFieldIndex(D, FieldName)
+else
+ begin
+  DPrint('PF_Delta_FindField: NULL pointer.');
+  Result := -1;
+ end;
 end;
 
 procedure PF_Delta_SetFieldByIndex(var D: TDelta; FieldNumber: UInt32); cdecl;
 begin
-Delta_SetFieldByIndex(D, FieldNumber);
+if @D <> nil then
+ if FieldNumber < UInt32(D.NumFields) then
+  Delta_SetFieldByIndex(D, FieldNumber)
+ else
+  DPrint(['PF_Delta_SetFieldByIndex: Bad field index #', FieldNumber, '.'])
+else
+ DPrint('PF_Delta_SetFieldByIndex: NULL pointer.');
 end;
 
 procedure PF_Delta_UnsetFieldByIndex(var D: TDelta; FieldNumber: UInt32); cdecl;
 begin
-Delta_UnsetFieldByIndex(D, FieldNumber);
+if @D <> nil then
+ if FieldNumber < UInt32(D.NumFields) then
+  Delta_UnsetFieldByIndex(D, FieldNumber)
+ else
+  DPrint(['PF_Delta_UnsetFieldByIndex: Bad field index #', FieldNumber, '.'])
+else
+ DPrint('PF_Delta_UnsetFieldByIndex: NULL pointer.');
 end;
 
 procedure PF_SetGroupMask(Mask, Op: Int32); cdecl;
@@ -2340,20 +2624,26 @@ GroupMask := Mask;
 GroupOp := TGroupOp(Op);
 end;
 
-function PF_CreateInstancedBaseline(ClassName: UInt32; const Baseline: TEntityState): Int32; cdecl;
+function PF_CreateInstancedBaseline(ClassName: UInt32; var Baseline: TEntityState): Int32; cdecl;
 var
- I: UInt;
+ Index: UInt;
 begin
-I := SV.Baseline.NumEnts;
-if I < MAX_BASELINES - 1 then
+if @Baseline <> nil then
  begin
-  SV.Baseline.Classnames[I] := ClassName;
-  Move(Baseline, SV.Baseline.ES[I], SizeOf(TEntityState));
-  Inc(SV.Baseline.NumEnts);
-  Result := SV.Baseline.NumEnts;
+  Index := SV.Baseline.NumEnts;
+  if Index < MAX_BASELINES - 1 then
+   begin
+    SV.Baseline.Classnames[Index] := ClassName;
+    Move(Baseline, SV.Baseline.ES[Index], SizeOf(TEntityState));
+    Inc(SV.Baseline.NumEnts);
+    Result := SV.Baseline.NumEnts;
+    Exit;
+   end;
  end
 else
- Result := 0;
+ DPrint('PF_CreateInstancedBaseline: NULL pointer.');
+
+Result := 0;
 end;
 
 procedure PF_CVar_DirectSet(var C: TCVar; Value: PLChar); cdecl;
@@ -2407,7 +2697,7 @@ else
    end;
 end;
 
-procedure PF_GetPlayerStats(const E: TEdict; out Ping, PacketLoss: Int32); cdecl;
+procedure PF_GetPlayerStats(var E: TEdict; out Ping, PacketLoss: Int32); cdecl;
 var
  I: UInt;
 begin
@@ -2415,7 +2705,7 @@ I := NUM_FOR_EDICT(E);
 if (I >= 1) and (I <= SVS.MaxClients) then
  begin
   Ping := Trunc(SVS.Clients[I].Latency * 1000);
-  PacketLoss := Trunc(SVS.Clients[I].PacketLoss);  
+  PacketLoss := Trunc(SVS.Clients[I].PacketLoss);
  end
 else
  begin
@@ -2460,7 +2750,7 @@ var
  AuthIDBuf: array[0..4, 1..64] of LChar;
  AuthIDCount: Int = -1;
 
-function PF_GetPlayerAuthID(const E: TEdict): PLChar; cdecl;
+function PF_GetPlayerAuthID(var E: TEdict): PLChar; cdecl;
 var
  I: Int;
  C: PClient;

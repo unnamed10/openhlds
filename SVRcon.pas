@@ -21,39 +21,41 @@ var
  rcon_password: TCVar = (Name: 'rcon_password'; Data: ''); 
 
  RedirectType: TRedirectType;
- RedirectBuf: array[1..MAX_FRAGLEN - 6] of LChar;
+ RedirectBuf: array[1..MAX_FRAGLEN - 7] of LChar;
  RedirectTo: TNetAdr;
 
 implementation
 
-uses Console, Host, Memory, MsgBuf, Network, Server, SVPacket, SVSend;
+uses Console, Host, Memory, MsgBuf, Network, Server, SVClient, SVPacket;
 
 procedure SV_FlushRedirect;
 var
  SB: TSizeBuf;
  Buf: array[1..MAX_FRAGLEN] of LChar;
 begin
-if RedirectType = srRemote then
- begin
-  SB.Name := 'Redirected Text';
-  SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
-  SB.Data := @Buf;
-  SB.MaxSize := StrLen(@RedirectBuf) + 7;
-  SB.CurrentSize := 0;
-
-  MSG_WriteLong(SB, OUTOFBAND_TAG);
-  MSG_WriteChar(SB, S2C_PRINT);
-  MSG_WriteString(SB, @RedirectBuf);
-  MSG_WriteChar(SB, #0);
-
-  NET_SendPacket(NS_SERVER, SB.CurrentSize, SB.Data, RedirectTo);
- end
-else
- if RedirectType = srClient then
+if RedirectBuf[Low(RedirectBuf)] > #0 then
+ if RedirectType = srRemote then
   begin
-   MSG_WriteByte(HostClient.Netchan.NetMessage, SVC_PRINT);
-   MSG_WriteString(HostClient.Netchan.NetMessage, @RedirectBuf);
-  end;
+   SB.Name := 'Redirected Text';
+   SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
+   SB.Data := @Buf;
+   SB.MaxSize := SizeOf(@Buf);
+   SB.CurrentSize := 0;
+
+   MSG_WriteLong(SB, OUTOFBAND_TAG);
+   MSG_WriteChar(SB, S2C_PRINT);
+   MSG_WriteString(SB, @RedirectBuf);
+   MSG_WriteChar(SB, #0);
+
+   if not (FSB_OVERFLOWED in SB.AllowOverflow) then
+    NET_SendPacket(NS_SERVER, SB.CurrentSize, SB.Data, RedirectTo);
+  end
+ else
+  if RedirectType = srClient then
+   begin
+    MSG_WriteByte(HostClient.Netchan.NetMessage, SVC_PRINT);
+    MSG_WriteString(HostClient.Netchan.NetMessage, @RedirectBuf);
+   end;
 
 RedirectBuf[Low(RedirectBuf)] := #0;
 end;

@@ -21,7 +21,7 @@ const
  MAX_CMD_ARGS = 80;
  MAX_ARGS = 80;
 
- MAX_CONFIG_SIZE = 1024*256; // in KB
+ MAX_CONFIG_SIZE = 1024*512; // in KB
 
  MAX_MAP_NAME = 64;
 
@@ -129,13 +129,18 @@ const
  MSG_ONE_UNRELIABLE = 8;
  MSG_SPEC = 9;
 
+ MSG_END_OF_LIST = MSG_SPEC;
+
+ MAX_USERMSG_SIZE = 192; // up until 255
+
  //
  MAX_LOG_FILES = 5000;
 
 
  MAX_MODELS = 512;
  MAX_SOUNDS = 512;
- MAX_SOUNDHASH = MAX_SOUNDS * 2 - 1;
+ MAX_MODELHASH = MAX_MODELS * 2 - 1; // 1023 
+ MAX_SOUNDHASH = MAX_SOUNDS * 2 - 1; // 1023
 
  MAX_GENERIC_ITEMS = 512;
 
@@ -157,7 +162,7 @@ const
  MULTICAST_ALL = 1;
  MULTICAST_PVS = 2;
  MULTICAST_PAS = 4;
- MULTICAST_SKIP_SENDER = 128; // skip 
+ MULTICAST_SKIP_SELF = 128; // skip
 
  CHAN_AUTO = 0;
  CHAN_WEAPON = 1;
@@ -265,7 +270,7 @@ type
  end;
 
  TCmdFunction = procedure cdecl;
- TCmdSource = (csClient = 0, csServer);
+ TCmdSource = (csClient = 0, csServer, csConsole);
 
  PCommand = ^TCommand;
  TCommand = record
@@ -349,6 +354,7 @@ type
  {$IF SizeOf(TResourceInfo) <> 32} {$MESSAGE WARN 'Structure size mismatch @ TResourceInfo.'} {$DEFINE MSMW} {$IFEND}
 
  TResourceFlags = set of (RES_FATALIFMISSING, RES_WASMISSING, RES_CUSTOM, RES_REQUESTED, RES_PRECACHED, RES_ALWAYS, RES_PADDING, RES_CHECKFILE);
+ TCustFlags = set of (FCUST_FROMHPAK, FCUST_WIPEDATA, FCUST_IGNOREINIT);
  {$IF SizeOf(TResourceFlags) <> 1} {$MESSAGE WARN 'Structure size mismatch @ TResourceFlags.'} {$DEFINE MSMW} {$IFEND}
 
  PResource = ^TResource;
@@ -480,7 +486,7 @@ type
   ExtraOffset: UInt32; // +24. this adds to the decal size; unsure about it though...
 
   // should only be called from native code
-  LoadCallback: procedure(const WAD: PCacheWAD; const Data: Pointer); // +28
+  LoadCallback: procedure(WAD: PCacheWAD; Data: Pointer); // +28
   NameCount: Int32; // +32, total entries in PathData
   NameList: ^TCacheWADNameList; // +36, contains file names or something
 
@@ -637,9 +643,9 @@ type
  PDeltaField = ^TDeltaField; // Size is 68. Confirmed.
  TDeltaField = record
   FieldType: UInt32;          // 0. Confirmed.
-  Name: array[1..32] of Char; // 4. Confirmed. A field name.
+  Name: array[1..32] of LChar; // 4. Confirmed. A field name.
   Offset: UInt32;             // 36. Confirmed. Offset (unsigned).
-  Parsed: Word;                 // 40. Sets to "1" when parsing.
+  Parsed: UInt16;                 // 40. Sets to "1" when parsing.
   Bits: UInt32;               // 44. Confirmed. How many bits are in offset value.
   Scale: Single;              // 48. Should really be a scale.
   PScale: Single;             // 52. Another scale.
@@ -711,6 +717,7 @@ type
 const
  HPAK_VERSION = 1;
  HPAK_MAX_ENTRIES = 32768;
+ HPAK_MAX_DATA_SIZE = 128*1024;
 
  // Some sort of a refactoring trick
  HPAK_TAG = Ord('H') + Ord('P') shl 8 + Ord('A') shl 16 + Ord('K') shl 24;
@@ -750,212 +757,6 @@ type
 
  // 136 for Resource.
 
-const
- DT_ClientData_T: array[1..56] of TDeltaOffset =
- ((Name: 'origin[0]'; Offset: 0),
-  (Name: 'origin[1]'; Offset: 4),
-  (Name: 'origin[2]'; Offset: 8),
-  (Name: 'velocity[0]'; Offset: 12),
-  (Name: 'velocity[1]'; Offset: 16),
-  (Name: 'velocity[2]'; Offset: 20),
-  (Name: 'viewmodel'; Offset: 24),
-  (Name: 'punchangle[0]'; Offset: 28),
-  (Name: 'punchangle[1]'; Offset: 32),
-  (Name: 'punchangle[2]'; Offset: 36),
-  (Name: 'flags'; Offset: 40),
-  (Name: 'waterlevel'; Offset: 44),
-  (Name: 'watertype'; Offset: 48),
-  (Name: 'view_ofs[0]'; Offset: 52),
-  (Name: 'view_ofs[1]'; Offset: 56),
-  (Name: 'view_ofs[2]'; Offset: 60),
-  (Name: 'health'; Offset: 64),
-  (Name: 'bInDuck'; Offset: 68),
-  (Name: 'weapons'; Offset: 72),
-  (Name: 'flTimeStepSound'; Offset: 76),
-  (Name: 'flDuckTime'; Offset: 80),
-  (Name: 'flSwimTime'; Offset: 84),
-  (Name: 'waterjumptime'; Offset: 88),
-  (Name: 'maxspeed'; Offset: 92),
-  (Name: 'm_iId'; Offset: 104),
-  (Name: 'ammo_nails'; Offset: 112),
-  (Name: 'ammo_shells'; Offset: 108),
-  (Name: 'ammo_cells'; Offset: 116),
-  (Name: 'ammo_rockets'; Offset: 120),
-  (Name: 'm_flNextAttack'; Offset: 124),
-  (Name: 'physinfo'; Offset: 140),
-  (Name: 'fov'; Offset: 96),
-  (Name: 'weaponanim'; Offset: 100),
-  (Name: 'tfstate'; Offset: 128),
-  (Name: 'pushmsec'; Offset: 132),
-  (Name: 'deadflag'; Offset: 136),
-  (Name: 'iuser1'; Offset: 396),
-  (Name: 'iuser2'; Offset: 400),
-  (Name: 'iuser3'; Offset: 404),
-  (Name: 'iuser4'; Offset: 408),
-  (Name: 'fuser1'; Offset: 412),
-  (Name: 'fuser2'; Offset: 416),
-  (Name: 'fuser3'; Offset: 420),
-  (Name: 'fuser4'; Offset: 424),
-  (Name: 'vuser1[0]'; Offset: 428),
-  (Name: 'vuser1[1]'; Offset: 432),
-  (Name: 'vuser1[2]'; Offset: 436),
-  (Name: 'vuser2[0]'; Offset: 440),
-  (Name: 'vuser2[1]'; Offset: 444),
-  (Name: 'vuser2[2]'; Offset: 448),
-  (Name: 'vuser3[0]'; Offset: 452),
-  (Name: 'vuser3[1]'; Offset: 456),
-  (Name: 'vuser3[2]'; Offset: 460),
-  (Name: 'vuser4[0]'; Offset: 464),
-  (Name: 'vuser4[1]'; Offset: 468),
-  (Name: 'vuser4[2]'; Offset: 472));
-
- DT_WeaponData_T: array[1..22] of TDeltaOffset =
- ((Name: 'm_iId'; Offset: 0),
-  (Name: 'm_iClip'; Offset: 4),
-  (Name: 'm_flNextPrimaryAttack'; Offset: 8),
-  (Name: 'm_flNextSecondaryAttack'; Offset: 12),
-  (Name: 'm_flTimeWeaponIdle'; Offset: 16),
-  (Name: 'm_fInReload'; Offset: 20),
-  (Name: 'm_fInSpecialReload'; Offset: 24),
-  (Name: 'm_flNextReload'; Offset: 28),
-  (Name: 'm_flPumpTime'; Offset: 32),
-  (Name: 'm_fReloadTime'; Offset: 36),
-  (Name: 'm_fAimedDamage'; Offset: 40),
-  (Name: 'm_fNextAimBonus'; Offset: 44),
-  (Name: 'm_fInZoom'; Offset: 48),
-  (Name: 'm_iWeaponState'; Offset: 52),
-  (Name: 'iuser1'; Offset: 56),
-  (Name: 'iuser2'; Offset: 60),
-  (Name: 'iuser3'; Offset: 64),
-  (Name: 'iuser4'; Offset: 68),
-  (Name: 'fuser1'; Offset: 72),
-  (Name: 'fuser2'; Offset: 76),
-  (Name: 'fuser3'; Offset: 80),
-  (Name: 'fuser4'; Offset: 84));
-
- DT_UserCmd_T: array[1..16] of TDeltaOffset =
- ((Name: 'lerp_msec'; Offset: 0),
-  (Name: 'msec'; Offset: 2),
-  (Name: 'lightlevel'; Offset: 28),
-  (Name: 'viewangles[0]'; Offset: 4),
-  (Name: 'viewangles[1]'; Offset: 8),
-  (Name: 'viewangles[2]'; Offset: 12),
-  (Name: 'buttons'; Offset: 30),
-  (Name: 'forwardmove'; Offset: 16),
-  (Name: 'sidemove'; Offset: 20),
-  (Name: 'upmove'; Offset: 24),
-  (Name: 'impulse'; Offset: 32),
-  (Name: 'weaponselect'; Offset: 33),
-  (Name: 'impact_index'; Offset: 36),
-  (Name: 'impact_position[0]'; Offset: 40),
-  (Name: 'impact_position[1]'; Offset: 44),
-  (Name: 'impact_position[2]'; Offset: 48));
-
- DT_EntityState_T: array[1..87] of TDeltaOffset =
- ((Name: 'startpos[0]'; Offset: 228),
-  (Name: 'startpos[1]'; Offset: 232),
-  (Name: 'startpos[2]'; Offset: 236),
-  (Name: 'endpos[0]'; Offset: 240),
-  (Name: 'endpos[1]'; Offset: 244),
-  (Name: 'endpos[2]'; Offset: 248),
-  (Name: 'impacttime'; Offset: 252),
-  (Name: 'starttime'; Offset: 256),
-  (Name: 'origin[0]'; Offset: 16),
-  (Name: 'origin[1]'; Offset: 20),
-  (Name: 'origin[2]'; Offset: 24),
-  (Name: 'angles[0]'; Offset: 28),
-  (Name: 'angles[1]'; Offset: 32),
-  (Name: 'angles[2]'; Offset: 36),
-  (Name: 'modelindex'; Offset: 40),
-  (Name: 'frame'; Offset: 48),
-  (Name: 'movetype'; Offset: 88),
-  (Name: 'colormap'; Offset: 52),
-  (Name: 'skin'; Offset: 56),
-  (Name: 'solid'; Offset: 58),
-  (Name: 'scale'; Offset: 64),
-  (Name: 'effects'; Offset: 60),
-  (Name: 'sequence'; Offset: 44),
-  (Name: 'animtime'; Offset: 92),
-  (Name: 'framerate'; Offset: 96),
-  (Name: 'controller[0]'; Offset: 104),
-  (Name: 'controller[1]'; Offset: 105),
-  (Name: 'controller[2]'; Offset: 106),
-  (Name: 'controller[3]'; Offset: 107),
-  (Name: 'blending[0]'; Offset: 108),
-  (Name: 'blending[1]'; Offset: 109),
-  (Name: 'body'; Offset: 100),
-  (Name: 'owner'; Offset: 152),
-  (Name: 'rendermode'; Offset: 72),
-  (Name: 'renderamt'; Offset: 76),
-  (Name: 'renderfx'; Offset: 84),
-  (Name: 'rendercolor.r'; Offset: 80),
-  (Name: 'rendercolor.g'; Offset: 81),
-  (Name: 'rendercolor.b'; Offset: 82),
-  (Name: 'weaponmodel'; Offset: 180),
-  (Name: 'gaitsequence'; Offset: 184),
-  (Name: 'mins[0]'; Offset: 124),
-  (Name: 'mins[1]'; Offset: 128),
-  (Name: 'mins[2]'; Offset: 132),
-  (Name: 'maxs[0]'; Offset: 136),
-  (Name: 'maxs[1]'; Offset: 140),
-  (Name: 'maxs[2]'; Offset: 144),
-  (Name: 'aiment'; Offset: 148),
-  (Name: 'basevelocity[0]'; Offset: 188),
-  (Name: 'basevelocity[1]'; Offset: 192),
-  (Name: 'basevelocity[2]'; Offset: 196),
-  (Name: 'friction'; Offset: 156),
-  (Name: 'gravity'; Offset: 160),
-  (Name: 'spectator'; Offset: 176),
-  (Name: 'velocity[0]'; Offset: 112),
-  (Name: 'velocity[1]'; Offset: 116),
-  (Name: 'velocity[2]'; Offset: 120),
-  (Name: 'team'; Offset: 164),
-  (Name: 'playerclass'; Offset: 168),
-  (Name: 'health'; Offset: 172),
-  (Name: 'usehull'; Offset: 200),
-  (Name: 'oldbuttons'; Offset: 204),
-  (Name: 'onground'; Offset: 208),
-  (Name: 'iStepLeft'; Offset: 212),
-  (Name: 'flFallVelocity'; Offset: 216),
-  (Name: 'weaponanim'; Offset: 224),
-  (Name: 'eflags'; Offset: 68),
-  (Name: 'iuser1'; Offset: 260),
-  (Name: 'iuser2'; Offset: 264),
-  (Name: 'iuser3'; Offset: 268),
-  (Name: 'iuser4'; Offset: 272),
-  (Name: 'fuser1'; Offset: 276),
-  (Name: 'fuser2'; Offset: 280),
-  (Name: 'fuser3'; Offset: 284),
-  (Name: 'fuser4'; Offset: 288),
-  (Name: 'vuser1[0]'; Offset: 292),
-  (Name: 'vuser1[1]'; Offset: 296),
-  (Name: 'vuser1[2]'; Offset: 300),
-  (Name: 'vuser2[0]'; Offset: 304),
-  (Name: 'vuser2[1]'; Offset: 308),
-  (Name: 'vuser2[2]'; Offset: 312),
-  (Name: 'vuser3[0]'; Offset: 316),
-  (Name: 'vuser3[1]'; Offset: 320),
-  (Name: 'vuser3[2]'; Offset: 324),
-  (Name: 'vuser4[0]'; Offset: 328),
-  (Name: 'vuser4[1]'; Offset: 332),
-  (Name: 'vuser4[2]'; Offset: 336));
-
- DT_Event_T: array[1..14] of TDeltaOffset =
- ((Name: 'entindex'; Offset: 4),
-  (Name: 'origin[0]'; Offset: 8),
-  (Name: 'origin[1]'; Offset: 12),
-  (Name: 'origin[2]'; Offset: 16),
-  (Name: 'angles[0]'; Offset: 20),
-  (Name: 'angles[1]'; Offset: 24),
-  (Name: 'angles[2]'; Offset: 28),
-  (Name: 'fparam1'; Offset: 48),
-  (Name: 'fparam2'; Offset: 52),
-  (Name: 'iparam1'; Offset: 56),
-  (Name: 'iparam2'; Offset: 60),
-  (Name: 'bparam1'; Offset: 64),
-  (Name: 'bparam2'; Offset: 68),
-  (Name: 'ducking'; Offset: 44));
-
 // links
 type
  PLink = ^TLink;
@@ -976,10 +777,7 @@ type
 
  PTextureLump = ^TTextureLump; // 36, confirmed
  TTextureLump = record
-  FilePos, DiskSize, Size: UInt32;
-  LumpType, Compression: Byte;
-  Padding: UInt16;
-  Name: array[1..MAX_LUMP_NAME] of LChar;
+  Lump: TWADFileLump;
 
   FileID: UInt32; // 32, UInt32 for sure, is not pointer, is index
  end;
@@ -1078,6 +876,8 @@ type
 // networking
 
 const
+ NET_SERVERPORT = 27015;
+
  MAX_LOOPBACK = 4;
  MAX_LOOPBACK_PACKETLEN = 4040;
 
@@ -1086,6 +886,7 @@ const
 
  MAX_NET_QUEUES = 40;
  NET_QUEUESIZE = $600;
+ MAX_SPLIT_CTX = 16;
 
  OUTOFBAND_TAG = -1;
  SPLIT_TAG = -2;
@@ -1121,7 +922,7 @@ const
  A2A_ACK = 'i';
 
 type
- TNetAdrType = (NA_UNUSED = 0, NA_LOOPBACK, NA_BROADCAST, NA_IP, NA_IPX, NA_BROADCAST_IPX);
+ TNetAdrType = (NA_UNUSED = 0, NA_LOOPBACK, NA_BROADCAST, NA_IP); //, NA_IPX, NA_BROADCAST_IPX});
 
  TNetSrc = (NS_CLIENT = 0, NS_SERVER, NS_MULTICAST);
 
@@ -1150,7 +951,7 @@ type
  // split
 
  TSplitHeader = packed record // 9
-  OutSeq, InSeq: Int32;
+  Seq, SplitSeq: Int32;
   Index: Byte;
  end;
  {$IF SizeOf(TSplitHeader) <> 9} {$MESSAGE WARN 'Structure size mismatch @ TSplitHeader.'} {$DEFINE MSME} {$IFEND}
@@ -1175,6 +976,18 @@ type
   Prev, Next: PLagPacket; // 32 and 36
  end;
 
+ PSplitContext = ^TSplitContext;
+ TSplitContext = record
+  Addr: TNetAdr;
+  Time: Double;
+
+  Sequence: Int32;
+  PacketsLeft: Int;
+  Size: UInt;
+  Ack: set of 0..MAX_SPLIT - 1;
+  Data: array[1..MAX_NETPACKETLEN] of Byte;
+ end;
+  
 
  PFragBuf = ^TFragBuf;
  TFragBuf = record // 1708. confirmed.
@@ -1183,9 +996,9 @@ type
   FragMessage: TSizeBuf; // +8
   Data: array[1..MAX_FRAGLEN] of Byte; // +28
 
-  B1: Boolean; // +1428
+  FileFrag: Boolean; // +1428
   __Padding1, __Padding2, __Padding3: Byte;
-  B2: Boolean; // +1432
+  FileBuffer: Boolean; // +1432
   __Padding4, __Padding5, __Padding6: Byte;
   Compressed: Boolean; // +1436, maybe confirmed
   __Padding7, __Padding8, __Padding9: Byte;
@@ -1256,7 +1069,7 @@ type
   FragBufSize: array[1..2] of UInt16; // W 8144
   
   IncomingBuf: array[1..2] of PFragBuf; // W 8148 L 8144
-  IncomingActive: array[1..2] of Boolean; // W 8156 L 8152
+  IncomingActive: array[1..2] of Boolean; // W 8156 L 8152  is completed
 
   FileName: array[1..MAX_PATH_A] of LChar; // W 8164 confirmed
 
@@ -2096,7 +1909,7 @@ type
   ModelIndex, Sequence: Int32;
   Frame: Single;
   ColorMap: Int32;
-  Skin: UInt16;
+  Skin: Int16;
   Solid: UInt16;
   Effects: Int32;
   Scale: Single;
@@ -2205,8 +2018,8 @@ type
  {$IF SizeOf(TPhysEnt) <> 224} {$MESSAGE WARN 'Structure size mismatch @ TPhysEnt.'} {$DEFINE MSME} {$IFEND}
 
 
- TPhysEntFunc = function(const E: TPhysEnt): Int32; cdecl;
- 
+ TPhysEntFunc = function(var E: TPhysEnt): Int32; cdecl;
+
  PMoveVars = ^TMoveVars;
  TMoveVars = record
   Gravity, StopSpeed, MaxSpeed, SpectatorMaxSpeed, Accelerate, AirAccelerate, WaterAccelerate,
@@ -2311,27 +2124,27 @@ type
   // cdecl for compatibility reasons
   // mods have access to this i guess
   PM_Info_ValueForKey: function(S, Key: PLChar): PLChar; cdecl; // +324948
-  PM_Particle: procedure(const Origin: TVec3; Color: Int32; Life: Single; ZPos, ZVel: Int32); cdecl; // +324952
-  PM_TestPlayerPosition: function(const Pos: TVec3; Trace: PPMTrace): Int32; cdecl; // +324956
+  PM_Particle: procedure(var Origin: TVec3; Color: Int32; Life: Single; ZPos, ZVel: Int32); cdecl; // +324952
+  PM_TestPlayerPosition: function(var Pos: TVec3; Trace: PPMTrace): Int32; cdecl; // +324956
   Con_NPrintF: procedure(ID: Int32; S: PLChar); cdecl varargs; // +324960
   Con_DPrintF: procedure(S: PLChar); cdecl varargs; // +324964
   Con_PrintF: procedure(S: PLChar); cdecl varargs; // +324968
   Sys_FloatTime: function: Double; cdecl; // +324972
 
-  PM_StuckTouch: procedure(HitEnt: Int32; const TraceResult: TPMTrace); cdecl;
-  PM_PointContents: function(const P: TVec3; TrueContents: PInt32): Int32; cdecl;
-  PM_TruePointContents: function(const P: TVec3): Int32; cdecl;
-  PM_HullPointContents: function(const Hull: THull; Num: Int32; const P: TVec3): Int32; cdecl;
+  PM_StuckTouch: procedure(HitEnt: Int32; var TraceResult: TPMTrace); cdecl;
+  PM_PointContents: function(var P: TVec3; TrueContents: PInt32): Int32; cdecl;
+  PM_TruePointContents: function(var P: TVec3): Int32; cdecl;
+  PM_HullPointContents: function(var Hull: THull; Num: Int32; var P: TVec3): Int32; cdecl;
 
-  PM_PlayerTrace: function(out Trace: TPMTrace; const VStart, VEnd: TVec3; TraceFlags, IgnorePE: Int32): PPMTrace; cdecl;
-  PM_TraceLine: function(const VStart, VEnd: TVec3; Flags, UseHull, IgnorePE: Int32): PPMTrace; cdecl;
+  PM_PlayerTrace: function(out Trace: TPMTrace; var VStart, VEnd: TVec3; TraceFlags, IgnorePE: Int32): PPMTrace; cdecl;
+  PM_TraceLine: function(var VStart, VEnd: TVec3; Flags, UseHull, IgnorePE: Int32): PPMTrace; cdecl;
   RandomLong: function(Low, High: Int32): Int32; cdecl;
   RandomFloat: function(Low, High: Single): Single; cdecl;
 
-  PM_GetModelType: function(const Model: TModel): TModelType; cdecl;
-  PM_GetModelBounds: procedure(const Model: TModel; out MinS, MaxS: TVec3); cdecl;
-  PM_HullForBSP: function(const E: TPhysEnt; out Offset: TVec3): PHull; cdecl;
-  PM_TraceModel: function(const E: TPhysEnt; const VStart, VEnd: TVec3; var T: TTrace): Single; cdecl;
+  PM_GetModelType: function(var Model: TModel): TModelType; cdecl;
+  PM_GetModelBounds: procedure(var Model: TModel; out MinS, MaxS: TVec3); cdecl;
+  PM_HullForBSP: function(var E: TPhysEnt; out Offset: TVec3): PHull; cdecl;
+  PM_TraceModel: function(var E: TPhysEnt; var VStart, VEnd: TVec3; var T: TTrace): Single; cdecl;
 
   COM_FileSize: function(Name: PLChar): Int32; cdecl;
   COM_LoadFile: function(Name: PLChar; AllocType: Int32; Length: PUInt32): Pointer; cdecl;
@@ -2341,12 +2154,12 @@ type
 
   RunFuncs: Int32; // +325040
   PM_PlaySound: procedure(Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
-  PM_TraceTexture: function(Ground: Int32; const VStart, VEnd: TVec3): PLChar; cdecl;
-  PM_PlaybackEventFull: procedure(Flags, ClientIndex: Int32; EventIndex: UInt16; Delay: Single; const Origin, Angles: TVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32); cdecl;
+  PM_TraceTexture: function(Ground: Int32; var VStart, VEnd: TVec3): PLChar; cdecl;
+  PM_PlaybackEventFull: procedure(Flags, ClientIndex: Int32; EventIndex: UInt16; Delay: Single; var Origin, Angles: TVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32); cdecl;
 
-  PM_PlayerTraceEx: function(out Trace: TPMTrace; const VStart, VEnd: TVec3; TraceFlags: Int32; IgnoreFunc: TPhysEntFunc): PPMTrace; cdecl;
-  PM_TestPlayerPositionEx: function(const Pos: TVec3; Trace: PPMTrace; IgnoreFunc: TPhysEntFunc): Int32; cdecl;
-  PM_TraceLineEx: function(const VStart, VEnd: TVec3; Flags, UseHull: Int32; IgnoreFunc: TPhysEntFunc): PPMTrace; cdecl;
+  PM_PlayerTraceEx: function(out Trace: TPMTrace; var VStart, VEnd: TVec3; TraceFlags: Int32; IgnoreFunc: TPhysEntFunc): PPMTrace; cdecl;
+  PM_TestPlayerPositionEx: function(var Pos: TVec3; Trace: PPMTrace; IgnoreFunc: TPhysEntFunc): Int32; cdecl;
+  PM_TraceLineEx: function(var VStart, VEnd: TVec3; Flags, UseHull: Int32; IgnoreFunc: TPhysEntFunc): PPMTrace; cdecl;
  end;
  {$IF SizeOf(TPlayerMove) <> 325068} {$MESSAGE WARN 'Structure size mismatch @ TPlayerMove.'} {$DEFINE MSME} {$IFEND}
 
@@ -2361,7 +2174,7 @@ type
   VStart, VEnd: PVec3; // 56, 60
   Trace: TTrace; // 64
 
-  I1, I2: Int16; // 120, 122
+  IgnoreMonsters, IgnoreGlass: Boolean; // 120, 122
   PassEdict: PEdict; // 124 probably
   HullNum: Int32; // 128
  end;
@@ -2419,7 +2232,7 @@ type
 
 // baseline
 const
- MAX_BASELINES = 64;
+ MAX_BASELINES = 64; // SV_WriteDeltaHeader
  
 type
  PServerBaseline = ^TServerBaseline;
@@ -2464,6 +2277,7 @@ const
  MAX_WEAPON_DATA = 64; // writeclientdatatomessage
 
  MAX_UNLAG_SAMPLES = 16; // frames to calculate predicted origin against
+ MAX_AVG_SAMPLES = 4;
 
  // hardcoded limits for both client rates and server cvars.
 
@@ -2511,7 +2325,7 @@ type
  PPacketEntities = ^TPacketEntities;
  TPacketEntities = record
   NumEnts: UInt32; // +0
-  
+  EntLimit: UInt32; // custom
   Ents: PEntityStateArray; // +36
  end;
 
@@ -2536,7 +2350,7 @@ type
   Connected: Boolean; // +12 cf
   HasMissingResources: Boolean; // +16 cf (need missing resources)
   UserMsgReady: Boolean; // +20 cf SV_New
-  SendConsistency: Boolean; // +24 cf 
+  NeedConsistency: Boolean; // +24 cf
 
   Netchan: TNetchan; // +32?  124 is netmessage (92 + 32)
   ChokeCount: UInt32; // 9536 W, cf, unsigned
@@ -2588,7 +2402,9 @@ type
   TopColor: Int32; // 19752 W cf
   BottomColor: Int32; // 19756 W cf
 
+  // server -> client
   DownloadList: TResource; // +19476 L   +19764 W
+  // client -> server
   UploadList: TResource; // +19612 L   +19900 W
   UploadComplete: Boolean; // +20040 W cf
   Customization: TCustomization; // +20044 W cf
@@ -2615,6 +2431,11 @@ type
   ConnectSeq: UInt32;
   SpawnSeq: UInt32;
 
+  NewCmdTime: Double;
+  SpawnCmdTime: Double;
+
+  FragSize: UInt;
+  FragSizeUpdated: Boolean; // is it necessary to update the fragsize
  end;
  TClientArray = array[0..0] of TClient;
 
@@ -2662,6 +2483,216 @@ type
   CurrentMapName: array[1..32] of LChar;
  end;
 
+const
+ DT_ClientData_T: array[1..56] of TDeltaOffset =
+ ((Name: 'origin[0]'; Offset: 0),
+  (Name: 'origin[1]'; Offset: 4),
+  (Name: 'origin[2]'; Offset: 8),
+  (Name: 'velocity[0]'; Offset: 12),
+  (Name: 'velocity[1]'; Offset: 16),
+  (Name: 'velocity[2]'; Offset: 20),
+  (Name: 'viewmodel'; Offset: 24),
+  (Name: 'punchangle[0]'; Offset: 28),
+  (Name: 'punchangle[1]'; Offset: 32),
+  (Name: 'punchangle[2]'; Offset: 36),
+  (Name: 'flags'; Offset: 40),
+  (Name: 'waterlevel'; Offset: 44),
+  (Name: 'watertype'; Offset: 48),
+  (Name: 'view_ofs[0]'; Offset: 52),
+  (Name: 'view_ofs[1]'; Offset: 56),
+  (Name: 'view_ofs[2]'; Offset: 60),
+  (Name: 'health'; Offset: 64),
+  (Name: 'bInDuck'; Offset: 68),
+  (Name: 'weapons'; Offset: 72),
+  (Name: 'flTimeStepSound'; Offset: 76),
+  (Name: 'flDuckTime'; Offset: 80),
+  (Name: 'flSwimTime'; Offset: 84),
+  (Name: 'waterjumptime'; Offset: 88),
+  (Name: 'maxspeed'; Offset: 92),
+  (Name: 'fov'; Offset: 96),
+  (Name: 'weaponanim'; Offset: 100),
+  (Name: 'm_iId'; Offset: 104),
+  (Name: 'ammo_shells'; Offset: 108),
+  (Name: 'ammo_nails'; Offset: 112),
+  (Name: 'ammo_cells'; Offset: 116),
+  (Name: 'ammo_rockets'; Offset: 120),
+  (Name: 'm_flNextAttack'; Offset: 124),
+  (Name: 'tfstate'; Offset: 128),
+  (Name: 'pushmsec'; Offset: 132),
+  (Name: 'deadflag'; Offset: 136),
+  (Name: 'physinfo'; Offset: 140),
+  (Name: 'iuser1'; Offset: 396),
+  (Name: 'iuser2'; Offset: 400),
+  (Name: 'iuser3'; Offset: 404),
+  (Name: 'iuser4'; Offset: 408),
+  (Name: 'fuser1'; Offset: 412),
+  (Name: 'fuser2'; Offset: 416),
+  (Name: 'fuser3'; Offset: 420),
+  (Name: 'fuser4'; Offset: 424),
+  (Name: 'vuser1[0]'; Offset: 428),
+  (Name: 'vuser1[1]'; Offset: 432),
+  (Name: 'vuser1[2]'; Offset: 436),
+  (Name: 'vuser2[0]'; Offset: 440),
+  (Name: 'vuser2[1]'; Offset: 444),
+  (Name: 'vuser2[2]'; Offset: 448),
+  (Name: 'vuser3[0]'; Offset: 452),
+  (Name: 'vuser3[1]'; Offset: 456),
+  (Name: 'vuser3[2]'; Offset: 460),
+  (Name: 'vuser4[0]'; Offset: 464),
+  (Name: 'vuser4[1]'; Offset: 468),
+  (Name: 'vuser4[2]'; Offset: 472));
+
+ DT_WeaponData_T: array[1..22] of TDeltaOffset =
+ ((Name: 'm_iId'; Offset: 0),
+  (Name: 'm_iClip'; Offset: 4),
+  (Name: 'm_flNextPrimaryAttack'; Offset: 8),
+  (Name: 'm_flNextSecondaryAttack'; Offset: 12),
+  (Name: 'm_flTimeWeaponIdle'; Offset: 16),
+  (Name: 'm_fInReload'; Offset: 20),
+  (Name: 'm_fInSpecialReload'; Offset: 24),
+  (Name: 'm_flNextReload'; Offset: 28),
+  (Name: 'm_flPumpTime'; Offset: 32),
+  (Name: 'm_fReloadTime'; Offset: 36),
+  (Name: 'm_fAimedDamage'; Offset: 40),
+  (Name: 'm_fNextAimBonus'; Offset: 44),
+  (Name: 'm_fInZoom'; Offset: 48),
+  (Name: 'm_iWeaponState'; Offset: 52),
+  (Name: 'iuser1'; Offset: 56),
+  (Name: 'iuser2'; Offset: 60),
+  (Name: 'iuser3'; Offset: 64),
+  (Name: 'iuser4'; Offset: 68),
+  (Name: 'fuser1'; Offset: 72),
+  (Name: 'fuser2'; Offset: 76),
+  (Name: 'fuser3'; Offset: 80),
+  (Name: 'fuser4'; Offset: 84));
+
+ DT_UserCmd_T: array[1..16] of TDeltaOffset =
+ ((Name: 'lerp_msec'; Offset: 0),
+  (Name: 'msec'; Offset: 2),
+  (Name: 'viewangles[0]'; Offset: 4),
+  (Name: 'viewangles[1]'; Offset: 8),
+  (Name: 'viewangles[2]'; Offset: 12),
+  (Name: 'forwardmove'; Offset: 16),
+  (Name: 'sidemove'; Offset: 20),
+  (Name: 'upmove'; Offset: 24),
+  (Name: 'lightlevel'; Offset: 28),
+  (Name: 'buttons'; Offset: 30),
+  (Name: 'impulse'; Offset: 32),
+  (Name: 'weaponselect'; Offset: 33),
+  (Name: 'impact_index'; Offset: 36),
+  (Name: 'impact_position[0]'; Offset: 40),
+  (Name: 'impact_position[1]'; Offset: 44),
+  (Name: 'impact_position[2]'; Offset: 48));
+
+ DT_EntityState_T: array[1..87] of TDeltaOffset =
+ (
+  (Name: 'origin[0]'; Offset: 16),
+  (Name: 'origin[1]'; Offset: 20),
+  (Name: 'origin[2]'; Offset: 24),
+  (Name: 'angles[0]'; Offset: 28),
+  (Name: 'angles[1]'; Offset: 32),
+  (Name: 'angles[2]'; Offset: 36),
+  (Name: 'modelindex'; Offset: 40),
+  (Name: 'sequence'; Offset: 44),
+  (Name: 'frame'; Offset: 48),
+  (Name: 'colormap'; Offset: 52),
+  (Name: 'skin'; Offset: 56),
+  (Name: 'solid'; Offset: 58),
+  (Name: 'effects'; Offset: 60),
+  (Name: 'scale'; Offset: 64),
+  (Name: 'eflags'; Offset: 68),
+  (Name: 'rendermode'; Offset: 72),
+  (Name: 'renderamt'; Offset: 76),
+  (Name: 'rendercolor.r'; Offset: 80),
+  (Name: 'rendercolor.g'; Offset: 81),
+  (Name: 'rendercolor.b'; Offset: 82),
+  (Name: 'renderfx'; Offset: 84),
+  (Name: 'movetype'; Offset: 88),
+  (Name: 'animtime'; Offset: 92),
+  (Name: 'framerate'; Offset: 96),
+  (Name: 'body'; Offset: 100),
+  (Name: 'controller[0]'; Offset: 104),
+  (Name: 'controller[1]'; Offset: 105),
+  (Name: 'controller[2]'; Offset: 106),
+  (Name: 'controller[3]'; Offset: 107),
+  (Name: 'blending[0]'; Offset: 108),
+  (Name: 'blending[1]'; Offset: 109),
+  (Name: 'velocity[0]'; Offset: 112),
+  (Name: 'velocity[1]'; Offset: 116),
+  (Name: 'velocity[2]'; Offset: 120),
+  (Name: 'mins[0]'; Offset: 124),
+  (Name: 'mins[1]'; Offset: 128),
+  (Name: 'mins[2]'; Offset: 132),
+  (Name: 'maxs[0]'; Offset: 136),
+  (Name: 'maxs[1]'; Offset: 140),
+  (Name: 'maxs[2]'; Offset: 144),
+  (Name: 'aiment'; Offset: 148),
+  (Name: 'owner'; Offset: 152),
+  (Name: 'friction'; Offset: 156),
+  (Name: 'gravity'; Offset: 160),
+  (Name: 'team'; Offset: 164),
+  (Name: 'playerclass'; Offset: 168),
+  (Name: 'health'; Offset: 172),
+  (Name: 'spectator'; Offset: 176),
+  (Name: 'weaponmodel'; Offset: 180),
+  (Name: 'gaitsequence'; Offset: 184),
+  (Name: 'basevelocity[0]'; Offset: 188),
+  (Name: 'basevelocity[1]'; Offset: 192),
+  (Name: 'basevelocity[2]'; Offset: 196),
+  (Name: 'usehull'; Offset: 200),
+  (Name: 'oldbuttons'; Offset: 204),
+  (Name: 'onground'; Offset: 208),
+  (Name: 'iStepLeft'; Offset: 212),
+  (Name: 'flFallVelocity'; Offset: 216),
+
+  (Name: 'weaponanim'; Offset: 224),
+  (Name: 'startpos[0]'; Offset: 228),
+  (Name: 'startpos[1]'; Offset: 232),
+  (Name: 'startpos[2]'; Offset: 236),
+  (Name: 'endpos[0]'; Offset: 240),
+  (Name: 'endpos[1]'; Offset: 244),
+  (Name: 'endpos[2]'; Offset: 248),
+  (Name: 'impacttime'; Offset: 252),
+  (Name: 'starttime'; Offset: 256),
+  (Name: 'iuser1'; Offset: 260),
+  (Name: 'iuser2'; Offset: 264),
+  (Name: 'iuser3'; Offset: 268),
+  (Name: 'iuser4'; Offset: 272),
+  (Name: 'fuser1'; Offset: 276),
+  (Name: 'fuser2'; Offset: 280),
+  (Name: 'fuser3'; Offset: 284),
+  (Name: 'fuser4'; Offset: 288),
+  (Name: 'vuser1[0]'; Offset: 292),
+  (Name: 'vuser1[1]'; Offset: 296),
+  (Name: 'vuser1[2]'; Offset: 300),
+  (Name: 'vuser2[0]'; Offset: 304),
+  (Name: 'vuser2[1]'; Offset: 308),
+  (Name: 'vuser2[2]'; Offset: 312),
+  (Name: 'vuser3[0]'; Offset: 316),
+  (Name: 'vuser3[1]'; Offset: 320),
+  (Name: 'vuser3[2]'; Offset: 324),
+  (Name: 'vuser4[0]'; Offset: 328),
+  (Name: 'vuser4[1]'; Offset: 332),
+  (Name: 'vuser4[2]'; Offset: 336));
+
+ DT_Event_T: array[1..14] of TDeltaOffset =
+ ((Name: 'entindex'; Offset: 4),
+  (Name: 'origin[0]'; Offset: 8),
+  (Name: 'origin[1]'; Offset: 12),
+  (Name: 'origin[2]'; Offset: 16),
+  (Name: 'angles[0]'; Offset: 20),
+  (Name: 'angles[1]'; Offset: 24),
+  (Name: 'angles[2]'; Offset: 28),
+  (Name: 'ducking'; Offset: 44),
+  (Name: 'fparam1'; Offset: 48),
+  (Name: 'fparam2'; Offset: 52),
+  (Name: 'iparam1'; Offset: 56),
+  (Name: 'iparam2'; Offset: 60),
+  (Name: 'bparam1'; Offset: 64),
+  (Name: 'bparam2'; Offset: 68));
+
+
+
 
 // blending interface
 const
@@ -2671,7 +2702,7 @@ type
  PSVBlendingInterface = ^TSVBlendingInterface;
  TSVBlendingInterface = record
   Version: Int32;
-  SV_StudioSetupBones: procedure(var Model: TModel; Frame: Single; Sequence: Int32; const Angles, Origin: TVec3; Controller, Blending: PByte; Bone: Int32; Ent: PEdict); cdecl;
+  SV_StudioSetupBones: procedure(var Model: TModel; Frame: Single; Sequence: Int32; var Angles, Origin: TVec3; Controller, Blending: PByte; Bone: Int32; Ent: PEdict); cdecl;
  end;
  {$IF SizeOf(TSVBlendingInterface) <> 8} {$MESSAGE WARN 'Structure size mismatch @ TSVBlendingInterface.'} {$DEFINE MSME} {$IFEND}
 
@@ -2814,51 +2845,51 @@ type
   SetModel: procedure(var E: TEdict; ModelName: PLChar); cdecl;
   ModelIndex: function(Name: PLChar): Int32; cdecl;
   ModelFrames: function(Index: Int32): Int32; cdecl;
-  SetSize: procedure(var E: TEdict; const MinS, MaxS: TVec3); cdecl;
+  SetSize: procedure(var E: TEdict; var MinS, MaxS: TVec3); cdecl;
   ChangeLevel: procedure(S1, S2: PLChar); cdecl;
   SetSpawnParms: procedure(var E: TEdict); cdecl;
   SaveSpawnParms: procedure(var E: TEdict); cdecl;
-  VecToYaw: function(const V: TVec3): Double; cdecl; // single in SDK
-  VecToAngles: procedure(const Fwd: TVec3; out Angles: TVec3); cdecl;
-  MoveToOrigin: procedure(var E: TEdict; const Target: TVec3; Distance: Single; MoveType: Int32); cdecl;
+  VecToYaw: function(var V: TVec3): Double; cdecl; // single in SDK
+  VecToAngles: procedure(var Fwd: TVec3; out Angles: TVec3); cdecl;
+  MoveToOrigin: procedure(var E: TEdict; var Target: TVec3; Distance: Single; MoveType: Int32); cdecl;
   ChangeYaw: procedure(var E: TEdict); cdecl;
   ChangePitch: procedure(var E: TEdict); cdecl;
-  FindEntityByString: function(const E: TEdict; Key, Value: PLChar): PEdict; cdecl;
-  GetEntityIllum: function(const E: TEdict): Int32; cdecl;
-  FindEntityInSphere: function(const E: TEdict; const Origin: TVec3; Distance: Single): PEdict; cdecl;
-  FindClientInPVS: function(const E: TEdict): PEdict; cdecl;
-  EntitiesInPVS: function(const E: TEdict): PEdict; cdecl;
-  MakeVectors: procedure(const V: TVec3); cdecl;
-  AngleVectors: procedure(const Angles: TVec3; Fwd, Right, Up: PVec3); cdecl;
+  FindEntityByString: function(var E: TEdict; Key, Value: PLChar): PEdict; cdecl;
+  GetEntityIllum: function(var E: TEdict): Int32; cdecl;
+  FindEntityInSphere: function(var E: TEdict; var Origin: TVec3; Distance: Single): PEdict; cdecl;
+  FindClientInPVS: function(var E: TEdict): PEdict; cdecl;
+  EntitiesInPVS: function(var E: TEdict): PEdict; cdecl;
+  MakeVectors: procedure(var V: TVec3); cdecl;
+  AngleVectors: procedure(var Angles: TVec3; Fwd, Right, Up: PVec3); cdecl;
 
   CreateEntity: function: PEdict; cdecl;
   RemoveEntity: procedure(var E: TEdict); cdecl;
   CreateNamedEntity: function(ClassName: TStringOfs): PEdict; cdecl;
   
   MakeStatic: procedure(var E: TEdict); cdecl;
-  EntIsOnFloor: function(const E: TEdict): Int32; cdecl;
+  EntIsOnFloor: function(var E: TEdict): Int32; cdecl;
   DropToFloor: function(var E: TEdict): Int32; cdecl;
   WalkMove: function(var E: TEdict; Yaw, Distance: Single; Mode: Int32): Int32; cdecl;
 
-  SetOrigin: procedure(var E: TEdict; const Origin: TVec3); cdecl;
-  EmitSound: procedure(const E: TEdict; Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
-  EmitAmbientSound: procedure(const E: TEdict; const Origin: TVec3; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
-  TraceLine: procedure(const V1, V2: TVec3; MoveType: Int32; E: PEdict; out Trace: TTraceResult); cdecl;
-  TraceToss: procedure(const E: TEdict; IgnoreEnt: PEdict; out Trace: TTraceResult); cdecl;
-  TraceMonsterHull: function(const E: TEdict; const V1, V2: TVec3; MoveType: Int32; EntityToSkip: PEdict; out Trace: TTraceResult): Int32; cdecl;
-  TraceHull: procedure(const V1, V2: TVec3; MoveType, HullNumber: Int32; EntityToSkip: PEdict; out Trace: TTraceResult); cdecl;
-  TraceModel: procedure(const V1, V2: TVec3; HullNumber: Int32; var E: TEdict; out Trace: TTraceResult); cdecl;
-  TraceTexture: function(E: PEdict; const V1, V2: TVec3): PLChar; cdecl;
-  TraceSphere: procedure(const V1, V2: TVec3; MoveType: Int32; Radius: Single; EntityToSkip: PEdict; out Trace: TTraceResult); cdecl;
+  SetOrigin: procedure(var E: TEdict; var Origin: TVec3); cdecl;
+  EmitSound: procedure(var E: TEdict; Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
+  EmitAmbientSound: procedure(var E: TEdict; var Origin: TVec3; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
+  TraceLine: procedure(var V1, V2: TVec3; MoveType: Int32; E: PEdict; out Trace: TTraceResult); cdecl;
+  TraceToss: procedure(var E: TEdict; IgnoreEnt: PEdict; out Trace: TTraceResult); cdecl;
+  TraceMonsterHull: function(var E: TEdict; var V1, V2: TVec3; MoveType: Int32; EntityToSkip: PEdict; out Trace: TTraceResult): Int32; cdecl;
+  TraceHull: procedure(var V1, V2: TVec3; MoveType, HullNumber: Int32; EntityToSkip: PEdict; out Trace: TTraceResult); cdecl;
+  TraceModel: procedure(var V1, V2: TVec3; HullNumber: Int32; var E: TEdict; out Trace: TTraceResult); cdecl;
+  TraceTexture: function(E: PEdict; var V1, V2: TVec3): PLChar; cdecl;
+  TraceSphere: procedure(var V1, V2: TVec3; MoveType: Int32; Radius: Single; EntityToSkip: PEdict; out Trace: TTraceResult); cdecl;
 
   GetAimVector: procedure(E: PEdict; Speed: Single; out VOut: TVec3); cdecl;
   ServerCommand: procedure(S: PLChar); cdecl;
   ServerExecute: procedure; cdecl;
-  ClientCommand: procedure(const E: TEdict; S: PLChar); cdecl; // varargs
-  ParticleEffect: procedure(const Origin, Direction: TVec3; Color, Count: Single); cdecl;
+  ClientCommand: procedure(var E: TEdict; S: PLChar); cdecl; // varargs
+  ParticleEffect: procedure(var Origin, Direction: TVec3; Color, Count: Single); cdecl;
   LightStyle: procedure(Style: Int32; Value: PLChar); cdecl;
   DecalIndex: function(DecalName: PLChar): Int32; cdecl; // can return -1!
-  PointContents: function(const Point: TVec3): Int32; cdecl;
+  PointContents: function(var Point: TVec3): Int32; cdecl;
   MessageBegin: procedure(Dest, MessageType: Int32; Origin: PVec3; E: PEdict); cdecl;
   MessageEnd: procedure; cdecl;
   WriteByte: procedure(Value: Int32); cdecl;
@@ -2879,16 +2910,16 @@ type
   EngineFPrintF: procedure(F: Pointer; Msg: PLChar); cdecl;
 
   PvAllocEntPrivateData: function(var E: TEdict; Size: Int32): Pointer; cdecl;
-  PvEntPrivateData: function(const E: TEdict): Pointer; cdecl;
+  PvEntPrivateData: function(var E: TEdict): Pointer; cdecl;
   FreeEntPrivateData: procedure(var E: TEdict); cdecl;
   SzFromIndex: function(Index: TStringOfs): PLChar; cdecl;
   AllocEngineString: function(S: PLChar): TStringOfs; cdecl;
-  GetVarsOfEnt: function(const E: TEdict): PEntVars; cdecl;
+  GetVarsOfEnt: function(var E: TEdict): PEntVars; cdecl;
   PEntityOfEntOffset: function(Offset: UInt32): PEdict; cdecl;
-  EntOffsetOfPEntity: function(const E: TEdict): UInt32; cdecl;
+  EntOffsetOfPEntity: function(var E: TEdict): UInt32; cdecl;
   IndexOfEdict: function(E: PEdict): Int32; cdecl;
   PEntityOfEntIndex: function(Index: Int32): PEdict; cdecl;
-  FindEntityByVars: function(const E: TEntVars): PEdict; cdecl;
+  FindEntityByVars: function(var E: TEntVars): PEdict; cdecl;
 
   GetModelPtr: function(E: PEdict): Pointer; cdecl;
   RegUserMsg: function(Name: PLChar; Size: Int32): Int32; cdecl;
@@ -2897,7 +2928,7 @@ type
   FunctionFromName: function(Name: PLChar): Pointer; cdecl;
   NameForFunction: function(Func: Pointer): PLChar; cdecl;
 
-  ClientPrintF: procedure(const E: TEdict; PrintType: TPrintType; Msg: PLChar); cdecl;
+  ClientPrintF: procedure(var E: TEdict; PrintType: TPrintType; Msg: PLChar); cdecl;
   ServerPrint: procedure(Msg: PLChar); cdecl;
   Cmd_Args: function: PLChar; cdecl;
   Cmd_Argv: function(I: Int32): PLChar; cdecl;
@@ -2913,64 +2944,64 @@ type
   RandomLong: function(Low, High: Int32): Int32; cdecl;
   RandomFloat: function(Low, High: Single): Double; cdecl; // single?
 
-  SetView: procedure(const Entity, Target: TEdict); cdecl;
+  SetView: procedure(var Entity, Target: TEdict); cdecl;
   Time: function: Double; cdecl;
-  CrosshairAngle: procedure(const Entity: TEdict; Pitch, Yaw: Single); cdecl;
+  CrosshairAngle: procedure(var Entity: TEdict; Pitch, Yaw: Single); cdecl;
   LoadFileForMe: function(Name: PLChar; Length: PUInt32): Pointer; cdecl;
   FreeFile: procedure(Buffer: Pointer); cdecl;
   EndSection: procedure(Name: PLChar); cdecl;
   CompareFileTime: function(S1, S2: PLChar; CompareResult: PInt32): Int32; cdecl;
   GetGameDir: procedure(Buffer: PLChar); cdecl;
   CVar_RegisterVariable: procedure(var C: TCVar); cdecl;
-  FadeClientVolume: procedure(const Entity: TEdict; FadePercent, FadeOutSeconds, HoldTime, FadeInSeconds: Int32); cdecl;
+  FadeClientVolume: procedure(var Entity: TEdict; FadePercent, FadeOutSeconds, HoldTime, FadeInSeconds: Int32); cdecl;
   SetClientMaxSpeed: procedure(var E: TEdict; Speed: Single); cdecl;
 
   CreateFakeClient: function(Name: PLChar): PEdict; cdecl;
-  RunPlayerMove: procedure(const FakeClient: TEdict; const Angles: TVec3; FwdMove, SideMove, UpMove: Single; Buttons: Int16; Impulse, MSec: Byte); cdecl;
+  RunPlayerMove: procedure(var FakeClient: TEdict; var Angles: TVec3; FwdMove, SideMove, UpMove: Single; Buttons: Int16; Impulse, MSec: Byte); cdecl;
   NumberOfEntities: function: UInt32; cdecl;
   GetInfoKeyBuffer: function(E: PEdict): PLChar; cdecl;
   InfoKeyValue: function(Buffer, Key: PLChar): PLChar; cdecl;
   SetKeyValue: procedure(Buffer, Key, Value: PLChar); cdecl;
   SetClientKeyValue: procedure(Index: Int32; Buffer, Key, Value: PLChar); cdecl;
   IsMapValid: function(Name: PLChar): Int32; cdecl;
-  StaticDecal: procedure(const Origin: TVec3; DecalIndex, EntityIndex, ModelIndex: Int32); cdecl;
+  StaticDecal: procedure(var Origin: TVec3; DecalIndex, EntityIndex, ModelIndex: Int32); cdecl;
   PrecacheGeneric: function(Name: PLChar): UInt32; cdecl;
-  GetPlayerUserID: function(const E: TEdict): Int32; cdecl;
-  BuildSoundMsg: procedure(const E: TEdict; Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch, Dest, MessageType: Int32; const Origin: TVec3; MsgEnt: PEdict); cdecl;
+  GetPlayerUserID: function(var E: TEdict): Int32; cdecl;
+  BuildSoundMsg: procedure(var E: TEdict; Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch, Dest, MessageType: Int32; var Origin: TVec3; MsgEnt: PEdict); cdecl;
   IsDedicatedServer: function: Int32; cdecl;
   CVarGetPointer: function(Name: PLChar): PCVar; cdecl;
-  GetPlayerWONID: function(const E: TEdict): Int32; cdecl;
+  GetPlayerWONID: function(var E: TEdict): Int32; cdecl;
 
   Info_RemoveKey: procedure(Data, Key: PLChar); cdecl;
-  GetPhysicsKeyValue: function(const E: TEdict; Key: PLChar): PLChar; cdecl;
-  SetPhysicsKeyValue: procedure(const E: TEdict; Key, Value: PLChar); cdecl;
-  GetPhysicsInfoString: function(const E: TEdict): PLChar; cdecl;
+  GetPhysicsKeyValue: function(var E: TEdict; Key: PLChar): PLChar; cdecl;
+  SetPhysicsKeyValue: procedure(var E: TEdict; Key, Value: PLChar); cdecl;
+  GetPhysicsInfoString: function(var E: TEdict): PLChar; cdecl;
   PrecacheEvent: function(EventType: Int32; Name: PLChar): UInt16; cdecl;
-  PlaybackEvent: procedure(Flags: UInt32; const E: TEdict; EventIndex: UInt16; Delay: Single; const Origin, Angles: TVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32); cdecl;
+  PlaybackEvent: procedure(Flags: UInt32; E: PEdict; EventIndex: UInt16; Delay: Single; Origin, Angles: PVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32); cdecl;
 
-  SetFatPVS: function(const Origin: TVec3): PByte; cdecl;
-  SetFatPAS: function(const Origin: TVec3): PByte; cdecl;
+  SetFatPVS: function(var Origin: TVec3): PByte; cdecl;
+  SetFatPAS: function(var Origin: TVec3): PByte; cdecl;
   CheckVisibility: function(var E: TEdict; VisSet: PByte): Int32; cdecl;
 
   DeltaSetField: procedure(var D: TDelta; FieldName: PLChar); cdecl;
   DeltaUnsetField: procedure(var D: TDelta; FieldName: PLChar); cdecl;
   DeltaAddEncoder: procedure(Name: PLChar; Func: TDeltaEncoder); cdecl;
   GetCurrentPlayer: function: Int32; cdecl;
-  CanSkipPlayer: function(const E: TEdict): Int32; cdecl;
-  DeltaFindField: function(const D: TDelta; FieldName: PLChar): Int32; cdecl;
+  CanSkipPlayer: function(var E: TEdict): Int32; cdecl;
+  DeltaFindField: function(var D: TDelta; FieldName: PLChar): Int32; cdecl;
   DeltaSetFieldByIndex: procedure(var D: TDelta; FieldNumber: UInt32); cdecl;
   DeltaUnsetFieldByIndex: procedure(var D: TDelta; FieldNumber: UInt32); cdecl;
 
   SetGroupMask: procedure(Mask, Op: Int32); cdecl;
-  CreateInstancedBaseline: function(ClassName: UInt32; const Baseline: TEntityState): Int32; cdecl;
+  CreateInstancedBaseline: function(ClassName: UInt32; var Baseline: TEntityState): Int32; cdecl;
   CVar_DirectSet: procedure(var C: TCVar; Value: PLChar); cdecl;
   ForceUnmodified: procedure(FT: TForceType; MinS, MaxS: PVec3; FileName: PLChar); cdecl;
-  GetPlayerStats: procedure(const E: TEdict; out Ping, PacketLoss: Int32); cdecl;
+  GetPlayerStats: procedure(var E: TEdict; out Ping, PacketLoss: Int32); cdecl;
   AddServerCommand: procedure(Name: PLChar; Func: TCmdFunction); cdecl;
   Voice_GetClientListening: function(Receiver, Sender: Int32): Int32; cdecl;
   Voice_SetClientListening: function(Receiver, Sender, IsListening: Int32): Int32; cdecl;
 
-  GetPlayerAuthID: function(const E: TEdict): PLChar; cdecl;
+  GetPlayerAuthID: function(var E: TEdict): PLChar; cdecl;
 
   SequenceGet: function(FileName, EntryName: PLChar): Pointer; cdecl;
   SequencePickSentence: function(GroupName: PLChar; PickMethod: Int32; var Picked: Int32): Pointer; cdecl;
@@ -3048,7 +3079,7 @@ type
   ClientPutInServer: procedure(var E: TEdict); cdecl;
   ClientCommand: procedure(var E: TEdict); cdecl;
   ClientUserInfoChanged: procedure(var E: TEdict; Buffer: PLChar); cdecl; // +20
-  ServerActivate: procedure(var List: TEdict; EntityCount, MaxClients: Int32); cdecl;
+  ServerActivate: procedure(List: PEdict; EntityCount, MaxClients: Int32); cdecl;
   ServerDeactivate: procedure; cdecl; // 22
   PlayerPreThink: procedure(var E: TEdict); cdecl; // +23
   PlayerPostThink: procedure(var E: TEdict); cdecl; // +24
@@ -3069,13 +3100,13 @@ type
   SetupVisibility: procedure(var Target, Entity: TEdict; var PVS, PAS: PByte); cdecl;
   UpdateClientData: procedure(var E: TEdict; SendWeapons: Int32; var ClientData: TClientData); cdecl;
   AddToFullPack: function(var State: TEntityState; Index: UInt32; var Entity, Host: TEdict; HostFlags, Player: Int32; PackSet: PByte): Int32; cdecl;
-  CreateBaseline: procedure(Player, EntityIndex: Int32; BaseLine: Pointer; var E: TEdict; PlayerModelIndex: Int32; PlayerMinS, PlayerMaxS: PVec3); cdecl;
+  CreateBaseline: procedure(Player, EntityIndex: Int32; BaseLine: Pointer; var E: TEdict; PlayerModelIndex: Int32; MinSX, MinSY, MinSZ, MaxSX, MaxSY, MaxSZ: Single); cdecl;
   RegisterEncoders: procedure; cdecl;
   GetWeaponData: function(var E: TEdict; var Info: TWeaponData): Int32; cdecl;
   CmdStart: procedure(var E: TEdict; var Command: TUserCmd; RandomSeed: UInt32); cdecl; // +43
   CmdEnd: procedure(var E: TEdict); cdecl; // +44
   ConnectionlessPacket: function(var Address: TNetAdr; Args, ResponseBuffer: PLChar; var ResponseBufferSize: Int32): Int32; cdecl; // +45
-  GetHullBounds: function(HullNumber: Int32; const MinS, MaxS: TVec3): Int32; cdecl;
+  GetHullBounds: function(HullNumber: Int32; var MinS, MaxS: TVec3): Int32; cdecl;
   CreateInstancedBaselines: procedure; cdecl;
   InconsistentFile: function(var E: TEdict; FileName, DisconnectMessage: PLChar): Int32; cdecl;
   AllowLagCompensation: function: Int32; cdecl; // +49

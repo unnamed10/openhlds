@@ -189,7 +189,7 @@ end;
 
 procedure MSG_WriteOneBit(B: Byte);
 begin
-if BFWrite.Count > 7 then
+if BFWrite.Count >= 8 then
  begin
   SZ_GetSpace(BFWrite.Buffer^, 1);
   BFWrite.Count := 0;
@@ -199,7 +199,7 @@ if BFWrite.Count > 7 then
 if not (FSB_OVERFLOWED in BFWrite.Buffer.AllowOverflow) then
  begin
   if B = 0 then
-   PByte(BFWrite.Data)^ := PByte(BFWrite.Data)^ and UInt32(InvBitTable[BFWrite.Count])
+   PByte(BFWrite.Data)^ := PByte(BFWrite.Data)^ and InvBitTable[BFWrite.Count]
   else
    PByte(BFWrite.Data)^ := PByte(BFWrite.Data)^ or BitTable[BFWrite.Count];
 
@@ -225,8 +225,9 @@ if not (FSB_OVERFLOWED in BFWrite.Buffer.AllowOverflow) then
  begin
   PByte(BFWrite.Data)^ := PByte(BFWrite.Data)^ and (255 shr (8 - BFWrite.Count));
   SZ_GetSpace(BFWrite.Buffer^, 1);
-  MemSet(BFWrite, SizeOf(BFWrite), 0);
  end;
+
+MemSet(BFWrite, SizeOf(BFWrite), 0);
 end;
 
 procedure MSG_WriteBits(B: UInt32; Count: UInt);
@@ -235,7 +236,7 @@ var
  BitCount, ByteCount, BitsLeft: UInt;
  NextRow: Boolean;
 begin
-if (Count <= 31) and (B >= UInt(1 shl Count)) then
+if (Count <= 31) and (B >= 1 shl Count) then
  BitMask := RowBitTable[Count]
 else
  BitMask := B;
@@ -329,8 +330,17 @@ MSG_WriteBits((B - 1) and (Trunc(B * F) div 360), Count);
 end;
 
 function MSG_ReadBitAngle(Count: UInt): Single;
+var
+ X: UInt;
 begin
-Result := MSG_ReadBits(Count) * 360 / (1 shl Count);
+X := 1 shl Count;
+if X > 0 then
+ Result := MSG_ReadBits(Count) * 360 / X
+else
+ begin
+  MSG_ReadBits(Count);
+  Result := 0;
+ end;
 end;
 
 function MSG_CurrentBit: UInt32;
@@ -761,13 +771,15 @@ var
  I: UInt;
  C: LChar;
 begin
+Result := @StringLineBuffer;
+
 for I := Low(StringLineBuffer) to High(StringLineBuffer) - 1 do
  begin
   C := MSG_ReadChar;
   if (C = #0) or (C = #$A) or (C = #$FF) then
    begin
+    MSG_BadRead := False;
     StringLineBuffer[I] := #0;
-    Result := @StringLineBuffer;
     Exit;
    end
   else
@@ -775,7 +787,6 @@ for I := Low(StringLineBuffer) to High(StringLineBuffer) - 1 do
  end;
 
 StringLineBuffer[High(StringLineBuffer)] := #0;
-Result := @StringLineBuffer;
 end;
 
 function MSG_ReadAngle: Single;

@@ -8,8 +8,6 @@ uses SysUtils, Default, SDK;
 
 procedure Host_InitCommands;
 procedure Host_InitCVars;
-procedure Host_Quit_F; cdecl;
-procedure Cmd_Maxplayers_F; cdecl;
 
 implementation
 
@@ -64,7 +62,7 @@ var
    SV_ClientPrint(PLChar(StringFromVarRec(Msg)));
 
   if F <> nil then
-   FS_FPrintF(F, Msg, True);  
+   FS_FPrintF(F, Msg, True);
  end;
 
  procedure PrintExtStats;
@@ -105,15 +103,15 @@ ToConsole := CmdSource = csServer;
 for I := 1 to Cmd_Argc - 1 do
  begin
   S := Cmd_Argv(I);
-  if (StrIComp(S, 'log') = 0) and (F = nil) and (CmdSource = csServer) then
-   begin
-    FS_RemoveFile('status.log');
-    if not FS_Open(F, 'status.log', 'wo') then
-     F := nil;
-   end
+  if StrIComp(S, 'ext') = 0 then
+   ExtInfo := True
   else
-   if StrIComp(S, 'ext') = 0 then
-    ExtInfo := True;
+   if (StrIComp(S, 'log') = 0) and (F = nil) and (CmdSource = csServer) then
+    begin
+     FS_RemoveFile('status.log');
+     if not FS_Open(F, 'status.log', 'wo') then
+      F := nil;
+    end;
  end;
 
 Players := SV_CountPlayers;
@@ -125,8 +123,6 @@ if hostname.Data^ > #0 then
 Host_Status_PrintF(['Version:  ', ProjectVersion, '; build ', ProjectBuild, '; 47/48 multi-protocol']);
 if not NoIP then
  Host_Status_PrintF(['TCP/IP:   ', NET_AdrToString(LocalIP, NetAdrBuf, SizeOf(NetAdrBuf))]);
-if not NoIPX then
- Host_Status_PrintF(['IPX:      ', NET_AdrToString(LocalIPX, NetAdrBuf, SizeOf(NetAdrBuf))]);
 
 if not SV.Active then
  Host_Status_PrintF(['The server is not active.'])
@@ -142,8 +138,8 @@ else
     C := @SVS.Clients[I];
     if C.Active then
      begin
-      AvgTx := AvgTx + C.Netchan.Flow[1].KBRate;
-      AvgRx := AvgRx + C.Netchan.Flow[2].KBRate;
+      AvgTx := AvgTx + C.Netchan.Flow[1].KBAvgRate;
+      AvgRx := AvgRx + C.Netchan.Flow[2].KBAvgRate;
      end;
    end;
   Host_Status_PrintF(['Network:  Out = ', RoundTo(AvgTx, -2), ' KBps; In = ', RoundTo(AvgRx, -2), ' KBps']);
@@ -159,7 +155,7 @@ else
     C := @SVS.Clients[I];
     if C.Active then
      begin
-      Time := Trunc(RealTime - C.Netchan.FirstReceived);
+      Time := Trunc(RealTime - C.ConnectTime);
       Sec := Time mod 60;
       Time := Time div 60;
       Min := Time mod 60;
@@ -312,42 +308,30 @@ end;
 
 procedure Host_Map_F; cdecl;
 var
- CmdArgc, L: UInt;
- S: PLChar;
- MapName: array[1..MAX_MAP_NAME] of LChar;
+ MapName, MapFullName: array[1..MAX_MAP_NAME] of LChar;
 begin
 if CmdSource <> csServer then
  Exit;
 
-CmdArgc := Cmd_Argc;
-if CmdArgc < 2 then
- Print('Usage: map <mapname>')
+if Cmd_Argc <> 2 then
+ Print('Usage: map <name>')
 else
- begin
-  S := Cmd_Argv(1);
-  L := StrLen(S);
-  if L >= MAX_MAP_NAME - 9 then
-   Print(['map: Can''t change map, name is too big. The limit is ', MAX_MAP_NAME - 9, ' characters.'])
+ if not FilterMapName(Cmd_Argv(1), @MapFullName) then
+  Print('map: The map name is too big.')
+ else
+  if not FS_FileExists(@MapFullName) then
+   Print(['map: "', PLChar(@MapFullName), '" was not found on the server.'])
   else
    begin
+    COM_FileBase(@MapFullName, @MapName);
+    CVar_DirectSet(hostmap, @MapName);
+
     FS_LogLevelLoadStarted('Map_Common');
-    StrCopy(@MapName, S);
     if not SVS.InitGameDLL then
      Host_InitializeGameDLL;
-
-    if (L > 4) and (StrIComp(PLChar(UInt(@MapName) + L - 4), '.bsp') = 0) then
-     PLChar(UInt(@MapName) + L - 4)^ := #0;
-
     FS_LogLevelLoadStarted(@MapName);
-    if IsMapValid(@MapName) then
-     begin
-      CVar_DirectSet(hostmap, @MapName);
-      Host_Map(@MapName, False);            
-     end
-    else
-     Print(['map: "', PLChar(@MapName), '" not found on the server.']);
+    Host_Map(@MapName, False);
    end;
- end;
 end;
 
 procedure Host_Maps_F; cdecl;
@@ -384,33 +368,42 @@ end;
 
 procedure Host_Changelevel_F; cdecl;
 var
- S, S2: PLChar;
- CmdArgc: UInt;
+ S: PLChar;
+ K: UInt;
+ MapName, MapFullName: array[1..MAX_MAP_NAME] of LChar;
 begin
 if CmdSource = csServer then
  begin
-  CmdArgc := Cmd_Argc;
-  if (CmdArgc < 2) or (CmdArgc > 3) then
+  K := Cmd_Argc;
+  if (K < 2) or (K > 3) then
    Print('Usage: changelevel <levelname>')
   else
-   begin
-    S := Cmd_Argv(1);
-    if not IsMapValid(S) then
-     Print(['changelevel: "', S, '" not found on the server.'])
+   if not FilterMapName(Cmd_Argv(1), @MapFullName) then
+    Print('changelevel: The map name is too big.')
+   else
+    if not FS_FileExists(@MapFullName) then
+     Print(['changelevel: "', PLChar(@MapFullName), '" was not found on the server.'])
     else
      begin
-      if CmdArgc = 2 then
-       S2 := nil
+      if K = 2 then
+       S := nil
       else
-       S2 := Cmd_Argv(2);
+       S := Cmd_Argv(2);
+
+      COM_FileBase(@MapFullName, @MapName);
+      CVar_DirectSet(hostmap, @MapName);
+
+      FS_LogLevelLoadStarted('Map_Common');
+      if not SVS.InitGameDLL then
+       Host_InitializeGameDLL;
+      FS_LogLevelLoadStarted(@MapName);
 
       SV_InactivateClients;
       SV_ServerDeactivate;
-      SV_SpawnServer(S, S2);
+      SV_SpawnServer(@MapName, S);
       SV_LoadEntities;
       SV_ActivateServer(True);
      end;
-   end;
  end;
 end;
 
@@ -460,46 +453,29 @@ if CmdSource = csClient then
 end;
 
 procedure Host_TogglePause_F; cdecl;
+var
+ S: PLChar;
 begin
 if not SV.Active then
- Print('The server is not running.')
+ SV_CmdPrint('The server is not running.')
 else
- if CmdSource = csServer then
-  begin
-   SV.Paused := not SV.Paused;
-   if SV.Paused then
-    SV_BroadcastPrint(['Server operator paused the game.'])
-   else
-    SV_BroadcastPrint(['Server operator unpaused the game.']);
-
-   MSG_WriteByte(SV.ReliableDatagram, SVC_SETPAUSE);
-   MSG_WriteByte(SV.ReliableDatagram, Byte(SV.Paused));
-  end
+ if (CmdSource = csClient) and not NET_IsLocalAddress(HostClient.Netchan.Addr) then
+  SV_CmdPrint('Only server operators may use this command.')
  else
   if pausable.Value = 0 then
-   SV_ClientPrint('Pause is not allowed on this server.')
+   SV_CmdPrint('Pause is not allowed on this server.')
   else
    begin
-    if (pausable.Value = 2) and (pausablepwd.Data^ > #0) and (StrComp(pausablepwd.Data, 'none') <> 0) then
-     if Cmd_Argc <> 2 then
-      begin
-       SV_ClientPrint('Usage: pause <password>');
-       Exit;
-      end
-     else
-      if StrComp(Cmd_Argv(1), pausablepwd.Data) <> 0 then
-       begin
-        SV_ClientPrint('Bad password.');
-        Exit;
-       end
-      else
-       SV_ClientPrint('Password accepted.');
+    if CmdSource = csClient then
+     S := @HostClient.NetName
+    else
+     S := 'Server operator';
 
     SV.Paused := not SV.Paused;
     if SV.Paused then
-     SV_BroadcastPrint([PLChar(@HostClient.NetName), ' paused the game.'])
+     SV_BroadcastPrint([S, ' paused the game.'#10])
     else
-     SV_BroadcastPrint([PLChar(@HostClient.NetName), ' unpaused the game.']);
+     SV_BroadcastPrint([S, ' unpaused the game.'#10]);
 
     MSG_WriteByte(SV.ReliableDatagram, SVC_SETPAUSE);
     MSG_WriteByte(SV.ReliableDatagram, Byte(SV.Paused));
@@ -507,28 +483,97 @@ else
 end;
 
 procedure Host_Kick_F; cdecl;
+var
+ C, C2: PClient;
+ I, K, K2, UserID: UInt;
+ S, S2: PLChar;
+ Buf: array[1..1024] of LChar;
 begin
-if CmdSource = csClient then
- SV_ClientPrint('This command is not implemented on the server.')
+K := Cmd_Argc;
+if K < 2 then
+ SV_CmdPrint('Usage: kick <username or #userid> [reason]')
 else
- Print('Not implemented.')
+ if (CmdSource = csClient) and not NET_IsLocalAddress(HostClient.Netchan.Addr) then
+  SV_CmdPrint('Only server operators may use this command.')
+ else
+  if not SV.Active then
+   SV_CmdPrint('kick: The server is not running.')
+  else
+   begin
+    K2 := 1;
+    S := Cmd_Argv(K2);
+    if StrComp(S, '#') = 0 then
+     begin
+      Inc(K2);
+      UserID := StrToIntDef(Cmd_Argv(K2), 0);
+      S := nil;
+     end
+    else
+     if S^ = '#' then
+      begin
+       UserID := StrToIntDef(PLChar(UInt(S) + 1), 0);
+       S := nil;
+      end
+     else
+      UserID := 0;
+
+    if (UserID = 0) and (S = nil) then
+     begin
+      SV_CmdPrint('kick: Bad userid specified.');
+      Exit;
+     end;
+
+    S2 := StrECopy(@Buf, ' Reason: ');
+    for I := K2 + 1 to K - 1 do
+     begin
+      StrLCat(S2, Cmd_Argv(I), SizeOf(Buf) - 10);
+      if I < K - 1 then
+       StrLCat(S2, ' ', SizeOf(Buf) - 10);
+     end;
+
+    if S2^ = #0 then
+     Buf[Low(Buf)] := #0;
+
+    for I := 0 to SVS.MaxClients - 1 do
+     begin
+      C := @SVS.Clients[I];
+      if C.Connected and (((UserID > 0) and (C.UserID = UserID)) or ((S <> nil) and (StrComp(@C.NetName, S) = 0))) then
+       begin
+        if CmdSource = csClient then
+         S := @HostClient.NetName
+        else
+         S := 'server operator';
+
+        C2 := HostClient;
+        HostClient := C;
+
+        SV_CmdPrint(['Kicked ', PLChar(@C.NetName), '.', PLChar(@Buf)]);
+        SV_ClientPrint(['Kicked by ', S, '.', PLChar(@Buf)]);
+        SV_DropClient(C^, False, ['Kicked by ', S, '.', PLChar(@Buf)]);
+
+        if CmdSource = csClient then
+         LPrint([S, ' kicked ', PLChar(@C.NetName), '.', PLChar(@Buf)])
+        else
+         LPrint(['Kicked ', PLChar(@C.NetName), '.', PLChar(@Buf)]);
+
+        HostClient := C2;
+        Exit;
+       end;
+     end;
+
+    if UserID > 0 then
+     SV_CmdPrint(['kick: Couldn''t find #', UserID, '.'])
+    else
+     SV_CmdPrint(['kick: Couldn''t find "', S, '".'])
+   end;
 end;
 
 procedure Host_Ping_F; cdecl;
 var
  I, Num: Int;
  C: PClient;
-
- procedure F(const Msg: array of const);
- begin
-  if CmdSource = csClient then
-   SV_ClientPrint(Msg, True)
-  else
-   Print(Msg);
- end;
-
 begin
-F(['Client ping times:']);
+SV_CmdPrint('Client ping times:');
 Num := 0;
 for I := 0 to SVS.MaxClients - 1 do
  begin
@@ -536,14 +581,14 @@ for I := 0 to SVS.MaxClients - 1 do
   if C.Active then
    begin
     Inc(Num);
-    F([PLChar(@C.NetName), ': ', SV_CalcPing(C^)]);
+    SV_CmdPrint([PLChar(@C.NetName), ': ', SV_CalcPing(C^)]);
    end;
  end;
 
 if Num = 0 then
- F(['(no clients currently connected.)'])
+ SV_CmdPrint('(no clients currently connected)')
 else
- F([Num, ' total clients.']);
+ SV_CmdPrint([Num, ' total clients.']);
 end;
 
 procedure Host_SetInfo_F; cdecl;
@@ -555,6 +600,7 @@ if CmdSource = csClient then
   begin
    Info_SetValueForKey(@HostClient.UserInfo, Cmd_Argv(1), Cmd_Argv(2), MAX_USERINFO_STRING);
    HostClient.UpdateInfo := True;
+   HostClient.FragSizeUpdated := False;
   end;
 end;
 
@@ -567,7 +613,7 @@ if CmdSource = csServer then
   Print(['FPS: ', RoundTo(1 / RollingFPS, -2)]);
 end;
 
-procedure Cmd_Maxplayers_F; cdecl;
+procedure Host_Maxplayers_F; cdecl;
 var
  I: UInt;
 begin
@@ -590,7 +636,7 @@ if CmdSource = csServer then
       else
        if I > SVS.MaxClientsLimit then
         I := SVS.MaxClientsLimit;
-
+       
       Print(['"maxplayers" set to "', I, '"']);
 
       SVS.MaxClients := I;
@@ -679,6 +725,7 @@ end;
 
 procedure Host_InitCommands;
 begin
+Cmd_AddCommand('maxplayers', @Host_Maxplayers_F);
 Cmd_AddCommand('shutdownserver', Host_KillServer_F);
 Cmd_AddCommand('status', Host_Status_F);
 Cmd_AddCommand('quit', Host_Quit_F);
@@ -703,9 +750,7 @@ Cmd_AddCommand('god', Host_God_F);
 Cmd_AddCommand('notarget', Host_Notarget_F);
 Cmd_AddCommand('noclip', Host_Noclip_F);
 
-
 Cmd_AddCommand('writefps', Host_WriteFPS_F);
-
 
 end;
 
@@ -724,7 +769,7 @@ CVar_RegisterVariable(mp_logfile);
 CVar_RegisterVariable(mp_logecho);
 CVar_RegisterVariable(sv_log_onefile);
 CVar_RegisterVariable(sv_log_singleplayer);
-CVar_RegisterVariable(developer);
+CVar_RegisterVariable(sv_log_altdateformat);
 CVar_RegisterVariable(deathmatch);
 CVar_RegisterVariable(coop);
 CVar_RegisterVariable(pausable);

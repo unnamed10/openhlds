@@ -6,12 +6,9 @@ interface
 
 uses SysUtils, Default;
 
-function Info_ServerInfo: PLChar;
 function Info_ValueForKey(S, Key: PLChar): PLChar;
 procedure Info_RemoveKey(S, Key: PLChar);
-procedure Info_RemovePrefixedKeys(Start: PLChar; Prefix: LChar);
-function Info_IsKeyImportant(S: PLChar): Boolean;
-function Info_FindLargestKey(S: PLChar): PLChar;
+procedure Info_RemovePrefixedKeys(S: PLChar; C: LChar);
 procedure Info_SetValueForStarKey(S, Key, Value: PLChar; MaxSize: UInt);
 procedure Info_SetValueForKey(S, Key, Value: PLChar; MaxSize: UInt);
 procedure Info_Print(S: PLChar);
@@ -30,193 +27,152 @@ uses Console;
 
 var
  ValueIndex: UInt = 0;
- ValueBuf: array[0..3] of array [1..MAX_KV_LEN] of LChar;
- LargestKey: array[1..MAX_KV_LEN] of LChar;
+ ValueBuf: array[0..7] of array [1..MAX_KV_LEN] of LChar;
 
 function Info_ServerInfo: PLChar;
 begin
 Result := @ServerInfo;
 end;
 
-function Info_ValueForKey(S, Key: PLChar): PLChar;
+// true:
+//   s <> nil: more pairs
+//   s = nil: last pair
+// false: stop
+function Info_ExtractPair(var S: PLChar; Key, Value: PLChar): Boolean;
 var
- P, P2: PLChar;
- PKey: array[1..MAX_KV_LEN] of LChar;
+ S2, SEnd: PLChar;
 begin
-Result := EmptyString;
-ValueIndex := (ValueIndex + 1) and 3;
-if S^ = '\' then
- Inc(UInt(S));
-
-while True do
+if S^ = #0 then
  begin
-  P := @PKey;
-  P2 := PLChar(UInt(P) + MAX_KV_LEN - 1);
+  Key^ := #0;
+  Value^ := #0;
+  S := nil;
+  Result := True;
+  Exit;
+ end;
 
-  while (S^ <> '\') and (UInt(P) < UInt(P2)) do
-   begin
-    if S^ = #0 then
-     Exit;
+Result := False;
+SEnd := PLChar(UInt(S) + MAX_KV_LEN);
+S2 := Key;
 
-    P^ := S^;
-    Inc(UInt(S));
-    Inc(UInt(P));
-   end;
+while S^ <> '\' do
+ if (S = SEnd) or (S^ = #0) then
+  begin
+   Key^ := #0;
+   Exit;
+  end
+ else
+  begin
+   S2^ := S^;
+   Inc(UInt(S));
+   Inc(UInt(S2));
+  end;
 
-  if P = P2 then
-   begin
-    Print('Info_ValueForKey: Oversized key.');
-    Exit;
-   end;
+S2^ := #0;
+Inc(UInt(S));
 
-  P^ := #0;
-  Inc(UInt(S));
-
-  P := @ValueBuf[ValueIndex];
-  P2 := PLChar(UInt(P) + MAX_KV_LEN - 1);
-  while (S^ <> '\') and (S^ > #0) and (UInt(P) < UInt(P2)) do
-   begin
-    P^ := S^;
-    Inc(UInt(S));
-    Inc(UInt(P));
-   end;
-
-  if P = P2 then
-   begin
-    Print('Info_ValueForKey: Oversized value.');
-    Exit;
-   end;
-
-  P^ := #0;
-
-  if StrComp(Key, @PKey) = 0 then
-   begin
-    Result := @ValueBuf[ValueIndex];
-    Exit;
-   end
-  else
+SEnd := PLChar(UInt(S) + MAX_KV_LEN);
+S2 := Value;
+while S^ <> '\' do
+ if S = SEnd then
+  begin
+   Value^ := #0;
+   Exit;
+  end
+ else
+  begin
+   S2^ := S^;
    if S^ = #0 then
     begin
-     Result := EmptyString;
+     Result := True;
      Exit;
+    end
+   else
+    begin
+     Inc(UInt(S));
+     Inc(UInt(S2));
     end;
+  end;
 
-  Inc(S);
- end;
+S2^ := #0;
+Inc(UInt(S));
+Result := True;
+end;
+
+function Info_ValueForKey(S, Key: PLChar): PLChar;
+var
+ KeyBuf: array[1..MAX_KV_LEN] of LChar;
+begin
+if (S <> nil) and (Key <> nil) then
+ if StrScan(Key, '\') <> nil then
+  DPrint('Info_ValueForKey: Can''t use keys with a "\".')
+ else
+  begin
+   ValueIndex := (ValueIndex + 1) and 7;
+   if S^ = '\' then
+    Inc(UInt(S));
+
+   while Info_ExtractPair(S, @KeyBuf, @ValueBuf[ValueIndex]) and (S <> nil) do
+    if StrComp(Key, @KeyBuf) = 0 then
+     begin
+      Result := @ValueBuf[ValueIndex];
+      Exit;
+     end;
+  end;
+
+Result := EmptyString;
 end;
 
 procedure Info_RemoveKey(S, Key: PLChar);
 var
- L: UInt;
- S2, P, P2: PLChar;
- PKey, Value: array[1..MAX_KV_LEN] of LChar;
+ S2: PLChar;
+ KeyBuf, ValueBuf: array[1..MAX_KV_LEN] of LChar;
 begin
-L := StrLen(Key);
-if L >= MAX_KV_LEN - 1 then
- L := MAX_KV_LEN - 1;
-
-if StrScan(Key, '\') <> nil then
- Print('Can''t use a key with a "\".')
-else
- while True do
+if (S <> nil) and (Key <> nil) then
+ if StrScan(Key, '\') <> nil then
+  DPrint('Info_RemoveKey: Can''t use keys with a "\".')
+ else
   begin
-   S2 := S;
    if S^ = '\' then
     Inc(UInt(S));
 
-   P := @PKey;
-   P2 := PLChar(UInt(P) + MAX_KV_LEN - 1);
-   while (S^ <> '\') and (UInt(P) < UInt(P2)) do
-    begin
-     if S^ = #0 then
+   S2 := S;
+
+   while Info_ExtractPair(S, @KeyBuf, @ValueBuf) and (S <> nil) do
+    if StrComp(Key, @KeyBuf) = 0 then
+     begin
+      StrCopy(S2, S);
+      if (S^ = #0) and (PLChar(UInt(S2) - 1)^ = '\') then
+       PLChar(UInt(S2) - 1)^ := #0;
       Exit;
-
-     P^ := S^;
-     Inc(UInt(S));
-     Inc(UInt(P));
-    end;
-
-   if P = P2 then
-    begin
-     Print('Info_RemoveKey: Oversized key.');
-     Exit;
-    end;
-
-   P^ := #0;
-   Inc(UInt(S));
-
-   P := @Value;
-   P2 := PLChar(UInt(P) + MAX_KV_LEN - 1);
-   while (S^ <> '\') and (S^ > #0) and (UInt(P) < UInt(P2)) do
-    begin
-     P^ := S^;
-     Inc(UInt(S));
-     Inc(UInt(P));
-    end;
-
-   if P = P2 then
-    begin
-     Print('Info_RemoveKey: Oversized value.');
-     Exit;
-    end;
-
-   P^ := #0;
-
-   if StrLComp(Key, @PKey, L) = 0 then
-    begin
-     StrCopy(S2, S);
-     Exit;
-    end
-   else
-    if S^ = #0 then
-     Exit;
+     end
+    else
+     S2 := S;
   end;
 end;
 
-procedure Info_RemovePrefixedKeys(Start: PLChar; Prefix: LChar);
+procedure Info_RemovePrefixedKeys(S: PLChar; C: LChar);
 var
- S, P, P2: PLChar;
- PKey, Value: array[1..MAX_KV_LEN] of LChar;
+ S2: PLChar;
+ KeyBuf, ValueBuf: array[1..MAX_KV_LEN] of LChar;
 begin
-S := Start;
-while True do
+if (S <> nil) and (C > #0) then
  begin
   if S^ = '\' then
    Inc(UInt(S));
 
-  P := @PKey;
-  P2 := PLChar(UInt(P) + MAX_KV_LEN - 1);
-  while (S^ <> '\') and (UInt(P) < UInt(P2)) do
-   begin
-    if S^ = #0 then
-     Exit;
+  S2 := S;
 
-    P^ := S^;
-    Inc(UInt(S));
-    Inc(UInt(P));
-   end;
-
-  P^ := #0;
-  Inc(UInt(S));
-
-  P := @Value;
-  P2 := PLChar(UInt(P) + MAX_KV_LEN - 1);
-  while (S^ <> '\') and (S^ > #0) and (UInt(P) < UInt(P2)) do
-   begin
-    P^ := S^;
-    Inc(UInt(S));
-    Inc(UInt(P));
-   end;
-  P^ := #0;
-
-  if PKey[Low(PKey)] = Prefix then
-   begin
-    Info_RemoveKey(Start, @PKey);
-    S := Start;
-   end;
-
-  if S^ = #0 then
-   Exit;
+  while Info_ExtractPair(S, @KeyBuf, @ValueBuf) and (S <> nil) do
+   if KeyBuf[1] = C then
+    begin
+     StrCopy(S2, S);
+     if (S^ = #0) and (PLChar(UInt(S2) - 1)^ = '\') then
+      PLChar(UInt(S2) - 1)^ := #0;
+     S := S2;
+    end
+   else
+    S2 := S;
  end;
 end;
 
@@ -230,238 +186,174 @@ Result := (S^ = '*') or
           (StrComp(S, 'bottomcolor') = 0) or
           (StrComp(S, 'cl_updaterate') = 0) or
           (StrComp(S, 'cl_lw') = 0) or
-          (StrComp(S, 'cl_lc') = 0);
+          (StrComp(S, 'cl_lc') = 0) or
+          (StrComp(S, 'cl_dlmax') = 0);
 end;
 
-function Info_FindLargestKey(S: PLChar): PLChar;
+function Info_FindLargestKey(S: PLChar; Key: PLChar; var KeyLen: UInt): Boolean;
 var
- P, P2: PLChar;
- PKey, Value: array[1..MAX_KV_LEN] of LChar;
- Size, LargestSize: UInt;
+ X: UInt;
+ KeyBuf, ValueBuf: array[1..MAX_KV_LEN] of LChar;
 begin
-LargestKey[Low(LargestKey)] := #0;
-Result := @LargestKey;
-LargestSize := 0;
 if S^ = '\' then
  Inc(UInt(S));
 
-while S^ > #0 do
- begin
-  P := @PKey;
-  P2 := PLChar(UInt(P) + MAX_KV_LEN - 1);
-  while (S^ <> '\') and (UInt(P) < UInt(P2)) do
+Key^ := #0;
+KeyLen := 0;
+Result := True;
+while Info_ExtractPair(S, @KeyBuf, @ValueBuf) do
+ if S = nil then
+  Exit
+ else
+  if not Info_IsKeyImportant(@KeyBuf) then
    begin
-    if S^ = #0 then
-     Exit;
-
-    P^ := S^;
-    Inc(UInt(S));
-    Inc(UInt(P));
+    X := StrLen(@KeyBuf) + StrLen(@ValueBuf);
+    if X > KeyLen then
+     begin
+      StrCopy(Key, @KeyBuf);
+      KeyLen := X;
+     end;
    end;
 
-  P^ := #0;
-  Size := StrLen(@PKey);
-  if S^ = #0 then
-   Break;
-  Inc(UInt(S));
-
-  P := @Value;
-  P2 := PLChar(UInt(P) + MAX_KV_LEN - 1);
-  while (S^ <> '\') and (S^ > #0) and (UInt(P) < UInt(P2)) do
-   begin
-    P^ := S^;
-    Inc(UInt(S));
-    Inc(UInt(P));
-   end;
-  P^ := #0;
-
-  if S^ > #0 then
-   Inc(UInt(S));
-
-  Inc(Size, StrLen(@Value));
-  if (Size > LargestSize) and not Info_IsKeyImportant(@PKey) then
-   begin
-    LargestSize := Size;
-    StrLCopy(@LargestKey, @PKey, MAX_KV_LEN - 1);
-   end;
- end;
+Result := False;
 end;
 
 procedure Info_SetValueForStarKey(S, Key, Value: PLChar; MaxSize: UInt);
 var
- NewKV: array[1..1024] of LChar;
- P: PLChar;
- L: UInt;
- B: Boolean;
+ NewPair: array[1..MAX_KV_LEN * 3] of LChar;
+ KeyBuf: array[1..MAX_KV_LEN] of LChar;
+ S2: PLChar;
+ L, KeyLen, ValueLen, LargestLen: UInt;
  C: LChar;
 begin
-if (StrScan(Key, '\') <> nil) or (StrScan(Value, '\') <> nil) then
- Print('Can''t use keys or values with a "\".')
-else
- if (StrPos(Key, '..') <> nil) or (StrPos(Value, '..') <> nil) then
-  Print('Can''t use keys or values with a "..".')
+if (S <> nil) and (Key <> nil) and (Value <> nil) and (MaxSize > 0) then
+ if (StrScan(Key, '\') <> nil) or (StrScan(Value, '\') <> nil) then
+  DPrint('Can''t use keys or values with a "\".')
  else
-  if (StrScan(Key, '"') <> nil) or (StrScan(Value, '"') <> nil) then
-   Print('Can''t use keys or values with a ".')
+  if (StrPos(Key, '..') <> nil) or (StrPos(Value, '..') <> nil) then
+   DPrint('Can''t use keys or values with a "..".')
   else
-   if (Key^ = #0) or (StrLen(Key) >= MAX_KV_LEN) or (StrLen(Value) >= MAX_KV_LEN) then
-    Print('Keys and values must be lesser than 128 characters and greater than 0.')
+   if (StrScan(Key, '"') <> nil) or (StrScan(Value, '"') <> nil) then
+    DPrint('Can''t use keys or values with a ".".')
    else
     begin
-     Info_RemoveKey(S, Key);
-     if Value^ > #0 then
-      begin
-       NewKV[1] := '\';
-       P := StrLECopy(@NewKV[2], Key, SizeOf(NewKV) - 3);
-       P^ := '\';
-       Inc(UInt(P));
-       StrLCopy(P, Value, UInt(@NewKV[High(NewKV)]) - UInt(P));
-       L := StrLen(@NewKV);
-       if StrLen(S) + L >= MaxSize then
-        if not Info_IsKeyImportant(Key) then
-         begin
-          Print('Info string length exceeded.');
-          Exit;
-         end
-        else
-         begin
-          repeat
-           P := Info_FindLargestKey(S);
-           if (P <> nil) and (P^ > #0) then
-            Info_RemoveKey(S, P);       
-          until (StrLen(S) + L < MaxSize) or (P^ = #0);
+     KeyLen := StrLen(Key);
+     ValueLen := StrLen(Value);
+     if (Key^ = #0) or (KeyLen >= MAX_KV_LEN) or (ValueLen >= MAX_KV_LEN) then
+      DPrint('Keys and values must be lesser than 128 characters.')
+     else
+      if Value^ = #0 then
+       Info_RemoveKey(S, Key)
+      else
+       begin
+        L := KeyLen + ValueLen + 2;
+        if StrLen(S) + L >= MaxSize then
+         if not Info_IsKeyImportant(Key) then
+          begin
+           DPrint('Info string length exceeded.');
+           Exit;
+          end
+         else
+          begin
+           repeat
+            if Info_FindLargestKey(S, @KeyBuf, LargestLen) and (LargestLen > 0) then
+             Info_RemoveKey(S, @KeyBuf);
+           until (LargestLen = 0) or (StrLen(S) + L < MaxSize);
 
-          if P^ = #0 then
-           begin
-            Print('Info string length exceeded.');
-            Exit;
-           end;
+           if LargestLen = 0 then
+            begin
+             DPrint('Info string length exceeded.');
+             Exit;
+            end;
+          end;
+
+        if S^ > #0 then
+         begin
+          S2 := PLChar(UInt(S) + StrLen(S) - 1);
+          if S2^ = '\' then
+           S2^ := #0;
          end;
 
-        Inc(UInt(S), StrLen(S));
-        P := @NewKV;
-        B := StrComp(Key, 'team') = 0;
-        while P^ > #0 do
+        S2 := @NewPair;
+        S2 := StrECopy(S2, '\');
+        S2 := StrLECopy(S2, Key, MAX_KV_LEN - 1);
+        S2 := StrECopy(S2, '\');
+        StrLCopy(S2, Value, MAX_KV_LEN - 1);
+
+        Info_RemoveKey(S, Key);
+        L := StrLen(S);
+        Inc(UInt(S), L);
+
+        if StrComp(Key, 'team') = 0 then
+         LowerCase(@NewPair);
+
+        S2 := @NewPair;
+        while S2^ > #0 do
          begin
-          C := P^;
-          if (C >= ' ') and (C < #$7F) then
-           if B then
-            S^ := LowerC(C)
-           else
+          C := S2^;
+          if (C >= ' ') and (C <= '~') then
+           begin
             S^ := C;
-          Inc(UInt(S));
-          Inc(UInt(P));
+            Inc(UInt(S));
+           end;
+          Inc(UInt(S2));
          end;
         S^ := #0;
-      end;
+       end;
     end;
 end;
 
 procedure Info_SetValueForKey(S, Key, Value: PLChar; MaxSize: UInt);
 begin
 if Key^ = '*' then
- Print('Can''t set * keys.')
+ DPrint('Can''t set * keys.')
 else
  Info_SetValueForStarKey(S, Key, Value, MaxSize);
 end;
 
 procedure Info_Print(S: PLChar);
+const
+ Spacing: array[0..19] of LChar = '                   '#0;
 var
- P, P2: PLChar;
- Buffer: array[1..1024] of LChar;
+ S2: PLChar;
+ KeyBuf, ValueBuf: array[1..MAX_KV_LEN * 2] of LChar;
+ L: UInt;
 begin
-if S^ = '\' then
- Inc(UInt(S));
-
-while S^ > #0 do
+if S <> nil then
  begin
-  P := @Buffer;
-  P2 := PLChar(UInt(P) + MAX_KV_LEN - 1);
-  while (S^ <> '\') and (S^ > #0) and (UInt(P) < UInt(P2)) do
+  if S^ = '\' then
+   Inc(UInt(S));
+   
+  while Info_ExtractPair(S, @KeyBuf, @ValueBuf) and (S <> nil) do
    begin
-    P^ := S^;
-    Inc(UInt(S));
-    Inc(UInt(P));
+    L := StrLen(@KeyBuf);
+    if L > High(Spacing) - 1 then
+     L := High(Spacing) - 1;
+
+    S2 := StrECopy(@KeyBuf[L + 1], @Spacing[L]);
+    StrCopy(S2, @ValueBuf);
+    Print(@KeyBuf);
    end;
-
-  if UInt(P) - UInt(@Buffer) < 20 then
-   begin
-    MemSet(P^, 20 - (UInt(P) - UInt(@Buffer)), Ord(' '));
-    P := @Buffer[Low(Buffer) + 20];
-   end;
-
-  if S^ = #0 then
-   StrCopy(P, 'MISSING VALUE')
-  else
-   begin
-    Inc(UInt(S));
-
-    P2 := PLChar(UInt(P) + MAX_KV_LEN - 1);
-    while (S^ <> '\') and (S^ > #0) and (UInt(P) < UInt(P2)) do
-     begin
-      P^ := S^;
-      Inc(UInt(S));
-      Inc(UInt(P));
-     end;
-    P^ := #0;
-
-    if S^ > #0 then
-     Inc(UInt(S));
-   end;
-
-  Print(@Buffer);
  end;
 end;
 
 function Info_IsValid(S: PLChar): Boolean;
 var
- I: UInt;
+ KeyBuf, ValueBuf: array[1..MAX_KV_LEN] of LChar;
 begin
-Result := False;
-
-if S^ = '\' then
- Inc(UInt(S));
-
-while S^ > #0 do
+if S <> nil then
  begin
-  I := 1;
-  
-  while S^ <> '\' do
-   if (S = #0) or (I = MAX_KV_LEN) then
-    Exit
-   else
-    begin
-     Inc(UInt(S));
-     Inc(I);
-    end;
+  Result := True;
 
-  if I = 1 then
-   Exit;
-
-  Inc(UInt(S));
-
-  I := 1;
-  while (S^ <> '\') and (S^ > #0) do
-   if I = MAX_KV_LEN then
-    Exit
-   else
-    begin
-     Inc(UInt(S));
-     Inc(I);
-    end;
-  
-  if I = 1 then
-   Exit;
-
-  if S^ > #0 then
+  if S^ = '\' then
    Inc(UInt(S));
 
-  if S^ = #0 then
-   begin
-    Result := True;
+  while Info_ExtractPair(S, @KeyBuf, @ValueBuf) do
+   if S = nil then
     Exit;
-   end;
  end;
+
+Result := False;
 end;
 
 end.

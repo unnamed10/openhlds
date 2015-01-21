@@ -14,9 +14,10 @@ uses
 
   // Common utils + header unit
   Default, SDK,
+  Main,
 
   BZip2, Common, Console, Decal, Delta, Edict, Encode, FileSys, FilterIP,
-  GameLib, Host, HostCmds, HostSave, HPAK, Info, Main, MathLib, Memory, Model,
+  GameLib, Host, HostCmds, HostSave, HPAK, Info, MathLib, Memory, Model,
   MsgBuf, Network, ParseLib, PMove, Renderer, Resource, Server, StdUI,
   SVAuth, SVClient, SVCmds, SVDelta, SVEdict, SVEvent, SVExport, SVMain,
   SVMove, SVPacket, SVPhys, SVRcon, SVSend, SVWorld, SysArgs, SysClock,
@@ -27,45 +28,36 @@ uses
 // shutdown stuff ET in GameLib!!! (win/linux, check for non-nil, mem_free it) (NOT DONE)
 // precached events should be shut down (NOT DONE)
 
-// check fatpas (DONE!)
-// svsend has printing in validclientmulticast (DONE!)
-// hltv doesn''t show maxclients (DONE!)
-// check findentity 'n stuff (DONE!)
-
-// svpacket, check stuff (DONE!)
-// add a notice if the server is not active (DONE!)
 // allow rcon and queries (NOT DONE)
 
 // decompressing file err (check?)
 // Draw_FreeWAD: check all occurences (don't remember)
 
-// check dup names (partially works)
-
 // after round time, game dll calls PF_VGUI2_IsCareerMatch (info)
 
 // node is 52, leaf is 60. (info)
 
-// gamedll says "Could not allocsound() for insertsound() (DLL) (NOT CHECK)
-
-// moveents, CONTENTS_LADDER (check check check)
-
 // clientprintf in ALL commands and server check (sure) (NEEDS WORK)
-
-// NUM_FOR_EDICT (checked probably)
-// IndexOfEdict (checked probably)
 
 // SV_ClientPrint: #10
 
 // SV_WriteClientDataToMessage: weapon delta field size is 5 on some outdated clients
 
+// Sys_Error: shutdown host, disconnect clients if necessary
+//  - gamedll
+
+// Host_Error: shutdown server
+
+// search for "FSB_ALLOWOVERFLOW in". replace to "FSB_OVERFLOWED in".
+
 begin
 DecimalSeparator := '.';
 Writeln;
-Writeln('   -- OpenHLDS 1.01 --');
+Writeln('   -- OpenHLDS 1.02 --');
 Writeln;
 
 Start;
-while Frame do
+while Frame do             
  Sys_Sleep(1);
 Shutdown;
 

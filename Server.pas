@@ -4,10 +4,10 @@ unit Server;
 
 interface
 
-uses SVExport, Default, SDK;
+uses Default, SDK, SVExport;
 
 procedure SV_ServerDeactivate;
-procedure SV_ActivateServer(B: Boolean);
+procedure SV_ActivateServer(NewUnit: Boolean);
 function SV_SpawnServer(Map, StartSpot: PLChar): Boolean;
 
 procedure SV_Init;
@@ -15,13 +15,14 @@ procedure SV_Shutdown;
 
 var
  sv_aim: TCVar = (Name: 'sv_aim'; Data: '1'; Flags: [FCVAR_ARCHIVE]);
- sv_clienttrace: TCVar = (Name: 'sv_clienttrace'; Data: '1'; Flags: [FCVAR_SERVER]);
+ sv_clienttrace: TCVar = (Name: 'sv_clienttrace'; Data: '1');
  sv_lan: TCVar = (Name: 'sv_lan'; Data: '0'; Flags: [FCVAR_SERVER]);
  sv_lan_rate: TCVar = (Name: 'sv_lan_rate'; Data: '20000');
 
  sv_logbans: TCVar = (Name: 'sv_logbans'; Data: '1');
  sv_log_onefile: TCVar = (Name: 'sv_log_onefile'; Data: '0');
  sv_log_singleplayer: TCVar = (Name: 'sv_log_singleplayer'; Data: '0');
+ sv_log_altdateformat: TCVar = (Name: 'sv_log_altdateformat'; Data: '0');
  mp_logecho: TCVar = (Name: 'mp_logecho'; Data: '1');
  mp_logfile: TCVar = (Name: 'mp_logfile'; Data: '1');
 
@@ -48,7 +49,6 @@ var
  sv_timeout: TCVar = (Name: 'sv_timeout'; Data: '60'; Flags: [FCVAR_SERVER]);
 
  sv_newunit: TCVar = (Name: 'sv_newunit'; Data: '0');
- sv_clipmode: TCVar = (Name: 'sv_clipmode'; Data: '0'; Flags: [FCVAR_SERVER]);
  sv_password: TCVar = (Name: 'sv_password'; Data: ''; Flags: [FCVAR_SERVER, FCVAR_PROTECTED]);
 
  sv_cheats: TCVar = (Name: 'sv_cheats'; Data: '0'; Flags: [FCVAR_SERVER]);
@@ -64,18 +64,14 @@ var
  sv_sendresinterval: TCVar = (Name: 'sv_sendresinterval'; Data: '1.35');
  sv_fullupdateinterval: TCVar = (Name: 'sv_fullupdateinterval'; Data: '1.1');
 
- NullString: PLChar = #0;
-
- CurrentSkill: Int;
  AllowCheats: Boolean = False; // SV_SpawnServer
+ ToggleCheats: Boolean = False;
  
  SVDecalNameCount: UInt;
  SVDecalNames: array[0..MAX_DECAL_NAMES - 1] of array[1..MAX_LUMP_NAME + 1] of LChar;
- 
+
  SVUpdateBackup: UInt = 8;
  SVUpdateMask: UInt = 7;
-
- SVPlayer: PEdict; 
 
  SV: record
   Active: Boolean; // 0 L, 0 W, cf
@@ -114,9 +110,9 @@ var
   Baseline: PServerBaseline; // 244832, cf
   State: (SS_OFF = 0, SS_LOADING, SS_ACTIVE); // 244836 L
   Datagram: TSizeBuf; // 244840 L
-  DatagramData: array[1..4000] of Byte; // 244860 size cf
+  DatagramData: array[1..MAX_DATAGRAM] of Byte; // 244860 size cf
   ReliableDatagram: TSizeBuf; // 248860 L check check
-  ReliableDatagramData: array[1..4000] of Byte; // 248880 L size cf
+  ReliableDatagramData: array[1..MAX_DATAGRAM] of Byte; // 248880 L size cf
   Multicast: TSizeBuf; // 252880 L
   MulticastData: array[1..1024] of Byte; // 252900 L size cf
   Spectator: TSizeBuf; // 253924 L
@@ -126,7 +122,9 @@ var
 
   // custom fields
 
-  
+  SoundHashCollisions: UInt;
+  MulticastSuppressed: UInt;
+  MulticastOverflowed: UInt;
  end = (Active: False); // 287756 on 48patch
 
  SVS: record // all confirmed
@@ -157,9 +155,7 @@ var
   end;
 
   Secure: UInt32;
- end = ();
-
- HostClient: PClient = nil;
+ end;
 
  EngFuncs: TEngineFuncs = (
   PrecacheModel: PF_PrecacheModel;
@@ -362,6 +358,10 @@ var
  GlobalVars: TGlobalVars;
  MoveVars: TMoveVars;
 
+ HostClient: PClient;
+ SVPlayer: PEdict;
+
+ NullString: PLChar = #0;
  PRStrings: UInt;
 
 implementation
@@ -375,27 +375,29 @@ if SVS.InitGameDLL and SV.Active then
  DLLFunctions.ServerDeactivate;
 end;
 
-procedure SV_ActivateServer(B: Boolean);
+procedure SV_ActivateServer(NewUnit: Boolean);
 var
+ C: PClient;
  SB: TSizeBuf;
  SBData: array[1..65536] of Byte;
  I: Int;
  OldUserMsgs: PUserMsg;
 begin
 SB.Name := 'Activate Server';
-SB.AllowOverflow := [];
+SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
 SB.Data := @SBData;
 SB.CurrentSize := 0;
 SB.MaxSize := SizeOf(SBData);
 
 SetCStrikeFlags;
 CVar_DirectSet(sv_newunit, '0');
-DLLFunctions.ServerActivate(SV.Edicts[0], SV.NumEdicts, SVS.MaxClients);
+DLLFunctions.ServerActivate(@SV.Edicts[0], SV.NumEdicts, SVS.MaxClients);
 SV_CreateGenericResources;
-SV.Active := True;
-SV.State := SS_ACTIVE;
 
-if not B then
+SV.State := SS_ACTIVE;
+SV.Active := True;
+
+if not NewUnit then
  begin
   HostFrameTime := 0.001;
   SV_Physics;
@@ -416,21 +418,21 @@ else
 
 SV_CreateBaseline;
 SV_CreateResourceList;
-SV.NumConsistency := SV_TransferConsistencyInfo;
-
+SV_TransferConsistencyInfo;
+                             
 for I := 0 to SVS.MaxClients - 1 do
  begin
-  HostClient := @SVS.Clients[I];
-  if (HostClient.Active or HostClient.Connected) and not HostClient.FakeClient then
+  C := @SVS.Clients[I];
+  if (C.Active or C.Connected) and not C.FakeClient then
    begin
-    Netchan_Clear(HostClient.Netchan);
+    Netchan_Clear(C.Netchan);
     if SVS.MaxClients > 1 then
      begin
-      SV_BuildReconnect(HostClient.Netchan.NetMessage);
-      Netchan_Transmit(HostClient.Netchan, 0, nil);
+      SV_BuildReconnect(C.Netchan.NetMessage);
+      Netchan_Transmit(C.Netchan, 0, nil);
      end
     else
-     SV_SendServerInfo(SB, HostClient^);
+     SV_SendServerInfo(SB, C^);
 
     if UserMsgs <> nil then
      begin
@@ -439,10 +441,16 @@ for I := 0 to SVS.MaxClients - 1 do
       SV_SendUserReg(SB);
       NewUserMsgs := OldUserMsgs;
      end;
-    HostClient.UserMsgReady := True;
 
-    Netchan_CreateFragments(HostClient.Netchan, SB);
-    Netchan_FragSend(HostClient.Netchan);
+    if FSB_OVERFLOWED in SB.AllowOverflow then
+     SV_DropClient(C^, False, 'Message buffer overflowed.')
+    else
+     begin
+      C.UserMsgReady := True;
+      Netchan_CreateFragments(C.Netchan, SB);
+      Netchan_FragSend(C.Netchan);
+     end;
+    
     SZ_Clear(SB);
    end;
  end;
@@ -457,7 +465,7 @@ LPrint(['Started map "', PLChar(@SV.Map), '" (CRC "', SV.WorldModelCRC, '")'#10]
 
 if (mapchangecfgfile.Data <> nil) and (mapchangecfgfile.Data^ > #0) then
  begin
-  PF_AlertMessage(atConsole, 'Executing map change config file.');
+  PF_AlertMessage(atConsole, 'Executing map change config file.'#10);
   CBuf_AddText(['exec "', mapchangecfgfile.Data, '"'#10]);
  end;
 end;
@@ -465,7 +473,6 @@ end;
 function SV_SpawnServer(Map, StartSpot: PLChar): Boolean;
 var
  I: Int;
- L: UInt;
  C: PClient;
  S: PLChar;
  MapNameBuf: array[1..MAX_MAP_NAME] of LChar;
@@ -482,18 +489,10 @@ if SV.Active then
      DPrint(['SV_SpawnServer: Skipping reconnect on "', PLChar(@C.NetName), '", no private entity data.']);
   end;
 
-L := StrLen(Map);
-if L >= MAX_MAP_NAME - 9 then
- begin
-  Print('Couldn''t spawn server, map name is too big.');
-  SV.Active := False;
-  Exit;
- end;
-
 Log_Open;
 LPrint(['Loading map "', Map, '"'#10]);
 Log_PrintServerVars;
-NET_Config(SVS.MaxClients > 1);
+NET_Config(True);
 
 if hostname.Data = #0 then
  begin
@@ -510,25 +509,36 @@ else
  DPrint(['Spawned server ', Map, '.']);
 
 Inc(SVS.SpawnCount);
-if coop.Value <> 0 then
- CVar_DirectSet(deathmatch, '0');
 
-CurrentSkill := Trunc(skill.Value + 0.5);
-if CurrentSkill < 0 then
- CurrentSkill := 0
+if deathmatch.Value <> 0 then
+ begin
+  CVar_DirectSet(deathmatch, '1');
+  CVar_DirectSet(coop, '0');
+ end
 else
- if CurrentSkill > 3 then
-  CurrentSkill := 3;
-CVar_SetValue('skill', CurrentSkill);
+ if coop.Value <> 0 then
+  begin
+   CVar_DirectSet(deathmatch, '0');
+   CVar_DirectSet(coop, '1');
+  end
+ else
+  begin
+   CVar_DirectSet(deathmatch, '0');
+   CVar_DirectSet(coop, '0');
+  end;
+
+I := Trunc(skill.Value + 0.5);
+if I < 0 then
+ I := 0
+else
+ if I > 3 then
+  I := 3;
+CVar_SetValue('skill', I);
 
 HPAK_CheckSize('custom');
-if SV.Map[Low(SV.Map)] > #0 then
- StrCopy(@MapNameBuf, @SV.Map)
-else
- MapNameBuf[Low(MapNameBuf)] := #0;
+StrCopy(@MapNameBuf, @SV.Map);
 
-Host_ClearMemory(False);
-SV_ClearClientFrames;
+Host_ClearMemory(True);
 
 if SVS.MaxClients <> 1 then
  SVUpdateBackup := 64
@@ -537,7 +547,6 @@ else
 SVUpdateMask := SVUpdateBackup - 1;
 
 SV_AllocClientFrames;
-MemSet(SV, SizeOf(SV), 0);
 
 StrCopy(@SV.PrevMap, @MapNameBuf);
 StrLCopy(@SV.Map, Map, SizeOf(SV.Map) - 1);
@@ -562,6 +571,7 @@ SV.Edicts := Hunk_AllocName(SizeOf(TEdict) * SV.MaxEdicts, 'edicts');
 SV.EntityState := Hunk_AllocName(SizeOf(TEntityState) * SV.MaxEdicts, 'baselines');
 
 SV.Datagram.Name := 'Server Datagram';
+SV.Datagram.AllowOverflow := [FSB_ALLOWOVERFLOW];
 SV.Datagram.Data := @SV.DatagramData;
 SV.Datagram.MaxSize := SizeOf(SV.DatagramData);
 SV.ReliableDatagram.Name := 'Server Reliable Datagram';
@@ -571,6 +581,7 @@ SV.Multicast.Name := 'Server Multicast Buffer';
 SV.Multicast.Data := @SV.MulticastData;
 SV.Multicast.MaxSize := SizeOf(SV.MulticastData);
 SV.Spectator.Name := 'Server Spectator Buffer';
+SV.Spectator.AllowOverflow := [FSB_ALLOWOVERFLOW];
 SV.Spectator.Data := @SV.SpectatorData;
 SV.Spectator.MaxSize := SizeOf(SV.SpectatorData);
 SV.Signon.Name := 'Server Signon Buffer';
@@ -582,9 +593,10 @@ for I := 0 to SVS.MaxClients - 1 do
  SVS.Clients[I].Entity := @SV.Edicts[I + 1];
 
 SV.State := SS_LOADING;
-SV.Paused := False;
 SV.Time := 1;
 GlobalVars.Time := 1;
+ToggleCheats := sv_cheats.Value = 2;
+AllowCheats := sv_cheats.Value <> 0;
 
 S := StrECopy(@SV.MapFileName, 'maps/');
 S := StrLECopy(S, Map, SizeOf(SV.MapFileName) - 10);
@@ -616,9 +628,9 @@ else
  end;
 
 CM_CalcPAS(SV.WorldModel^);
+SV_ClearWorld;
 
 SV.PrecachedModels[1] := SV.WorldModel;
-SV_ClearWorld;
 SV.PrecachedSoundNames[0] := Pointer(PRStrings);
 SV.PrecachedModelNames[0] := Pointer(PRStrings);
 SV.PrecachedModelNames[1] := @SV.MapFileName;
@@ -654,7 +666,6 @@ else
 GlobalVars.ServerFlags := SVS.ServerFlags;
 GlobalVars.MapName := UInt(@SV.Map) - PRStrings;
 GlobalVars.StartSpot := UInt(@SV.StartSpot) - PRStrings;
-AllowCheats := sv_cheats.Value <> 0;
 SV_SetMoveVars;
 Result := True;
 end;
@@ -662,7 +673,6 @@ end;
 procedure SV_Init;
 var
  I: Int;
- C: PClient;
 begin
 // banid, removeid, listid, writeid, resetrcon
 Cmd_AddCommand('logaddress', @SV_SetLogAddress_F);
@@ -700,7 +710,9 @@ CVar_RegisterVariable(sv_sendmapcrc);
 CVar_RegisterVariable(sv_fullupdateinterval);
 CVar_RegisterVariable(sv_sendentsinterval);
 CVar_RegisterVariable(sv_sendresinterval);
-
+CVar_RegisterVariable(sv_pinginterval);
+CVar_RegisterVariable(sv_updatetime);
+CVar_RegisterVariable(sv_keepframes);
 
 // Resource
 CVar_RegisterVariable(sv_allowdownload);
@@ -722,8 +734,6 @@ CVar_RegisterVariable(sv_maxrate);
 CVar_RegisterVariable(sv_minrate);
 CVar_RegisterVariable(sv_defaultrate);
 CVar_RegisterVariable(sv_failuretime);
-CVar_RegisterVariable(sv_pinginterval);
-CVar_RegisterVariable(sv_updatetime);
 
 // SVEdict
 CVar_RegisterVariable(sv_instancedbaseline);
@@ -731,13 +741,13 @@ CVar_RegisterVariable(sv_instancedbaseline);
 // SVMain custom
 CVar_RegisterVariable(sv_stats);
 CVar_RegisterVariable(sv_statsinterval);
-CVar_RegisterVariable(sv_statsmax);
 
 // SVMove
 CVar_RegisterVariable(sv_maxunlag);
 CVar_RegisterVariable(sv_unlag);
 CVar_RegisterVariable(sv_unlagpush);
 CVar_RegisterVariable(sv_unlagsamples);
+CVar_RegisterVariable(sv_unlagjitter);
 CVar_RegisterVariable(sv_cmdcheckinterval);
 
 
@@ -754,11 +764,6 @@ CVar_RegisterVariable(sv_region);
 CVar_RegisterVariable(sv_filterban);
 CVar_RegisterVariable(sv_logrelay);
 CVar_RegisterVariable(sv_lan);
-if PF_IsDedicatedServer > 0 then
- CVar_DirectSet(sv_lan, '0')
-else
- CVar_DirectSet(sv_lan, '1');
-
 CVar_RegisterVariable(sv_lan_rate);
 CVar_RegisterVariable(sv_proxies);
 CVar_RegisterVariable(sv_outofdatetime);
@@ -776,7 +781,6 @@ CVar_RegisterVariable(sv_maxspeed);
 CVar_RegisterVariable(mp_footsteps);
 CVar_RegisterVariable(sv_accelerate);
 CVar_RegisterVariable(sv_stepsize);
-CVar_RegisterVariable(sv_clipmode);
 CVar_RegisterVariable(sv_bounce);
 CVar_RegisterVariable(sv_airmove);
 CVar_RegisterVariable(sv_airaccelerate);
@@ -803,7 +807,6 @@ if COM_CheckParm('-dev') > 0 then
 CVar_RegisterVariable(sv_spectatormaxspeed);
 
 CVar_RegisterVariable(sv_logbans);
-CVar_RegisterVariable(hpk_maxsize);
 
 CVar_RegisterVariable(mapcyclefile);
 CVar_RegisterVariable(motdfile);
@@ -831,13 +834,7 @@ for I := 0 to MAX_MODELS - 1 do
 SVS.Secure := 0;
 
 for I := 0 to SVS.MaxClientsLimit - 1 do
- begin
-  C := @SVS.Clients[I];
-  SV_ClearFrames(C.Frames);
-
-  MemSet(C^, SizeOf(C^), 0);
-  SV_SetResourceLists(C^);
- end;
+ SV_ClearClient(SVS.Clients[I]);
 
 PM_Init(@ServerMove);
 SV_AllocClientFrames;

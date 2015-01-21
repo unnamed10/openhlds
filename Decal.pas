@@ -133,7 +133,7 @@ else
     for I := 0 to Header.NumEntries - 1 do
      begin
       S := @P.Decals[I].Name;
-      W_CleanupName(S, S);
+      W_ToLower(S, S);
      end;
 
     P.DecalCount := Header.NumEntries;
@@ -181,7 +181,7 @@ else
      Move(Pointer(UInt(Header) + Header.FileOffset)^, P.Decals^, Size);
 
      Decal := @P.Decals[Low(P.Decals^)];
-     W_CleanupName(@Decal.Name, @Decal.Name);
+     W_ToLower(@Decal.Name, @Decal.Name);
 
      if Decal.Size <> Decal.DiskSize then
       Print(['Custom file has mismatched lump size: ', Decal.Size, '; ', Decal.DiskSize])
@@ -502,9 +502,9 @@ Data := @P.Cache[Index];
 Result := Cache_Check(Data.CacheUser);
 if Result = nil then
  begin
-  W_CleanupName(COM_FileBase(@Data.Name, @Buf), @Name);
+  W_ToLower(COM_FileBase(@Data.Name, @Buf), @Name);
   for I := 0 to P.DecalCount - 1 do
-   if StrComp(@Name, @P.Decals[I].Name) = 0 then
+   if Compare16(@Name, @P.Decals[I].Name) then
     begin
      if not Draw_CacheReload(P, I, @P.Decals[I], Data, @Name, @Data.Name) then
       Result := nil
@@ -677,7 +677,7 @@ Result := Cache_Check(Cache.CacheUser);
 if Result = nil then
  begin
   StrLCopy(@FileName, COM_FileBase(@Cache.Name, @Buf), MAX_LUMP_NAME - 1);
-  W_CleanupName(@FileName, @Name);
+  W_ToLower(@FileName, @Name);
   if Draw_CacheLoadFromCustom(@Name, P, Header, Size, Cache) then
    begin
     Result := Cache.CacheUser.Data;

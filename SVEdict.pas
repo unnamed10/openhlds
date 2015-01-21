@@ -29,7 +29,7 @@ var
 
 implementation
 
-uses Console, Delta, Edict, GameLib, Host, MathLib, Memory, MsgBuf, PMove, Server, SVClient, SVDelta, SVEvent, SVPhys, SVWorld, SysMain;
+uses Common, Console, Delta, Edict, GameLib, Host, MathLib, Memory, MsgBuf, PMove, Server, SVClient, SVDelta, SVEvent, SVPhys, SVWorld, SysMain;
 
 var
  SVPlayerModel: Int; // signed
@@ -67,13 +67,13 @@ if (Name <> nil) and (Name^ > #0) then
    if SV.PrecachedModelNames[I] = nil then
     Break
    else
-    if StrIComp(SV.PrecachedModelNames[I], Name) = 0 then
+    if StrIComp(Name, SV.PrecachedModelNames[I]) = 0 then
      begin
       Result := I;
       Exit;
      end;
   
-  Sys_Error(['SV_ModelIndex: Model "', Name, '" was not precached.']);
+  Sys_Error(['SV_ModelIndex: Model "', Name, '" is not precached.']);
  end;
 
 Result := 0;
@@ -112,61 +112,77 @@ end;
 
 procedure SV_CreateBaseline;
 var
- ES: TEntityState;
- P: PEntityState;
+ B: Boolean;
+ OS: TEntityState;
+ NS: PEntityState;
  I: Int;
  E: PEdict;
  D: PDelta;
 begin
 SV.Baseline := @SVInstanceBaselines;
-MemSet(ES, SizeOf(ES), 0);
 SV_FindModelNumbers;
 
 for I := 0 to SV.NumEdicts - 1 do
  begin
   E := @SV.Edicts[I];
-  if (E.Free = 0) and ((UInt(I) <= SVS.MaxClients) or (E.V.ModelIndex <> 0)) then
+  B := (I >= 1) and (UInt(I) <= SVS.MaxClients);
+  if (E.Free = 0) and (B or (E.V.ModelIndex <> 0)) then
    begin
-    P := @SV.EntityState[I];
-    P.Number := I;
+    NS := @SV.EntityState[I];
+    NS.Number := I;
     if (E.V.Flags and FL_CUSTOMENTITY) > 0 then
-     P.EntityType := ENTITY_BEAM
+     NS.EntityType := ENTITY_BEAM
     else
-     P.EntityType := ENTITY_NORMAL;
+     NS.EntityType := ENTITY_NORMAL;
 
-    DLLFunctions.CreateBaseline(Int(SV_IsPlayerIndex(I)), I, P, E^, SVPlayerModel, @PlayerMinS, @PlayerMaxS);
+    DLLFunctions.CreateBaseline(Int(B), I, NS, E^, SVPlayerModel, PlayerMinS[0][0], PlayerMinS[0][1], PlayerMinS[0][2], PlayerMaxS[0][0], PlayerMaxS[0][1], PlayerMaxS[0][2]);
     SVLastNum := I;
    end;
  end;
 
 DLLFunctions.CreateInstancedBaselines;
+
+MemSet(OS, SizeOf(OS), 0);
 MSG_WriteByte(SV.Signon, SVC_SPAWNBASELINE);
 MSG_StartBitWriting(SV.Signon);
 for I := 0 to SV.NumEdicts - 1 do
  begin
   E := @SV.Edicts[I];
-  if (E.Free = 0) and ((UInt(I) <= SVS.MaxClients) or (E.V.ModelIndex <> 0)) then
+  B := (I >= 1) and (UInt(I) <= SVS.MaxClients);
+  if (E.Free = 0) and (B or (E.V.ModelIndex <> 0)) then
    begin
-    P := @SV.EntityState[I];
     MSG_WriteBits(I, 11);
-    MSG_WriteBits(P.EntityType, 2);
+    
+    NS := @SV.EntityState[I];
+    MSG_WriteBits(NS.EntityType, 2);
 
-    if ((P.EntityType and ENTITY_BEAM) > 0) or (P.EntityType = 0) then
+    if NS.EntityType = ENTITY_BEAM then
      D := CustomEntityDelta
     else
-     if SV_IsPlayerIndex(I) then
+     if B then
       D := PlayerDelta
      else
       D := EntityDelta;
 
-    Delta_WriteDelta(@ES, P, True, D^, nil);
+    Delta_WriteDelta(@OS, NS, True, D^, nil);
    end;
  end;
 
 MSG_WriteBits(65535, 16);
 MSG_WriteBits(SV.Baseline.NumEnts, 6);
 for I := 0 to SV.Baseline.NumEnts - 1 do
- Delta_WriteDelta(@ES, @SV.Baseline.ES[I], True, EntityDelta^, nil);
+ begin
+  NS := @SV.Baseline.ES[I];
+  if NS.EntityType = ENTITY_BEAM then
+   D := CustomEntityDelta
+  else
+   if (NS.Number >= 1) and (UInt(NS.Number) <= SVS.MaxClients) then
+    D := PlayerDelta
+   else
+    D := EntityDelta;
+
+  Delta_WriteDelta(@OS, NS, True, D^, nil);
+ end;
 
 MSG_EndBitWriting;
 end;
@@ -193,15 +209,15 @@ begin
 if SV.MaxEdicts > 0 then
  begin
   if MovedEdict <> nil then
-   Print('SV_ReallocateDynamicData: Memory leak on MovedEdict.');
+   Mem_FreeAndNil(MovedEdict);
   MovedEdict := Mem_ZeroAlloc(SizeOf(PEdict) * SV.MaxEdicts);
 
   if MovedFrom <> nil then
-   Print('SV_ReallocateDynamicData: Memory leak on MovedFrom.');
+   Mem_FreeAndNil(MovedFrom);
   MovedFrom := Mem_ZeroAlloc(SizeOf(TVec3) * SV.MaxEdicts);
  end
 else
- Print('SV_ReallocateDynamicData: No edicts.');
+ DPrint('SV_ReallocateDynamicData: No edicts.');
 end;
 
 procedure SV_SetCallback(Index: UInt; NoDelta, Custom: Boolean; EntNumber: PUInt32; HasBestBaseline: Boolean; BaselineIndex: Int);
@@ -282,51 +298,52 @@ SV_WriteDeltaHeader(DeltaCallback.Index, DeltaCallback.NoDelta, DeltaCallback.Cu
                     DeltaCallback.HasES, DeltaCallback.ES, DeltaCallback.HasBestBaseline, DeltaCallback.BaselineIndex);
 end;
 
-function SV_FindBestBaseline(Num: Int; var Best: PEntityState; ESPack: PEntityStateArray; Index: UInt; Custom: Boolean): Int;
+function SV_FindBestBaseline(PackNum: Int; var Best: PEntityState; ESPack: PEntityStateArray; EntIndex: UInt; Custom: Boolean): Int;
 var
  D: PDelta;
- P, P2: PEntityState;
- I, J, K, Cur, Found: Int;
+ OS, NS: PEntityState;
+ BestScore, BestIndex, J, K, Cur: Int;
 begin
 if Custom then
  D := CustomEntityDelta
 else
- if SV_IsPlayerIndex(Index) then
+ if SV_IsPlayerIndex(EntIndex) then
   D := PlayerDelta
  else
   D := EntityDelta;
 
-Cur := Num - 1;
-Found := Num;
-J := Num - Cur;
+OS := Best;
+NS := @ESPack[PackNum];
+BestScore := Delta_TestDelta(OS, NS, D^); // how many bits should be sent
+BestIndex := PackNum;
 
-P := @ESPack[Num];
-I := Delta_TestDelta(Best, P, D^) - 6;
-while (I > 0) and (Cur >= 0) and (J < MAX_BASELINES - 1) do
+Cur := PackNum - 1;
+J := 1;
+while (BestScore > 0) and (Cur >= 0) and (J < MAX_BASELINES - 1) do
  begin
-  P2 := @ESPack[Cur];
-  if P.EntityType = P2.EntityType then
+  OS := @ESPack[Cur];
+  if OS.EntityType = NS.EntityType then
    begin
-    K := Delta_TestDelta(P2, P, D^);
-    if K < I then
+    K := Delta_TestDelta(OS, NS, D^);
+    if K < BestScore then
      begin
-      I := K;
-      Found := Cur;
+      BestScore := K;
+      BestIndex := Cur;
      end;
    end;
   Dec(Cur);
   Inc(J);
  end;
 
-Result := Num - Found;
-if Num <> Found then
- Best := @ESPack[Found];
+Result := PackNum - BestIndex;
+if PackNum <> BestIndex then
+ Best := @ESPack[BestIndex];
 end;
 
 procedure SV_CreatePacketEntities(DeltaCompression: Boolean; var C: TClient; var DstPack: TPacketEntities; var SB: TSizeBuf);
 var
  SrcPack: PPacketEntities;
- EntsInPack, I, J, DstEntNum, SrcEntNum: UInt;
+ SrcNumEnts, I, J, DstEntNum, SrcEntNum: UInt;
  K: Int;
  B: Boolean;
  ESIndex: UInt32;
@@ -337,7 +354,7 @@ begin
 if DeltaCompression then
  begin
   SrcPack := @C.Frames[SVUpdateMask and C.UpdateMask].Pack;
-  EntsInPack := SrcPack.NumEnts;
+  SrcNumEnts := SrcPack.NumEnts;
   MSG_WriteByte(SB, SVC_DELTAPACKETENTITIES);
   MSG_WriteShort(SB, DstPack.NumEnts);
   MSG_WriteByte(SB, C.UpdateMask);
@@ -345,32 +362,27 @@ if DeltaCompression then
 else
  begin
   SrcPack := nil;
-  EntsInPack := 0;
+  SrcNumEnts := 0;
   MSG_WriteByte(SB, SVC_PACKETENTITIES);
   MSG_WriteShort(SB, DstPack.NumEnts);
  end;
+MSG_StartBitWriting(SB);
 
 I := 0;
 J := 0;
-DstEntNum := 0;
-
-MSG_StartBitWriting(SB);
-while True do
+while (I < DstPack.NumEnts) or (J < SrcNumEnts) do
  begin
   if I < DstPack.NumEnts then
    DstEntNum := DstPack.Ents[I].Number
   else
-   if J >= EntsInPack then
-    Break
-   else
-    DstEntNum := 9999;
-  
-  if J < EntsInPack then
+   DstEntNum := 9999;
+
+  if J < SrcNumEnts then
    SrcEntNum := SrcPack.Ents[J].Number
   else
    SrcEntNum := 9999;
 
-  if DstEntNum = SrcEntNum then
+  if SrcEntNum = DstEntNum then
    begin
     B := DstPack.Ents[I].EntityType = ENTITY_BEAM;
     SV_SetCallback(DstEntNum, False, B, @ESIndex, False, 0);
@@ -384,22 +396,22 @@ while True do
 
     Delta_WriteDelta(@SrcPack.Ents[J], @DstPack.Ents[I], False, D^, SV_InvokeCallback);
     Inc(J);
+    Inc(I);
    end
   else
-   if DstEntNum > SrcEntNum then
+   if SrcEntNum < DstEntNum then
     begin
-     SV_WriteDeltaHeader(SrcEntNum, True, False, @ESIndex, False, 0, False, 0);
+     SV_WriteDeltaHeader(SrcEntNum, True, SrcPack.Ents[J].EntityType = ENTITY_BEAM, @ESIndex, False, 0, False, 0);
      Inc(J);
      Continue;
     end
    else
     begin
-     DstEdict := EDICT_NUM(DstEntNum);
      B := DstPack.Ents[I].EntityType = ENTITY_BEAM;
      SV_SetCallback(DstEntNum, False, B, @ESIndex, SrcPack = nil, 0);
 
      Best := @SV.EntityState[DstEntNum];
-     if (sv_instancedbaseline.Value = 0) or (SV.Baseline.NumEnts = 0) or (DstEntNum <= SVLastNum) then
+     if (sv_instancedbaseline.Value = 0) or (SV.Baseline.NumEnts = 0) or (SVLastNum > DstEntNum) then
       if SrcPack = nil then
        begin
         K := SV_FindBestBaseline(I, Best, DstPack.Ents, DstEntNum, B);
@@ -408,12 +420,16 @@ while True do
        end
       else
      else
-      for K := 0 to SV.BaseLine.NumEnts - 1 do
-       if SV.Baseline.Classnames[K] = DstEdict.V.ClassName then
-        begin
-         SV_SetNewInfo(K);
-         Best := @SV.Baseline.ES[K];
-        end;
+      begin
+       DstEdict := @SV.Edicts[DstEntNum];
+       for K := 0 to SV.Baseline.NumEnts - 1 do
+        if SV.Baseline.Classnames[K] = DstEdict.V.ClassName then
+         begin
+          SV_SetNewInfo(K);
+          Best := @SV.Baseline.ES[K];
+          Break;
+         end;
+      end;
 
      if B then
       D := CustomEntityDelta
@@ -424,14 +440,12 @@ while True do
        D := EntityDelta;
 
      Delta_WriteDelta(Best, @DstPack.Ents[I], True, D^, SV_InvokeCallback);
+     Inc(I);
     end;
-
-  Inc(I);
  end;
 
 MSG_WriteBits(0, 16);
 MSG_EndBitWriting;
-//Result := SB.CurrentSize;
 end;
 
 procedure SV_EmitPacketEntities(var C: TClient; var Dst: TPacketEntities; var SB: TSizeBuf);
@@ -455,7 +469,7 @@ PAS := nil;
 InPack := 0;
 
 DLLFunctions.SetupVisibility(C.Target^, C.Entity^, PVS, PAS);
-SV_ClearPacketEntities(Frame^);
+SV_ClearPacketEntities(Frame^, False);
 
 for I := 1 to SV.NumEdicts - 1 do
  begin
@@ -466,7 +480,7 @@ for I := 1 to SV.NumEdicts - 1 do
     if (not P.Active and not P.Spawned) or P.HLTV then
      Continue;
    end;
-   
+
   if InPack >= MAX_PACKET_ENTITIES then
    begin
     DPrint('Too many entities in visible packet list.');

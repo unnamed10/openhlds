@@ -80,48 +80,52 @@ var
  I: TCRC;
 begin
 I := CRC xor B;
-CRC := (I shr 8) xor CRCTable[Byte(I)];
+CRC := CRCTable[Byte(I)] xor (I shr 8);
 end;
 
 procedure CRC32_ProcessBuffer(var CRC: TCRC; Buffer: Pointer; Size: UInt);
+const
+ BitTable: array[0..7] of UInt = (0, 7, 6, 5, 4, 3, 2, 1);
 var
- I, FB: UInt;
+ I, J, X: UInt;
  C: TCRC;
 begin
 C := CRC;
 
+X := BitTable[UInt(Buffer) and Byte(7)];
+if X >= Size then
+ X := Size;
+Size := Size - X;
+
+for I := 1 to X do
+ begin
+  J := C xor PByte(Buffer)^;
+  C := CRCTable[Byte(J)] xor (J shr 8);
+  Inc(UInt(Buffer));
+ end;
+
 while Size >= 8 do
  begin
-  FB := UInt(Buffer) and 3;
-  Dec(Size, FB);
-  for I := 1 to FB do
-   begin
-    C := CRCTable[Byte(PByte(Buffer)^ xor C)] xor (C shr 8);
-    Inc(UInt(Buffer));
-   end;
+  C := C xor PUInt32(Buffer)^;
+  C := CRCTable[Byte(C)] xor (C shr 8);
+  C := CRCTable[Byte(C)] xor (C shr 8);
+  C := CRCTable[Byte(C)] xor (C shr 8);
+  C := CRCTable[Byte(C)] xor (C shr 8);
 
-  for I := 1 to Size shr 3 do
-   begin
-    C := C xor PUInt32(Buffer)^;
-    C := CRCTable[Byte(C)] xor (C shr 8);
-    C := CRCTable[Byte(C)] xor (C shr 8);
-    C := CRCTable[Byte(C)] xor (C shr 8);
-    C := CRCTable[Byte(C)] xor (C shr 8);
+  C := C xor PUInt32(UInt(Buffer) + SizeOf(UInt32))^;
+  C := CRCTable[Byte(C)] xor (C shr 8);
+  C := CRCTable[Byte(C)] xor (C shr 8);
+  C := CRCTable[Byte(C)] xor (C shr 8);
+  C := CRCTable[Byte(C)] xor (C shr 8);
 
-    C := C xor PUInt32(UInt(Buffer) + SizeOf(UInt32))^;
-    C := CRCTable[Byte(C)] xor (C shr 8);
-    C := CRCTable[Byte(C)] xor (C shr 8);
-    C := CRCTable[Byte(C)] xor (C shr 8);
-    C := CRCTable[Byte(C)] xor (C shr 8);
-
-    Inc(UInt(Buffer), 8);
-   end;
-  Size := Size and 7;
+  Inc(UInt(Buffer), 8);
+  Dec(Size, 8);
  end;
 
 for I := 1 to Size do
  begin
-  C := CRCTable[Byte(PByte(Buffer)^ xor C)] xor (C shr 8);
+  J := C xor PByte(Buffer)^;
+  C := CRCTable[Byte(J)] xor (J shr 8);
   Inc(UInt(Buffer));
  end;
 
@@ -130,17 +134,15 @@ end;
 
 function COM_BlockSequenceCRCByte(Input: Pointer; Size: UInt; Sequence: UInt32): TCRC;
 var
- E: UInt32;
- Buf: array[0..60 + 4 - 1] of Byte;
+ Buf: array[0..63] of Byte;
  K: array[0..3] of Byte;
  I: TCRC;
 begin
-E := CRCTable[Sequence mod High(Byte)];
 if Size > 60 then
  Size := 60;
 
 Move(Input^, Buf, Size);
-PUInt32(@K)^ := E;
+PUInt32(@K)^ := PUInt32(UInt(@CRCTable) + Sequence mod 1020)^;
 Buf[Size + 0] := K[0];
 Buf[Size + 1] := K[1];
 Buf[Size + 2] := K[2];
@@ -239,6 +241,7 @@ procedure MD5Init(out C: TMD5Context);
 begin
 with C do
  begin
+  MemSet(Input, SizeOf(Input), 0);
   Buffer[1] := $67452301;
   Buffer[2] := $EFCDAB89;
   Buffer[3] := $98BADCFE;

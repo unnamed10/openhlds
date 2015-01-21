@@ -55,7 +55,8 @@ procedure COM_GetGameDir(Buf: PLChar);
 
 procedure COM_ListMaps(S: PLChar);
 procedure COM_PrintBSPVersion(Buffer: Pointer; Name: PLChar; WriteOutdated: Boolean);
-function IsMapValid(Name: PLChar): Boolean;
+function FilterMapName(Src, Dst: PLChar): Boolean;
+function HashString(S: PLChar; MaxEntries: UInt): UInt;
 
 procedure COM_Munge(Data: Pointer; Length: UInt; Sequence: Int32);
 procedure COM_UnMunge(Data: Pointer; Length: UInt; Sequence: Int32);
@@ -63,10 +64,6 @@ procedure COM_Munge2(Data: Pointer; Length: UInt; Sequence: Int32);
 procedure COM_UnMunge2(Data: Pointer; Length: UInt; Sequence: Int32);
 procedure COM_Munge3(Data: Pointer; Length: UInt; Sequence: Int32);
 procedure COM_UnMunge3(Data: Pointer; Length: UInt; Sequence: Int32);
-
-function ShortNoSwap(L: Int16): Int16;
-function LongNoSwap(L: Int32): Int32;
-function FloatNoSwap(F: Single): Single;
 
 procedure ClearLink(var L: TLink);
 procedure RemoveLink(var L: TLink);
@@ -82,27 +79,40 @@ function COM_GetApproxWavePlayLength(Name: PLChar): UInt;
 function PR_IsEmptyString(S: PLChar): Boolean;
 procedure TrimSpace(Src, Dst: PLChar);
 
+function Compare16(P1, P2: Pointer): Boolean;
+
+function IsSafeFile(S: PLChar): Boolean;
+
 procedure COM_Init;
 procedure COM_Shutdown;
+
+{$IFDEF BIG_ENDIAN}
+ function LittleShort(L: Int16): Int16;
+ function LittleLong(L: Int32): Int32;
+ function LittleFloat(F: Single): Single;
+
+ type
+  BigShort = Int16;
+  BigLong = Int32;
+  BigFloat = Single;
+{$ELSE}
+ function BigShort(L: Int16): Int16;
+ function BigLong(L: Int32): Int32;
+ function BigFloat(F: Single): Single;
+
+ type
+  LittleShort = Int16;
+  LittleLong = Int32;
+  LittleFloat = Single;
+{$ENDIF}
 
 var
  COM_Token: array[1..1024] of LChar;
  COM_IgnoreColons: Boolean = False;
 
- BigEndian: Boolean;
-
- BigShort: function(L: Int16): Int16 = ShortNoSwap;
- LittleShort: function(L: Int16): Int16 = ShortNoSwap;
- BigLong: function(L: Int32): Int32 = LongNoSwap;
- LittleLong: function(L: Int32): Int32 = LongNoSwap;
- BigFloat: function(F: Single): Single = FloatNoSwap;
- LittleFloat: function(F: Single): Single = FloatNoSwap;
-
- com_filewarning: TCVar = (Name: 'com_filewarning'; Data: '0');
-
 implementation
 
-uses Console, FileSys, Host, Memory, MsgBuf, SysArgs, SysMain, SVWorld;
+uses Console, Encode, FileSys, Host, Memory, MsgBuf, SysArgs, SysMain, SVWorld;
 
 type
  PPacketEncodeTable = ^TPacketEncodeTable;
@@ -123,6 +133,21 @@ var
  LoadCache: PCacheUser;
  LoadSize: UInt;
  LoadBuffer: Pointer;
+
+function {$IFDEF BIG_ENDIAN}LittleShort{$ELSE}BigShort{$ENDIF}(L: Int16): Int16;
+begin
+Result := Swap16(L);
+end;
+
+function {$IFDEF BIG_ENDIAN}LittleLong{$ELSE}BigLong{$ENDIF}(L: Int32): Int32;
+begin
+Result := Swap32(L);
+end;
+
+function {$IFDEF BIG_ENDIAN}LittleFloat{$ELSE}BigFloat{$ENDIF}(F: Single): Single;
+begin
+Result := Swap32(PInt32(@F)^);
+end;
 
 function BuildNumber: UInt;
 begin
@@ -326,10 +351,10 @@ if L > 0 then
       Break;
    end;
    
-  Move(Source^, Dest^, L + 1);
+  Move(Source^, Dest^, L);
  end
 else
- MemSet(Dest^, L + 1, 0);
+ MemSet(Dest^, L, 0);
 end;
 
 function COM_FileExtension(Name: PLChar; Buffer: PLChar; BufLen: UInt): UInt;
@@ -576,36 +601,6 @@ if Data <> nil then
   end;
 
 Result := False;
-end;
-
-function ShortSwap(L: Int16): Int16;
-begin
-Result := Swap16(L);
-end;
-
-function ShortNoSwap(L: Int16): Int16;
-begin
-Result := L;
-end;
-
-function LongSwap(L: Int32): Int32;
-begin
-Result := Swap32(L);
-end;
-
-function LongNoSwap(L: Int32): Int32;
-begin
-Result := L;
-end;
-
-function FloatSwap(F: Single): Single;
-begin
-Result := Swap32(PInt32(@F)^);
-end;
-
-function FloatNoSwap(F: Single): Single;
-begin
-Result := F;
 end;
 
 procedure COM_WriteFile(Name: PLChar; Buffer: Pointer; Size: UInt);
@@ -885,27 +880,25 @@ function COM_CompareFileTime(S1, S2: PLChar; out CompareResult: Int32): Boolean;
 var
  F1, F2: Int64;
 begin
-if (S1 <> nil) and (S2 <> nil) then
+F1 := FS_GetFileTime(S1);
+F2 := FS_GetFileTime(S2);
+if (F1 > 0) and (F2 > 0) then
  begin
-  F1 := FS_GetFileTime(S1);
-  F2 := FS_GetFileTime(S2);
-  if (F1 > 0) and (F2 > 0) then
-   begin
-    if F1 >= F2 then
-     if F1 > F2 then
-      CompareResult := 1
-     else
-      CompareResult := 0
-    else
-     CompareResult := -1;
+  if F1 >= F2 then
+   if F1 > F2 then
+    CompareResult := 1
+   else
+    CompareResult := 0
+  else
+   CompareResult := -1;
 
-    Result := True;
-    Exit;
-   end;
+  Result := True;
+ end
+else
+ begin
+  CompareResult := 0;
+  Result := False;  
  end;
-
-Result := False;
-CompareResult := 0;
 end;
 
 procedure COM_GetGameDir(Buf: PLChar);
@@ -1043,6 +1036,8 @@ var
  Size: Int64;
  Header: TWaveHeader;
 begin
+Result := 0;
+
 if FS_Open(F, Name, 'r') then
  begin
   Size := FS_Size(F);
@@ -1050,18 +1045,12 @@ if FS_Open(F, Name, 'r') then
      (PUInt32(@Header.ChunkID)^ = RIFF_TAG) and (PUInt32(@Header.Format)^ = WAVE_TAG) and (PUInt32(@Header.SubChunk1ID)^ = FMT_TAG) then
    begin
     Dec(Size, SizeOf(Header));
-    if Header.ByteRate / 1000 > 0 then
-     Result := Trunc(Size / (Header.ByteRate / 100))
-    else
-     Result := Trunc(1000 * Size / Header.ByteRate);
-   end
-  else
-   Result := 0;
+    if Header.ByteRate > 0 then
+     Result := Trunc(1000 * Size / Header.ByteRate)
+   end;
 
   FS_Close(F);
- end
-else
- Result := 0;
+ end;
 end;
 
 function COM_HasExtension(S: PLChar): Boolean;
@@ -1081,32 +1070,14 @@ repeat
 until C = #0;
 end;
 
-procedure COM_Init;
-const
- SwapTest: packed array[1..SizeOf(Int16)] of Byte = (1, 0);
+function Compare16(P1, P2: Pointer): Boolean;
 begin
-BigEndian := Int16(SwapTest) <> 1;
-if not BigEndian then
- begin
-  BigShort := @ShortSwap;
-  LittleShort := @ShortNoSwap;
-  BigLong := @LongSwap;
-  LittleLong := @LongNoSwap;
-  BigFloat := @FloatSwap;
-  LittleFloat := @FloatNoSwap;
- end
-else
- begin
-  BigShort := @ShortNoSwap;
-  LittleShort := @ShortSwap;
-  BigLong := @LongNoSwap;
-  LittleLong := @LongSwap;
-  BigFloat := @FloatNoSwap;
-  LittleFloat := @FloatSwap;
- end;
+Result := (PInt64(P1)^ = PInt64(P2)^) and
+          (PInt64(UInt(P1) + SizeOf(Int64))^ = PInt64(UInt(P2) + SizeOf(Int64))^);
+end;
 
-CVar_RegisterVariable(com_filewarning);
-
+procedure COM_Init;
+begin
 MemSet(BFWrite, SizeOf(BFWrite), 0);
 MemSet(BFRead, SizeOf(BFRead), 0);
 end;
@@ -1151,7 +1122,7 @@ end;
 
 function EdictFromArea(const L: TLink): PEdict;
 begin
-Result := Pointer(UInt(@L) - UInt(@PEdict(nil).Area));
+Result := Pointer(UInt(@L) - UInt(@TEdict(nil^).Area));
 end;
 
 function FilterGroup(const E1, E2: TEdict): Boolean;
@@ -1170,12 +1141,9 @@ end;
 
 procedure TrimSpace(Src, Dst: PLChar);
 var
- L: UInt;
  SrcEnd: PLChar;
 begin
-L := StrLen(Src);
-
-SrcEnd := PLChar(UInt(Src) + L);
+SrcEnd := PLChar(UInt(Src) + StrLen(Src));
 while UInt(Src) < UInt(SrcEnd) do
  if Src^ > ' ' then
   Break
@@ -1187,7 +1155,7 @@ while UInt(SrcEnd) >= UInt(Src) do
  if SrcEnd^ > ' ' then
   Break
  else
-   Dec(UInt(SrcEnd));
+  Dec(UInt(SrcEnd));
 
 if UInt(SrcEnd) >= UInt(Src) then
  StrLCopy(Dst, Src, UInt(SrcEnd) - UInt(Src) + 1)
@@ -1195,17 +1163,31 @@ else
  Dst^ := #0;
 end;
 
-function IsMapValid(Name: PLChar): Boolean;
+function FilterMapName(Src, Dst: PLChar): Boolean;
 var
- Buf: array[1..MAX_PATH_A] of LChar;
+ S: PLChar;
+ Buf: array[1..MAX_MAP_NAME + 20] of LChar;
 begin
-if (Name <> nil) and (Name^ > #0) then
+if (StrLComp(Src, 'maps\', 5) = 0) or (StrLComp(Src, 'maps/', 5) = 0) then
+ S := @Buf
+else
+ S := StrECopy(@Buf, 'maps' + CorrectSlash);
+ 
+StrLCopy(S, Src, MAX_MAP_NAME - 1);
+COM_FixSlashes(@Buf);
+COM_DefaultExtension(@Buf, '.bsp');
+
+if StrLen(@Buf) >= MAX_MAP_NAME then
  begin
-  StrCopy(StrLECopy(StrECopy(@Buf, ('maps' + CorrectSlash)), Name, MAX_MAP_NAME), '.bsp');
-  Result := FS_FileExists(@Buf);
+  Dst^ := #0;
+  Result := False;
  end
 else
- Result := False;
+ begin
+  LowerCase(@Buf);
+  StrCopy(Dst, @Buf);
+  Result := True;
+ end;
 end;
 
 function COM_IntToHex(Val: UInt32; out Buf): PLChar;
@@ -1220,6 +1202,56 @@ for I := 3 downto 0 do
 
 PLChar(UInt(@Buf) + 8)^ := #0;
 Result := @Buf;
+end;
+
+function HashString(S: PLChar; MaxEntries: UInt): UInt;
+begin
+Result := 5381;
+while S^ > #0 do
+ begin
+  Result := (Result shl 5) + Result + Byte(LowerC(S^));
+  Inc(UInt(S));
+ end;
+
+Result := Result mod MaxEntries;
+end;
+
+const
+ ValidFileExt: array[1..10] of PLChar = ('mdl', 'tga', 'wad', 'spr', 'bsp', 'wav', 'mp3', 'res', 'txt', 'bmp');
+
+function IsSafeFile(S: PLChar): Boolean;
+var
+ S2: PLChar;
+ I: UInt;
+begin
+if S = nil then
+ Result := False
+else
+ if StrLComp(S, '!MD5', 4) = 0 then
+  Result := MD5_IsValid(PLChar(UInt(S) + 4))
+ else
+  if (S^ in ['\', '/', '.']) or (StrScan(S, ':') <> nil) or (StrPos(S, '..') <> nil) or
+     (StrPos(S, '//') <> nil) or (StrPos(S, '\\') <> nil) or (StrPos(S, '~/') <> nil) or
+     (StrPos(S, '~\') <> nil) then
+   Result := False
+  else
+   begin
+    S2 := StrScan(S, '.');
+    if (StrLen(S) < 3) or (S2 = nil) or (StrRScan(S, '.') <> S2) or (StrLen(S2) <= 1) then
+     Result := False
+    else
+     begin
+      Inc(UInt(S2));
+      for I := Low(ValidFileExt) to High(ValidFileExt) do
+       if StrIComp(S2, ValidFileExt[I]) = 0 then
+        begin
+         Result := True;
+         Exit;
+        end;
+
+      Result := False;
+     end;
+   end;
 end;
 
 end.

@@ -223,9 +223,10 @@ for I := 0 to LeafCount - 1 do
   Inc(UInt(PAS), 4 * RowIndex);
  end;
 
-DPrint(['CM_CalcPAS: ', Visible div LeafCount, ' visible; ',
-                        Audible div LeafCount, ' audible; ',
-                        LeafCount, ' total.']);
+if LeafCount > 0 then
+ DPrint(['CM_CalcPAS: ', Visible div LeafCount, ' visible; ',
+                         Audible div LeafCount, ' audible; ',
+                         LeafCount, ' total.']);
 end;
 
 function CM_HeadnodeVisible(Node: PMNode; VisData: PByte; LeafIndex: PUInt32): Boolean;
@@ -800,9 +801,9 @@ SpriteHeader.BeamLength := LittleFloat(Header.BeamLength);
 SpriteHeader.NumFrames := NumFrames;
 
 M.SyncType := TSyncType(LittleLong(Int32(Header.SyncType)));
-M.MinS[0] := SpriteHeader.MaxWidth / -2;
-M.MinS[1] := SpriteHeader.MaxWidth / -2;
-M.MinS[2] := SpriteHeader.MaxHeight / -2;
+M.MinS[0] := -SpriteHeader.MaxWidth / 2;
+M.MinS[1] := -SpriteHeader.MaxWidth / 2;
+M.MinS[2] := -SpriteHeader.MaxHeight / 2;
 M.MaxS[0] := SpriteHeader.MaxWidth / 2;
 M.MaxS[1] := SpriteHeader.MaxWidth / 2;
 M.MaxS[2] := SpriteHeader.MaxHeight / 2;
@@ -1017,8 +1018,8 @@ var
  M: PDMiptexLump;
  MT: PMiptex;
  I, J: Int;
- WADLoaded: Boolean;
- LumpBuf: array[1..$55344] of Byte;
+ WADLoaded, LB: Boolean;
+ LumpBuf: Pointer;
  Pixels, NumPalette: UInt;
  TX, TX2: PTexture;
  PIn: PDModelPalette;
@@ -1050,21 +1051,23 @@ for I := 0 to M.NumMiptex - 1 do
    Continue;
 
   MT := Pointer(UInt(M) + UInt(M.DataOfs[I]));
+  LB := False;
   if LittleLong(MT.Offsets[0]) = 0 then
    begin
     if not WADLoaded then
      begin
       TEX_InitFromWAD(WADPath);
-      TEX_AddAnimatingTextures;
       WADLoaded := True;
      end;
 
-    if TEX_LoadLump(@MT.Name, @LumpBuf) = 0 then
+    if TEX_LoadLump(@MT.Name, LumpBuf) = 0 then
      begin
       M.DataOfs[I] := -1;
       Continue;
      end;
-    MT := @LumpBuf;
+
+    LB := True;
+    MT := LumpBuf;
    end;
 
   for J := 0 to MIPLEVELS - 1 do
@@ -1110,6 +1113,9 @@ for I := 0 to M.NumMiptex - 1 do
 
   if AdEnabled and (StrIComp(@TX.Name, 'DEFAULT') = 0) then
    Mod_AdSwap(TX, Pixels, NumPalette);
+
+  if LB then
+   Mem_Free(LumpBuf);
  end;
 
 if WADLoaded then

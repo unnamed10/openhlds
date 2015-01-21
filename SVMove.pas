@@ -18,9 +18,9 @@ function SV_PointLeafnum(const P: TVec3): UInt;
 procedure SV_GetTrueOrigin(Index: UInt; out Origin: TVec3);
 procedure SV_GetTrueMinMax(Index: UInt; out MinS, MaxS: PVec3);
 
-procedure PM_SV_PlaySound(Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
-function PM_SV_TraceTexture(Ground: Int32; const VStart, VEnd: TVec3): PLChar; cdecl;
-procedure PM_SV_PlaybackEventFull(Flags, ClientIndex: Int32; EventIndex: UInt16; Delay: Single; const Origin, Angles: TVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32); cdecl;
+procedure PM_SV_PlaySound(Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32);
+function PM_SV_TraceTexture(Ground: Int32; const VStart, VEnd: TVec3): PLChar;
+procedure PM_SV_PlaybackEventFull(Flags, ClientIndex: Int32; EventIndex: UInt16; Delay: Single; const Origin, Angles: TVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32);
 
 procedure SV_CheckCmdTimes;
 procedure SV_PreRunCmd;
@@ -41,10 +41,11 @@ procedure SV_EstablishTimeBase(var C: TClient; Cmd: PUserCmdArray; Drop, Backup,
 procedure SV_ParseMove(var C: TClient);
 
 var
- sv_maxunlag: TCVar = (Name: 'sv_maxunlag'; Data: '0.5'; Flags: [FCVAR_SERVER]);
+ sv_maxunlag: TCVar = (Name: 'sv_maxunlag'; Data: '0.5');
  sv_unlag: TCVar = (Name: 'sv_unlag'; Data: '1'; Flags: [FCVAR_SERVER]);
- sv_unlagpush: TCVar = (Name: 'sv_unlagpush'; Data: '0'; Flags: [FCVAR_SERVER]);
- sv_unlagsamples: TCVar = (Name: 'sv_unlagsamples'; Data: '1'; Flags: [FCVAR_SERVER]);
+ sv_unlagpush: TCVar = (Name: 'sv_unlagpush'; Data: '0');
+ sv_unlagsamples: TCVar = (Name: 'sv_unlagsamples'; Data: '1');
+ sv_unlagjitter: TCVar = (Name: 'sv_unlagjitter'; Data: '0.2');
 
  sv_cmdcheckinterval: TCVar = (Name: 'sv_cmdcheckinterval'; Data: '1');
 
@@ -75,8 +76,8 @@ var
  Mid, Bottom: Single;
 begin
 MonsterClip := (E.V.Flags and FL_MONSTERCLIP) > 0;
-VectorAdd(E.V.MinS, E.V.Origin, MinS);
-VectorAdd(E.V.MaxS, E.V.Origin, MaxS);
+VectorAdd(E.V.Origin, E.V.MinS, MinS);
+VectorAdd(E.V.Origin, E.V.MaxS, MaxS);
 
 Start[2] := MinS[2] - 1;
 for I := 0 to 3 do // x = i&2, y = i&1
@@ -95,8 +96,8 @@ for I := 0 to 3 do // x = i&2, y = i&1
    begin
     Result := False;
     
-    Start[0] := (MinS[0] + MaxS[0]) * 0.5;
-    Start[1] := (MinS[1] + MaxS[1]) * 0.5;
+    Start[0] := (MinS[0] + MaxS[0]) / 2;
+    Start[1] := (MinS[1] + MaxS[1]) / 2;
     Start[2] := MinS[2] + sv_stepsize.Value;
 
     Stop[0] := Start[0];
@@ -471,7 +472,6 @@ end;
 
 
 
-
 procedure SV_PreRunCmd;
 begin
 
@@ -481,6 +481,7 @@ procedure SV_CopyEdictToPhysent(var PE: TPhysEnt; Index: UInt; const E: TEdict);
 var
  P: PModel;
 begin
+PE.Name[Low(PE.Name)] := #0;
 PE.Origin := E.V.Origin;
 PE.Info := Int32(Index);
 if (Index < 1) or (Index > SVS.MaxClients) then
@@ -488,12 +489,10 @@ if (Index < 1) or (Index > SVS.MaxClients) then
 else
  begin
   SV_GetTrueOrigin(Index - 1, PE.Origin);
-  PE.Player := PE.Info;
+  PE.Player := Index;
  end;
 
-PE.Angles := E.V.Angles;
 PE.StudioModel := nil;
-PE.RenderMode := E.V.RenderMode;
 case E.V.Solid of
  SOLID_NOT:
   if E.V.ModelIndex = 0 then
@@ -543,10 +542,14 @@ case E.V.Solid of
   end;
  end;
 
+PE.Angles := E.V.Angles;
+PE.RenderMode := E.V.RenderMode;
 PE.Skin := E.V.Skin;
 PE.Frame := E.V.Frame;
 PE.Solid := E.V.Solid;
 PE.Sequence := E.V.Sequence;
+PE.Team := E.V.Team;
+PE.ClassNumber := E.V.PlayerClass;
 PUInt32(@PE.Controller)^ := PUInt32(@E.V.Controller)^;
 PUInt16(@PE.Blending)^ := PUInt16(@E.V.Blending)^;
 PE.MoveType := E.V.MoveType;
@@ -565,6 +568,7 @@ PE.VUser4 := E.V.VUser4;
 
 PE.TakeDamage := 0;
 PE.BloodDecal := 0;
+PE.ClassNumber := 0;
 end;
 
 procedure SV_AddLinksToPM_(const Node: TAreaNode; const MinS, MaxS: TVec3);
@@ -655,17 +659,15 @@ PE := @PM.PhysEnts[0];
 PE.Model := SV.WorldModel;
 if SV.WorldModel <> nil then
  StrLCopy(@PE.Name, @SV.WorldModel.Name, SizeOf(PE.Name) - 1);
-
 PE.Origin := Vec3Origin;
-PE.Info := 0;
 PE.Solid := SOLID_BSP;
 PE.MoveType := MOVETYPE_NONE;
 PE.TakeDamage := DAMAGE_YES;
-PE.BloodDecal := 0;
 
 PM.NumPhysEnt := 1;
 PM.NumVisEnt := 1;
 PM.NumMoveEnt := 0;
+PM.NumTouch := 0;
 Move(PM.PhysEnts[0], PM.VisEnts[0], SizeOf(PM.VisEnts[0]));
 
 for I := 0 to 2 do
@@ -685,27 +687,31 @@ end;
 
 function SV_PlayerRunThink(var E: TEdict; Sec, Time: Single): Boolean;
 begin
-if (E.V.Flags and (FL_KILLME or FL_DORMANT)) = 0 then
- begin
-  if (E.V.NextThink <= 0) or (Time + Sec < E.V.NextThink) then
-   begin
-    Result := True;
-    Exit;
-   end;
-
-  if E.V.NextThink < Time then
-   GlobalVars.Time := Time
-  else
-   GlobalVars.Time := E.V.NextThink;
-
-  E.V.NextThink := 0;
-  DLLFunctions.Think(E);
- end;
-
 if (E.V.Flags and FL_KILLME) > 0 then
- ED_Free(E);
+ begin
+  ED_Free(E);
+  Result := E.Free = 0;
+ end
+else
+ if (E.V.Flags and FL_DORMANT) > 0 then
+  Result := E.Free = 0
+ else
+  if (E.V.NextThink > 0) and (Time + Sec >= E.V.NextThink) then
+   begin
+    if E.V.NextThink > Time then
+     GlobalVars.Time := E.V.NextThink
+    else
+     GlobalVars.Time := Time;
 
-Result := E.Free = 0;
+    E.V.NextThink := 0;
+    DLLFunctions.Think(E);
+    if (E.V.Flags and FL_KILLME) > 0 then
+     ED_Free(E);
+
+    Result := E.Free = 0;
+   end
+  else
+   Result := True;
 end;
 
 procedure SV_CheckMovingGround(var E: TEdict; Sec: Single);
@@ -755,8 +761,10 @@ var
  I: Int;
  Trace: TTrace;
 begin
+Sec := Cmd.MSec / 1000;
+
 if RealTime < HostClient.NextCmd then
- HostClient.LastCmd := HostClient.LastCmd + (Cmd.MSec / 1000)
+ HostClient.LastCmd := HostClient.LastCmd + Sec
 else
  begin
   Move(Cmd, OrigCmd, SizeOf(OrigCmd));
@@ -775,7 +783,7 @@ else
      SV_SetupMove(HostClient^);
 
     DLLFunctions.CmdStart(SVPlayer^, Cmd, RandomSeed);
-    Sec := Cmd.MSec / 1000;
+
     HostClient.ClientTime := HostClient.ClientTime + Sec;
     HostClient.LastCmd := HostClient.LastCmd + Sec;
     if Cmd.Impulse > 0 then
@@ -789,7 +797,9 @@ else
          CVar_DirectSet(sv_fullupdateinterval, '0');
         HostClient.FullUpdateTime := RealTime + sv_fullupdateinterval.Value;
        end;
-     end;
+     end
+    else
+     SVPlayer.V.Impulse := 0;
 
     SVPlayer.V.CLBaseVelocity := Vec3Origin;
     SVPlayer.V.Button := Cmd.Buttons;
@@ -803,38 +813,43 @@ else
     if Length(SVPlayer.V.BaseVelocity) > 0 then
      SVPlayer.V.CLBaseVelocity := SVPlayer.V.BaseVelocity;
 
+    PM.RunFuncs := 1;
+    PM.PlayerIndex := (UInt(HostClient) - UInt(SVS.Clients)) div SizeOf(TClient);
     PM.Server := 1;
     PM.Multiplayer := Int32(SVS.MaxClients > 1);
     PM.Time := 1000 * HostClient.ClientTime;
-    PM.UseHull := Int((SVPlayer.V.Flags and FL_DUCKING) > 0);
-    PM.MaxSpeed := sv_maxspeed.Value;
-    PM.ClientMaxSpeed := SVPlayer.V.MaxSpeed;
+    PM.FrameTime := Sec;
+
+    PM.Origin := SVPlayer.V.Origin;
+    PM.Angles := SVPlayer.V.VAngle;
+    PM.Velocity := SVPlayer.V.Velocity;
+    PM.MoveDir := SVPlayer.V.MoveDir;
+    PM.BaseVelocity := SVPlayer.V.BaseVelocity;
+    PM.ViewOfs := SVPlayer.V.ViewOfs;
     PM.DuckTime := SVPlayer.V.DuckTime;
     PM.InDuck := SVPlayer.V.InDuck;
     PM.TimeStepSound := SVPlayer.V.TimeStepSound;
     PM.StepLeft := SVPlayer.V.StepLeft;
     PM.FallVelocity := SVPlayer.V.FallVelocity;
-    PM.SwimTime := SVPlayer.V.SwimTime;
-    PM.OldButtons := SVPlayer.V.OldButtons;
-
-    StrLCopy(@PM.PhysInfo, @HostClient.PhysInfo, SizeOf(PM.PhysInfo) - 1);
-    PM.Velocity := SVPlayer.V.Velocity;
-    PM.MoveDir := SVPlayer.V.MoveDir;
-    PM.Angles := SVPlayer.V.VAngle;
-    PM.BaseVelocity := SVPlayer.V.BaseVelocity;
-    PM.ViewOfs := SVPlayer.V.ViewOfs;
     PM.PunchAngle := SVPlayer.V.PunchAngle;
-    PM.DeadFlag := SVPlayer.V.DeadFlag;
+    PM.SwimTime := SVPlayer.V.SwimTime;
+    PM.NextPrimaryAttack := 0;
     PM.Effects := SVPlayer.V.Effects;
+    PM.Flags := SVPlayer.V.Flags;
+    PM.UseHull := Int((SVPlayer.V.Flags and FL_DUCKING) > 0);
     PM.Gravity := SVPlayer.V.Gravity;
     PM.Friction := SVPlayer.V.Friction;
-    PM.Spectator := 0;
+    PM.OldButtons := SVPlayer.V.OldButtons;
     PM.WaterJumpTime := SVPlayer.V.TeleportTime;
-    Move(OrigCmd, PM.Cmd, SizeOf(PM.Cmd));
     PM.Dead := Int32(SVPlayer.V.Health <= 0);
+    PM.DeadFlag := SVPlayer.V.DeadFlag;
+    PM.Spectator := 0;
     PM.MoveType := SVPlayer.V.MoveType;
-    PM.Flags := SVPlayer.V.Flags;
-    PM.PlayerIndex := NUM_FOR_EDICT(SVPlayer^) - 1;
+    PM.OnGround := -1;
+    PM.WaterLevel := SVPlayer.V.WaterLevel;
+    PM.WaterType := SVPlayer.V.WaterType;
+    PM.MaxSpeed := sv_maxspeed.Value;
+    PM.ClientMaxSpeed := SVPlayer.V.MaxSpeed;
     PM.IUser1 := SVPlayer.V.IUser1;
     PM.IUser2 := SVPlayer.V.IUser2;
     PM.IUser3 := SVPlayer.V.IUser3;
@@ -847,53 +862,36 @@ else
     PM.VUser2 := SVPlayer.V.VUser2;
     PM.VUser3 := SVPlayer.V.VUser3;
     PM.VUser4 := SVPlayer.V.VUser4;
-    PM.Origin := SVPlayer.V.Origin;
 
+    StrLCopy(@PM.PhysInfo, @HostClient.PhysInfo, SizeOf(PM.PhysInfo) - 1);
+    Move(OrigCmd, PM.Cmd, SizeOf(PM.Cmd));
     SV_AddLinksToPM(SVAreaNodes[0], PM.Origin);
-    PM.FrameTime := Sec;
-    PM.RunFuncs := 1;
-    PM.PM_PlaySound := @PM_SV_PlaySound;
-    PM.PM_TraceTexture := @PM_SV_TraceTexture;
-    PM.PM_PlaybackEventFull := @PM_SV_PlaybackEventFull;
-    DLLFunctions.PM_Move(PM^, 1);
 
-    SVPlayer.V.DeadFlag := PM.DeadFlag;
-    SVPlayer.V.Effects := PM.Effects;
-    SVPlayer.V.TeleportTime := PM.WaterJumpTime;
-    SVPlayer.V.WaterLevel := PM.WaterLevel;
-    SVPlayer.V.WaterType := PM.WaterType;
-    SVPlayer.V.Flags := PM.Flags;
-    SVPlayer.V.Friction := PM.Friction;
-    SVPlayer.V.MoveType := PM.MoveType;
-    SVPlayer.V.MaxSpeed := PM.ClientMaxSpeed;
-    SVPlayer.V.StepLeft := PM.StepLeft;
-    SVPlayer.V.ViewOfs := PM.ViewOfs;
-    SVPlayer.V.MoveDir := PM.MoveDir;
-    SVPlayer.V.PunchAngle := PM.PunchAngle;
-    if PM.OnGround = -1 then
-     SVPlayer.V.Flags := SVPlayer.V.Flags and not FL_ONGROUND
-    else
-     begin
-      SVPlayer.V.Flags := SVPlayer.V.Flags or FL_ONGROUND;
-      SVPlayer.V.GroundEntity := EDICT_NUM(PM.PhysEnts[PM.OnGround].Info);
-     end;
+    DLLFunctions.PM_Move(PM^, 1);
 
     SVPlayer.V.Origin := PM.Origin;
     SVPlayer.V.Velocity := PM.Velocity;
+    SVPlayer.V.MoveDir := PM.MoveDir;
     SVPlayer.V.BaseVelocity := PM.BaseVelocity;
-    if SVPlayer.V.FixAngle = 0 then
-     begin
-      SVPlayer.V.VAngle := PM.Angles;
-      SVPlayer.V.Angles := PM.Angles;
-      SVPlayer.V.Angles[0] := -SVPlayer.V.Angles[0] / 3; 
-     end;
-
-    SVPlayer.V.InDuck := PM.InDuck;
+    SVPlayer.V.ViewOfs := PM.ViewOfs;
     SVPlayer.V.DuckTime := Trunc(PM.DuckTime);
+    SVPlayer.V.InDuck := PM.InDuck;
     SVPlayer.V.TimeStepSound := PM.TimeStepSound;
+    SVPlayer.V.StepLeft := PM.StepLeft;
     SVPlayer.V.FallVelocity := PM.FallVelocity;
+    SVPlayer.V.PunchAngle := PM.PunchAngle;
     SVPlayer.V.SwimTime := Trunc(PM.SwimTime);
+    SVPlayer.V.Effects := PM.Effects;
+    SVPlayer.V.Flags := PM.Flags;
+    SVPlayer.V.Gravity := PM.Gravity;
+    SVPlayer.V.Friction := PM.Friction;
     SVPlayer.V.OldButtons := PM.Cmd.Buttons;
+    SVPlayer.V.TeleportTime := PM.WaterJumpTime;
+    SVPlayer.V.DeadFlag := PM.DeadFlag;
+    SVPlayer.V.MoveType := PM.MoveType;
+    SVPlayer.V.WaterLevel := PM.WaterLevel;
+    SVPlayer.V.WaterType := PM.WaterType;
+    SVPlayer.V.MaxSpeed := PM.ClientMaxSpeed;
     SVPlayer.V.IUser1 := PM.IUser1;
     SVPlayer.V.IUser2 := PM.IUser2;
     SVPlayer.V.IUser3 := PM.IUser3;
@@ -907,16 +905,34 @@ else
     SVPlayer.V.VUser3 := PM.VUser3;
     SVPlayer.V.VUser4 := PM.VUser4;
 
+    if PM.OnGround = -1 then
+     begin
+      SVPlayer.V.Flags := SVPlayer.V.Flags and not FL_ONGROUND;
+      SVPlayer.V.GroundEntity := nil;
+     end
+    else
+     begin
+      SVPlayer.V.Flags := SVPlayer.V.Flags or FL_ONGROUND;
+      SVPlayer.V.GroundEntity := EDICT_NUM(PM.PhysEnts[PM.OnGround].Info);
+     end;
+
+    if SVPlayer.V.FixAngle = 0 then
+     begin
+      SVPlayer.V.VAngle := PM.Angles;
+      SVPlayer.V.Angles := PM.Angles;
+      SVPlayer.V.Angles[0] := -SVPlayer.V.Angles[0] / 3; 
+     end;
+
     SetMinMaxSize(SVPlayer^, PlayerMinS[PM.UseHull], PlayerMaxS[PM.UseHull]);
-    if HostClient.Entity.V.Solid <> 0 then
+    if SVPlayer.V.Solid <> SOLID_NOT then
      begin
       SV_LinkEdict(SVPlayer^, True);
       OldVelocity := SVPlayer.V.Velocity;
       for I := 0 to PM.NumTouch - 1 do
        begin
         Ent := EDICT_NUM(PM.PhysEnts[PM.TouchIndex[I].Ent].Info);
-        SV_ConvertPMTrace(Trace, PM.TouchIndex[I], Ent);
         SVPlayer.V.Velocity := PM.TouchIndex[I].DeltaVelocity;
+        SV_ConvertPMTrace(Trace, PM.TouchIndex[I], Ent);
         SV_Impact(Ent^, SVPlayer^, Trace);
        end;
       SVPlayer.V.Velocity := OldVelocity;
@@ -935,25 +951,31 @@ end;
 function SV_CalcClientTime(const C: TClient): Double;
 var
  I: Int;
- Count, Samples, MaxSamples: UInt;
+ F, Count, Samples, AvgSamples: UInt;
  P: PClientFrame;
- TotalPing, MinPing, MaxPing: Single;
+ TotalPing, MinPing, MaxPing: Double;
 begin
 if sv_unlagsamples.Value < 1 then
  CVar_DirectSet(sv_unlagsamples, '1');
+if sv_unlagjitter.Value < 0.01 then
+ CVar_DirectSet(sv_unlagjitter, '0.01');
 
-Samples := Trunc(sv_unlagsamples.Value);
+Samples := SVUpdateBackup;
+if Samples > MAX_UNLAG_SAMPLES then
+ Samples := MAX_UNLAG_SAMPLES;
 
-if SVUpdateBackup < MAX_UNLAG_SAMPLES then
- MaxSamples := SVUpdateBackup
-else
- MaxSamples := MAX_UNLAG_SAMPLES;
+AvgSamples := SVUpdateBackup;
+if AvgSamples > MAX_AVG_SAMPLES then
+ AvgSamples := MAX_AVG_SAMPLES;
 
-if Samples > MaxSamples then
- Samples := MaxSamples;
+F := Trunc(sv_unlagsamples.Value);
+if F < Samples then
+ Samples := F;
 
 Count := 0;
 TotalPing := 0;
+MinPing := 99999;
+MaxPing := -99999;
 for I := 0 to Samples - 1 do
  begin
   P := @C.Frames[SVUpdateMask and (C.Netchan.IncomingAcknowledged - I)];
@@ -961,25 +983,8 @@ for I := 0 to Samples - 1 do
    begin
     Inc(Count);
     TotalPing := TotalPing + P.PingTime;
-   end;
- end;
 
-if Count = 0 then
- Result := 0
-else
- begin
-  MinPing := 9999;
-  MaxPing := -9999;
-
-  if SVUpdateBackup > 4 then
-   MaxSamples := 4
-  else
-   MaxSamples := SVUpdateBackup;
-
-  for I := 0 to MaxSamples - 1 do
-   begin
-    P := @C.Frames[SVUpdateMask and (C.Netchan.IncomingAcknowledged - I)];
-    if P.PingTime > 0 then
+    if Count <= AvgSamples then
      begin
       if P.PingTime < MinPing then
        MinPing := P.PingTime;
@@ -987,12 +992,12 @@ else
        MaxPing := P.PingTime;
      end;
    end;
-
-  if (MaxPing < MinPing) or (Abs(MaxPing - MinPing) <= 0.2) then
-   Result := TotalPing / Count
-  else
-   Result := 0;
  end;
+
+if (Count > 0) and (MaxPing >= MinPing) and (MaxPing - MinPing <= sv_unlagjitter.Value) then
+ Result := TotalPing / Count
+else
+ Result := 0;
 end;
 
 procedure SV_ComputeLatency(var C: TClient);
@@ -1009,16 +1014,16 @@ end;
 
 procedure SV_GetTrueOrigin(Index: UInt; out Origin: TVec3);
 begin
-if HostClient.LW and HostClient.LC and (sv_unlag.Value <> 0) and (SVS.MaxClients > 1) and
-   HostClient.Active and (Index < SVS.MaxClients) and
+if HostClient.Active and HostClient.LW and HostClient.LC and (sv_unlag.Value <> 0) and
+   (SVS.MaxClients > 1) and (Index < SVS.MaxClients) and
    TruePositions[Index].Active and TruePositions[Index].UpdatePos then
  Origin := TruePositions[Index].TrueOrigin;
 end;
 
 procedure SV_GetTrueMinMax(Index: UInt; out MinS, MaxS: PVec3);
 begin
-if HostClient.LW and HostClient.LC and (sv_unlag.Value <> 0) and (SVS.MaxClients > 1) and
-   HostClient.Active and (Index < SVS.MaxClients) and
+if HostClient.Active and HostClient.LW and HostClient.LC and (sv_unlag.Value <> 0) and
+   (SVS.MaxClients > 1) and (Index < SVS.MaxClients) and
    TruePositions[Index].Active and TruePositions[Index].UpdatePos then
  begin
   MinS := @TruePositions[Index].MinS;
@@ -1053,8 +1058,8 @@ var
  VOut, V: TVec3;
 begin
 MemSet(TruePositions, SizeOf(TruePositions), 0);
-if (DLLFunctions.AllowLagCompensation = 0) or (sv_unlag.Value = 0) or not C.LW or not C.LC or
-   (SVS.MaxClients <= 1) or not C.Active then
+if not C.Active or (sv_unlag.Value = 0) or not C.LW or not C.LC or
+   (SVS.MaxClients <= 1) or (DLLFunctions.AllowLagCompensation = 0) then
  begin
   NoFind := True;
   Exit;
@@ -1065,7 +1070,7 @@ else
 for I := 0 to SVS.MaxClients - 1 do
  begin
   P := @SVS.Clients[I];
-  if (P <> @C) and P.Active then
+  if P.Active and (P <> @C) then
    begin
     TP := @TruePositions[I];
     TP.Active := True;
@@ -1170,7 +1175,7 @@ for I := 0 to Frame.Pack.NumEnts - 1 do
   if (ES.Number >= 1) and (ES.Number <= SVS.MaxClients) then
    begin
     P := @SVS.Clients[ES.Number - 1];
-    if (P <> @C) and P.Active then
+    if P.Active and (P <> @C) then
      begin
       TP := @TruePositions[ES.Number - 1];
       if not TP.NoInterp then
@@ -1214,15 +1219,15 @@ if NoFind then
   Exit;
  end;
 
-if (DLLFunctions.AllowLagCompensation = 0) or (sv_unlag.Value = 0) or not C.LW or not C.LC or
-   (SVS.MaxClients <= 1) or not C.Active then
+if not C.Active or (sv_unlag.Value = 0) or not C.LW or not C.LC or
+   (SVS.MaxClients <= 1) or (DLLFunctions.AllowLagCompensation = 0) then
  Exit;
 
 for I := 0 to SVS.MaxClients - 1 do
  begin
   P := @SVS.Clients[I];
   TP := @TruePositions[I];
-  if (P <> @C) and P.Active and not VectorCompare(TP.OldOrigin, TP.TrueOrigin) and TP.UpdatePos then
+  if P.Active and (P <> @C) and not VectorCompare(TP.OldOrigin, TP.TrueOrigin) and TP.UpdatePos then
    if not TP.Active then
     DPrint(['SV_RestoreMove: Tried to restore inactive player #', I, ' ("', PLChar(@P.NetName), '").'])
    else
@@ -1314,12 +1319,12 @@ SV_AddToFatPAS(Origin, @SV.WorldModel.Nodes[0]);
 Result := @FatPAS;
 end;
 
-procedure PM_SV_PlaySound(Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
+procedure PM_SV_PlaySound(Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32);
 begin
 SV_StartSound(True, HostClient.Entity^, Channel, Sample, Trunc(Volume * 255), Attn, Flags, Pitch);
 end;
 
-function PM_SV_TraceTexture(Ground: Int32; const VStart, VEnd: TVec3): PLChar; cdecl;
+function PM_SV_TraceTexture(Ground: Int32; const VStart, VEnd: TVec3): PLChar;
 var
  PE: PPhysEnt;
 begin
@@ -1336,7 +1341,7 @@ if (Ground >= 0) and (Ground < PM.NumPhysEnt) then
 Result := nil;
 end;
 
-procedure PM_SV_PlaybackEventFull(Flags, ClientIndex: Int32; EventIndex: UInt16; Delay: Single; const Origin, Angles: TVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32); cdecl;
+procedure PM_SV_PlaybackEventFull(Flags, ClientIndex: Int32; EventIndex: UInt16; Delay: Single; const Origin, Angles: TVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32);
 begin
 EV_SV_Playback(Flags or FEV_NOTHOST, ClientIndex, EventIndex, Delay, Origin, Angles, FParam1, FParam2, IParam1, IParam2, BParam1, BParam2);
 end;
@@ -1468,7 +1473,7 @@ if Drop < 24 then
 for I := NumCmds - 1 downto 0 do
  Time := Time + Cmd[I].MSec / 1000;
 
-C.ClientTime := HostFrameTime + SV.Time - Time;
+C.ClientTime := SV.Time + HostFrameTime - Time;
 end;
 
 procedure SV_ParseMove(var C: TClient);
@@ -1491,21 +1496,26 @@ else
   AlreadyMoved := True;
   Frame := @HostClient.Frames[SVUpdateMask and HostClient.Netchan.IncomingAcknowledged];
   MemSet(UserCmdNil, SizeOf(UserCmdNil), 0);
-  RC := MSG_ReadCount + 1;
 
   Size := MSG_ReadByte;
   Checksum := MSG_ReadByte;
-  COM_UnMunge(Pointer(UInt(NetMessage.Data) + RC + 1), Size, HostClient.Netchan.IncomingSequence);
+  RC := MSG_ReadCount;
+  COM_UnMunge(Pointer(UInt(NetMessage.Data) + RC), Size, HostClient.Netchan.IncomingSequence);
 
   Flags := MSG_ReadByte;
   Loss := Flags and $7F;
-  C.VoiceLoopback := (Flags shr 7) > 0;
+  C.VoiceLoopback := (Flags shr 7) = 1;
 
   Backup := MSG_ReadByte;
   Cmds := MSG_ReadByte;
   Total := Backup + Cmds;
-  
-  NetDrop := NetDrop + 1 - Cmds;
+
+  if Cmds > 1 then
+   if NetDrop > Cmds then
+    NetDrop := NetDrop - Cmds - 1
+   else
+    NetDrop := 0;
+
   if Total > CMD_MAXBACKUP then
    begin
     Print(['SV_ParseMove: Too many commands (', Total, ') sent for user "', PLChar(@HostClient.NetName), '" (', NET_AdrToString(HostClient.Netchan.Addr, AdrBuf, SizeOf(AdrBuf)), ').']);
@@ -1526,12 +1536,12 @@ else
      if MSG_BadRead then
       Print(['SV_ParseMove: Client "', PLChar(@HostClient.NetName), '" (', NET_AdrToString(HostClient.Netchan.Addr, AdrBuf, SizeOf(AdrBuf)), ') sent a bogus command packet.'])
      else
-     { if Byte(COM_BlockSequenceCRCByte(Pointer(UInt(NetMessage.Data) + RC + 1), MSG_ReadCount - RC - 1, HostClient.Netchan.IncomingSequence)) <> Checksum then
+      if Byte(COM_BlockSequenceCRCByte(Pointer(UInt(NetMessage.Data) + RC), MSG_ReadCount - RC, HostClient.Netchan.IncomingSequence)) <> Checksum then
        begin
         Print(['SV_ParseMove: Failed command checksum for client "', PLChar(@HostClient.NetName), '" (', NET_AdrToString(HostClient.Netchan.Addr, AdrBuf, SizeOf(AdrBuf)), ').']);
         MSG_BadRead := True;
        end
-      else}
+      else     
        begin
         HostClient.PacketLoss := Loss;
         if SV.Paused or ((SVPlayer.V.Flags and FL_FROZEN) > 0) then

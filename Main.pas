@@ -4,13 +4,15 @@ unit Main;
 
 interface
 
+uses Default;
+
 procedure Start;
 function Frame: Boolean;
 procedure Shutdown;
 
 implementation
 
-uses Console, Host, StdUI, SysMain;
+uses Common, Console, Host, StdUI, SysMain;
 
 var
  ShutdownCalled: Boolean;
@@ -18,8 +20,7 @@ var
 procedure Start;
 begin
 UI_Init;
-Sys_InitServer;
-Sys_InitGame;
+Sys_Init;
 end;
 
 function Frame: Boolean;
@@ -42,11 +43,10 @@ initialization
 finalization
  if not ShutdownCalled and not InSysError then // unrequested shutdown
   begin
-   Print('Warning: Unrequested shutdown.');
+   Writeln('Warning: Unrequested shutdown.');
    Readln;
   end;
   
  Shutdown;
 
 end.
- 

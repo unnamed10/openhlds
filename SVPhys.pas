@@ -84,16 +84,10 @@ for I := 0 to 2 do
    end;
 
   if E.V.Velocity[I] > sv_maxvelocity.Value then
-   begin
-    DPrint(['Got a velocity too high at axis ', Axis[I], ' on entity ', PLChar(PRStrings + E.V.ClassName), '.']);
-    E.V.Velocity[I] := sv_maxvelocity.Value;
-   end
+   E.V.Velocity[I] := sv_maxvelocity.Value
   else
    if E.V.Velocity[I] < -sv_maxvelocity.Value then
-    begin
-     DPrint(['Got a velocity too low at axis ', Axis[I], ' on entity ', PLChar(PRStrings + E.V.ClassName), '.']);
-     E.V.Velocity[I] := -sv_maxvelocity.Value;
-    end;
+    E.V.Velocity[I] := -sv_maxvelocity.Value;
  end;
 end;
 
@@ -103,25 +97,24 @@ if (E.V.Flags and FL_KILLME) > 0 then
  begin
   ED_Free(E);
   Result := E.Free = 0;
-  Exit;
- end;
-
-if (E.V.NextThink > 0) and (HostFrameTime + SV.Time >= E.V.NextThink) then
- begin
-  if E.V.NextThink < SV.Time then
-   GlobalVars.Time := SV.Time
-  else
-   GlobalVars.Time := E.V.NextThink;
-
-  E.V.NextThink := 0;
-  DLLFunctions.Think(E);
-  if (E.V.Flags and FL_KILLME) > 0 then
-   ED_Free(E);
-
-  Result := E.Free = 0;
  end
 else
- Result := True;
+ if (E.V.NextThink > 0) and (SV.Time + HostFrameTime >= E.V.NextThink) then
+  begin
+   if E.V.NextThink > SV.Time then
+    GlobalVars.Time := E.V.NextThink
+   else
+    GlobalVars.Time := SV.Time;
+
+   E.V.NextThink := 0;
+   DLLFunctions.Think(E);
+   if (E.V.Flags and FL_KILLME) > 0 then
+    ED_Free(E);
+
+   Result := E.Free = 0;
+  end
+ else
+  Result := True;
 end;
 
 procedure SV_Impact(var E1, E2: TEdict; const Trace: TTrace);
@@ -132,13 +125,13 @@ if ((E1.V.Flags or E2.V.Flags) and FL_KILLME) = 0 then
   if FilterGroup(E1, E2) then
    Exit;
    
-  if E1.V.Solid <> 0 then
+  if E1.V.Solid <> SOLID_NOT then
    begin
     SV_SetGlobalTrace(Trace);
     DLLFunctions.Touch(E1, E2);
    end;
 
-  if E2.V.Solid <> 0 then
+  if E2.V.Solid <> SOLID_NOT then
    begin
     SV_SetGlobalTrace(Trace);
     DLLFunctions.Touch(E2, E1);
@@ -146,7 +139,7 @@ if ((E1.V.Flags or E2.V.Flags) and FL_KILLME) = 0 then
  end;
 end;
 
-function ClipVelocity(const VIn, Normal: TVec3; out VOut: TVec3; OverBounce: Single): UInt;
+function SV_ClipVelocity(const VIn, Normal: TVec3; out VOut: TVec3; OverBounce: Single): UInt;
 var
  Blocked, I: UInt;
  Backoff, F: Double;
@@ -198,7 +191,7 @@ for BumpCount := 0 to NumBumps - 1 do
    Break;
 
   for I := 0 to 2 do
-   VEnd[I] := TimeLeft * E.V.Velocity[I] + E.V.Origin[I];
+   VEnd[I] := E.V.Origin[I] + TimeLeft * E.V.Velocity[I];
 
   SV_Move(Trace, E.V.Origin, E.V.MinS, E.V.MaxS, VEnd, MOVE_NORMAL, @E, UseClip);
   if Trace.AllSolid <> 0 then
@@ -264,7 +257,7 @@ for BumpCount := 0 to NumBumps - 1 do
     else
      Bounce := 1;
 
-    ClipVelocity(OriginalVelocity, Planes[0], NewVelocity, Bounce);
+    SV_ClipVelocity(OriginalVelocity, Planes[0], NewVelocity, Bounce);
     E.V.Velocity := NewVelocity;
     OriginalVelocity := NewVelocity;
    end
@@ -272,7 +265,7 @@ for BumpCount := 0 to NumBumps - 1 do
    begin
     I := 0;
     repeat
-     ClipVelocity(OriginalVelocity, Planes[I], NewVelocity, 1);
+     SV_ClipVelocity(OriginalVelocity, Planes[I], NewVelocity, 1);
      J := 0;
      repeat
       if (J <> I) and (DotProduct(NewVelocity, Planes[J]) < 0) then
@@ -293,6 +286,7 @@ for BumpCount := 0 to NumBumps - 1 do
     else
      if NumPlanes <> 2 then
       begin
+       // E.V.Velocity := Vec3Origin; // fixme
        Result := Blocked;
        Exit;
       end
@@ -389,6 +383,7 @@ var
  P: PEdict;
  NumMoved, J: UInt;
  Trace: TTrace;
+ Solid: Int32;
 begin
 E.V.LTime := E.V.LTime + MoveTime;
 if (E.V.Velocity[0] = 0) and (E.V.Velocity[1] = 0) and (E.V.Velocity[2] = 0) then
@@ -432,9 +427,10 @@ for I := 1 to SV.NumEdicts - 1 do
   if NumMoved >= SV.MaxEdicts then
    Sys_Error('SV_PushMove: Out of edicts in simulator.');
 
+  Solid := E.V.Solid;
   E.V.Solid := SOLID_NOT;
   SV_PushEntity(Trace, P^, Move);
-  E.V.Solid := SOLID_BSP;
+  E.V.Solid := Solid;
 
   if (SV_TestEntityPosition(P^) = nil) or (P.V.MinS[0] = P.V.MaxS[0]) then
    Continue;
@@ -474,6 +470,7 @@ var
  P: PEdict;
  NumMoved, J: UInt;
  Trace: TTrace;
+ Solid: Int32;
 begin
 E.V.LTime := E.V.LTime + MoveTime;
 if (E.V.AVelocity[0] = 0) and (E.V.AVelocity[1] = 0) and (E.V.AVelocity[2] = 0) then
@@ -491,7 +488,7 @@ VectorAdd(E.V.Angles, Move, E.V.Angles);
 AngleVectorsTranspose(E.V.Angles, @TFwd, @TRight, @TUp);
 
 SV_LinkEdict(E, False);
-if (E.V.Solid = SOLID_NOT) or (SV.NumEdicts <= 1) then
+if E.V.Solid = SOLID_NOT then
  begin
   Result := True;
   Exit;
@@ -524,7 +521,7 @@ for I := 1 to SV.NumEdicts - 1 do
 
   if P.V.MoveType = MOVETYPE_PUSHSTEP then
    for J := 0 to 2 do
-    V[J] := ((P.V.AbsMin[J] + P.V.AbsMax[J]) * 0.5) - E.V.Origin[J]
+    V[J] := ((P.V.AbsMin[J] + P.V.AbsMax[J]) / 2) - E.V.Origin[J]
   else
    for J := 0 to 2 do
     V[J] := P.V.Origin[J] - E.V.Origin[J];
@@ -537,9 +534,10 @@ for I := 1 to SV.NumEdicts - 1 do
   V3[2] := DotProduct(TUp, V2);
   VectorSubtract(V3, V, V3);
 
+  Solid := E.V.Solid;
   E.V.Solid := SOLID_NOT;
   SV_PushEntity(Trace, P^, V3);
-  E.V.Solid := SOLID_BSP;
+  E.V.Solid := Solid;
 
   if P.V.MoveType <> MOVETYPE_PUSHSTEP then
    if (P.V.Flags and FL_CLIENT) > 0 then
@@ -870,7 +868,7 @@ else
      else
       Backoff := 1;
 
-    ClipVelocity(E.V.Velocity, Trace.Plane.Normal, E.V.Velocity, Backoff);
+    SV_ClipVelocity(E.V.Velocity, Trace.Plane.Normal, E.V.Velocity, Backoff);
     if Trace.Plane.Normal[2] > 0.7 then
      begin
       VectorAdd(E.V.BaseVelocity, E.V.Velocity, Move);

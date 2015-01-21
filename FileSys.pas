@@ -439,7 +439,7 @@ ParseDirectoryFromCmd('-game', GameDir, DefaultGameDir);
 
 FileSystem_SetGameDirectory(DefaultGameDir, GameDir);
 
-Info_SetValueForStarKey(Info_ServerInfo, '*gamedir', GameDir, SizeOf(ServerInfo));
+Info_SetValueForStarKey(@ServerInfo, '*gamedir', GameDir, SizeOf(ServerInfo));
 end;
 
 procedure FileSystem_Shutdown;

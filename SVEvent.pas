@@ -11,9 +11,11 @@ procedure EV_Playback(Flags: UInt; const E: TEdict; EventIndex: UInt16; Delay: S
 procedure EV_SV_Playback(Flags, ClientIndex: UInt; EventIndex: UInt16; Delay: Single; const Origin, Angles: TVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32);
 function EV_Precache(EventType: UInt; Name: PLChar): UInt16;
 
-procedure SV_ClearCaches;
+procedure SV_ClearPrecachedEvents;
 
 procedure SV_EmitEvents(var C: TClient; const Pack: TPacketEntities; var SB: TSizeBuf);
+
+procedure SV_ClearClientEvents(var C: TClient);
 
 implementation
 
@@ -28,7 +30,7 @@ begin
 if not C.FakeClient then
  begin
   SB.Name := 'Reliable Event';
-  SB.AllowOverflow := [];
+  SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
   SB.Data := @SBData;
   SB.CurrentSize := 0;
   SB.MaxSize := SizeOf(SBData);
@@ -61,8 +63,8 @@ procedure EV_Playback(Flags: UInt; const E: TEdict; EventIndex: UInt16; Delay: S
 var
  Event: TEvent;
  Point: TVec3;
- I, J, LeafNum: UInt;
- EntityNum: Int;
+ LeafNum: UInt;
+ I, J, EntityNum: Int;
  C: PClient;
  CE: PEventInfo;
  B: Boolean;
@@ -72,12 +74,12 @@ if (Flags and FEV_CLIENT) > 0 then
 
 MemSet(Event, SizeOf(Event), 0);
 
-if not VectorCompare(Origin, Vec3Origin) then
+if (@Origin <> nil) and not VectorCompare(Origin, Vec3Origin) then
  begin
   Event.Flags := Event.Flags or FEVENT_ORIGIN;
   Event.Origin := Origin;
  end;
-if not VectorCompare(Angles, Vec3Origin) then
+if (@Angles <> nil) and not VectorCompare(Angles, Vec3Origin) then
  begin
   Event.Flags := Event.Flags or FEVENT_ANGLES;
   Event.Angles := Angles;
@@ -116,71 +118,69 @@ else
     end;
 
    LeafNum := SV_PointLeafnum(Point);
-   if SVS.MaxClients > 0 then
-    for I := 0 to SVS.MaxClients - 1 do
-     begin
-      C := @SVS.Clients[I];
-      if not C.Active or not C.Spawned or not C.SendInfo or not C.Connected or C.FakeClient then
-       Continue;
+   for I := 0 to SVS.MaxClients - 1 do
+    begin
+     C := @SVS.Clients[I];
+     if not C.Active or not C.Spawned or not C.SendInfo or not C.Connected or C.FakeClient then
+      Continue;
 
-      if FilterGroup(E, C.Entity^) then
-       Continue;
+     if FilterGroup(E, C.Entity^) then
+      Continue;
 
-      if ((Flags and FEV_GLOBAL) = 0) and (@E <> nil) and not SV_ValidClientMulticast(C^, LeafNum, MULTICAST_PAS) then
-       Continue;
+     if ((Flags and FEV_GLOBAL) = 0) and (@E <> nil) and not SV_ValidClientMulticast(C^, LeafNum, MULTICAST_PAS) then
+      Continue;
 
-      if ((C = HostClient) and ((Flags and FEV_NOTHOST) > 0) and C.LW) or
-         ((C.Entity <> @E) and ((Flags and FEV_HOSTONLY) > 0)) then
-       Continue;
+     if ((C = HostClient) and ((Flags and FEV_NOTHOST) > 0) and C.LW) or
+        ((C.Entity <> @E) and ((Flags and FEV_HOSTONLY) > 0)) then
+      Continue;
 
-      if (Flags and FEV_RELIABLE) > 0 then
+     if (Flags and FEV_RELIABLE) > 0 then
+      begin
+       if @E <> nil then
+        EV_PlayReliableEvent(C^, EntityNum, EventIndex, Delay, Event)
+       else
+        EV_PlayReliableEvent(C^, 0, EventIndex, Delay, Event);
+
+       Continue;
+      end;
+
+     B := False;
+     if (Flags and FEV_UPDATE) > 0 then
+      for J := 0 to MAX_EVENT_QUEUE - 1 do
        begin
-        if @E <> nil then
-         EV_PlayReliableEvent(C^, EntityNum, EventIndex, Delay, Event)
-        else
-         EV_PlayReliableEvent(C^, 0, EventIndex, Delay, Event);
-
-        Continue;
+        CE := @C.Events[J];
+        if (CE.Index = EventIndex) and (CE.EntityIndex = EntityNum) then
+         begin
+          CE.PacketIndex := -1;
+          if @E <> nil then
+           CE.EntityIndex := EntityNum
+          else
+           CE.EntityIndex := -1;
+          CE.FireTime := Delay;
+          Move(Event, CE.Args, SizeOf(CE.Args));
+          B := True;
+          Break;
+         end;
        end;
 
-      B := False;
-      if (Flags and FEV_UPDATE) > 0 then
-       for J := 0 to MAX_EVENT_QUEUE - 1 do
-        begin
-         CE := @C.Events[J];
-         if (CE.Index = EventIndex) and (EntityNum <> -1) and (CE.EntityIndex = EntityNum) then
-          begin
-           CE.Index := EventIndex;
-           CE.PacketIndex := -1;
-           if @E <> nil then
-            CE.EntityIndex := EntityNum
-           else
-            CE.EntityIndex := -1;
-           Move(Event, CE.Args, SizeOf(CE.Args));
-           CE.FireTime := Delay;
-           B := True;
-           Break;
-          end;
-        end;
-
-      if not B then
-       for J := 0 to MAX_EVENT_QUEUE - 1 do
-        begin
-         CE := @C.Events[J];
-         if CE.Index = 0 then
-          begin
-           CE.Index := EventIndex;
-           CE.PacketIndex := -1;
-           if @E <> nil then
-            CE.EntityIndex := EntityNum
-           else
-            CE.EntityIndex := -1;
-           Move(Event, CE.Args, SizeOf(CE.Args));
-           CE.FireTime := Delay;
-           Break;
-          end;
-        end;
-     end;
+     if not B then
+      for J := 0 to MAX_EVENT_QUEUE - 1 do
+       begin
+        CE := @C.Events[J];
+        if CE.Index = 0 then
+         begin
+          CE.Index := EventIndex;
+          CE.PacketIndex := -1;
+          if @E <> nil then
+           CE.EntityIndex := EntityNum
+          else
+           CE.EntityIndex := -1;
+          CE.FireTime := Delay;           
+          Move(Event, CE.Args, SizeOf(CE.Args));
+          Break;
+         end;
+       end;
+    end;
   end;
 end;
 
@@ -202,17 +202,19 @@ var
  Size: UInt32;
 begin
 if Name = nil then
- Host_Error('EV_Precache: Invalid name pointer.')
+ Host_Error('EV_Precache: NULL pointer.')
 else
- if PR_IsEmptyString(Name) then
+ if Name^ <= ' ' then
   Host_Error(['EV_Precache: Bad string "', Name, '".'])
  else
-  if SV.State = SS_LOADING then
-   begin
-    for I := 1 to MAX_EVENTS - 1 do
-     begin
-      E := @SV.PrecachedEvents[I];
-      if E.Name = nil then
+  begin
+   for I := 1 to MAX_EVENTS - 1 do
+    begin
+     E := @SV.PrecachedEvents[I];
+     if E.Name = nil then
+      if SV.State <> SS_LOADING then
+       Break
+      else
        begin
         if EventType <> 1 then
          Host_Error('EV_Precache: The event type must be "1".');
@@ -230,32 +232,24 @@ else
         Result := I;
         Exit;
        end
-      else
-       if StrIComp(E.Name, Name) = 0 then
-        begin
-         Result := I;
-         Exit;
-        end;
-     end;
-    
-    Host_Error(['EV_Precache: Event "', Name, '" failed to precache because the item count is over the ', MAX_EVENTS, ' limit.']);
-   end
-  else
-   begin
-    for I := 1 to MAX_EVENTS - 1 do
-     if StrIComp(SV.PrecachedEvents[I].Name, Name) = 0 then
-      begin
-       Result := I;
-       Exit;
-      end;
+     else
+      if StrIComp(E.Name, Name) = 0 then
+       begin
+        Result := I;
+        Exit;
+       end;
+    end;
 
-     Host_Error(['EV_Precache: "', Name, '": Precache can only be done in spawn functions.']);
-   end;
+   if SV.State = SS_LOADING then
+    Host_Error(['EV_Precache: Event "', Name, '" failed to precache because the item count is over the ', MAX_EVENTS - 1, ' limit.'])
+   else
+    Host_Error(['EV_Precache: "', Name, '": Precache can only be done in spawn functions.']);
+  end;
 
 Result := 0;
 end;
 
-procedure SV_ClearCaches;
+procedure SV_ClearPrecachedEvents;
 var
  I: Int;
  E: PPrecachedEvent;
@@ -279,36 +273,29 @@ end;
 
 procedure SV_EmitEvents(var C: TClient; const Pack: TPacketEntities; var SB: TSizeBuf);
 var
- ArgsNil: TEvent;
+ OS: TEvent;
  Count: UInt;
  I, J, K: Int;
  E: PEventInfo;
 begin
-MemSet(ArgsNil, SizeOf(ArgsNil), 0);
+MemSet(OS, SizeOf(OS), 0);
 
 Count := 0;
 for I := 0 to MAX_EVENT_QUEUE - 1 do
- if C.Events[I].Index > 0 then
-  Inc(Count);
-
-if Count > 0 then
  begin
-  if Count > 31 then
-   Count := 31;
-
-  for I := 0 to MAX_EVENT_QUEUE - 1 do
+  E := @C.Events[I];
+  if E.Index > 0 then
    begin
-    E := @C.Events[I];
-    if E.Index = 0 then
-     Continue;
+    Inc(Count);
 
     K := -1;
-    for J := 0 to Pack.NumEnts - 1 do
-     if Pack.Ents[J].Number = UInt(E.EntityIndex) then
-      begin
-       K := J;
-       Break;
-      end;
+    if E.EntityIndex <> -1 then
+     for J := 0 to Pack.NumEnts - 1 do
+      if Pack.Ents[J].Number = UInt(E.EntityIndex) then
+       begin
+        K := J;
+        Break;
+       end;
 
     if K = -1 then
      begin
@@ -324,58 +311,77 @@ if Count > 0 then
       if (E.Args.Flags and FEVENT_ANGLES) = 0 then
        E.Args.Angles := Vec3Origin;
      end;
-   end;
-
-  MSG_WriteByte(SB, SVC_EVENT);
-  MSG_StartBitWriting(SB);
-  MSG_WriteBits(Count, 5);
-  K := 0;
-  for I := 0 to MAX_EVENT_QUEUE - 1 do
+   end
+  else
    begin
-    E := @C.Events[I];
-    if E.Index = 0 then
-     begin
-      E.PacketIndex := -1;
-      E.EntityIndex := -1;
-     end
+    E.PacketIndex := -1;
+    E.EntityIndex := -1;
+   end;
+ end;
+
+if Count > 31 then
+ Count := 31;
+
+MSG_WriteByte(SB, SVC_EVENT);
+MSG_StartBitWriting(SB);
+MSG_WriteBits(Count, 5);
+
+K := 0;
+for I := 0 to MAX_EVENT_QUEUE - 1 do
+ begin
+  E := @C.Events[I];
+  if E.Index > 0 then
+   begin
+    MSG_WriteBits(E.Index, 10);
+
+    if E.PacketIndex = -1 then
+     MSG_WriteBits(0, 1)
     else
      begin
-      if UInt(K) < Count then
+      MSG_WriteBits(1, 1);
+      MSG_WriteBits(E.PacketIndex, 11);
+
+      if CompareMem(@OS, @E.Args, SizeOf(E.Args)) then
+       MSG_WriteBits(0, 1)
+      else
        begin
-        MSG_WriteBits(E.Index, 10);
-        if E.PacketIndex = -1 then
-         MSG_WriteBits(0, 1)
-        else
-         begin
-          MSG_WriteBits(1, 1);
-          MSG_WriteBits(E.PacketIndex, 11);
-
-          if CompareMem(@ArgsNil, @E.Args, SizeOf(E.Args)) then
-           MSG_WriteBits(0, 1)
-          else
-           begin
-            MSG_WriteBits(1, 1);
-            Delta_WriteDelta(@ArgsNil, @E.Args, True, EventDelta^, nil);
-           end;
-         end;
-
-        if E.FireTime = 0 then
-         MSG_WriteBits(0, 1)
-        else
-         begin
-          MSG_WriteBits(1, 1);
-          MSG_WriteBits(Trunc(E.FireTime * 100), 16);
-         end;
+        MSG_WriteBits(1, 1);
+        Delta_WriteDelta(@OS, @E.Args, True, EventDelta^, nil);
        end;
-
-      E.Index := 0;
-      E.PacketIndex := -1;
-      E.EntityIndex := -1;
-      Inc(K);
      end;
-   end;
 
-  MSG_EndBitWriting;
+    if E.FireTime = 0 then
+     MSG_WriteBits(0, 1)
+    else
+     begin
+      MSG_WriteBits(1, 1);
+      MSG_WriteBits(Trunc(E.FireTime * 100), 16);
+     end;
+
+    E.Index := 0;
+    E.PacketIndex := -1;
+    E.EntityIndex := -1;
+
+    Inc(K);
+    if UInt(K) >= Count then
+     Break;
+   end;
+ end;
+
+MSG_EndBitWriting;
+end;
+
+procedure SV_ClearClientEvents(var C: TClient);
+var
+ I: Int;
+ E: PEventInfo;
+begin
+for I := 0 to MAX_EVENT_QUEUE - 1 do
+ begin
+  E := @C.Events[I];
+  E.Index := 0;
+  E.PacketIndex := -1;
+  E.EntityIndex := -1;
  end;
 end;
 

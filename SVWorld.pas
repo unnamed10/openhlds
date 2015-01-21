@@ -64,6 +64,7 @@ for I := 0 to High(BoxClipNodes) do
 
   BoxPlanes[I].PlaneType := I shr 1;
   BoxPlanes[I].Normal[I shr 1] := 1;
+  BoxPlanes[I].SignBits := 0;
  end;
 end;
 
@@ -82,16 +83,21 @@ end;
 function SV_HullForBSP(const E: TEdict; const MinS, MaxS: TVec3; out VOut: TVec3): PHull;
 var
  M: PModel;
- P: Single;
+ F: Single;
 begin
 M := SV.PrecachedModels[E.V.ModelIndex];
 if (M = nil) or (M.ModelType <> ModBrush) then
- Sys_Error(['Hit a "', PLChar(PRStrings + E.V.ClassName), '" with no model (', PLChar(PRStrings + E.V.Model), ').']);
+ Sys_Error(['Hit a ', PLChar(PRStrings + E.V.ClassName), ' with no model (', PLChar(PRStrings + E.V.Model), ').']);
 
-P := MaxS[0] - MinS[0];
-if P > 8 then
+F := MaxS[0] - MinS[0];
+if F <= 8 then
  begin
-  if P > 36 then
+  Result := @M.Hulls[0];
+  VOut := Result.ClipMinS;
+ end
+else
+ begin
+  if F > 36 then
    Result := @M.Hulls[2]
   else
    if MaxS[2] - MinS[2] > 36 then
@@ -100,11 +106,6 @@ if P > 8 then
     Result := @M.Hulls[3];
 
   VectorSubtract(Result.ClipMinS, MinS, VOut);
- end
-else
- begin
-  Result := @M.Hulls[0];
-  VOut := Result.ClipMinS;
  end;
 
 VectorAdd(VOut, E.V.Origin, VOut);
@@ -226,13 +227,10 @@ while UInt(L) <> UInt(@Node.TriggerEdicts) do
   Touch := EdictFromArea(L^);
   L := L.Next;
 
-  if Touch = @E then
+  if (Touch = @E) or (Touch.V.Solid <> SOLID_TRIGGER) then
    Continue;
 
   if FilterGroup(Touch^, E) then
-   Continue;
-
-  if Touch.V.Solid <> SOLID_TRIGGER then
    Continue;
 
   if (E.V.AbsMin[0] > Touch.V.AbsMax[0]) or
@@ -271,15 +269,13 @@ var
 begin
 if Node.Contents <> CONTENTS_SOLID then
  if Node.Contents < 0 then
-  begin
-   if E.NumLeafs < MAX_ENT_LEAFS then
-    begin
-     E.LeafNums[E.NumLeafs] := (UInt(@Node) - UInt(SV.WorldModel.Leafs)) div SizeOf(TMLeaf) - 1;
-     Inc(E.NumLeafs);
-    end
-   else
-    E.NumLeafs := MAX_ENT_LEAFS + 1;
-  end
+  if E.NumLeafs < MAX_ENT_LEAFS then
+   begin
+    E.LeafNums[E.NumLeafs] := (UInt(@Node) - UInt(SV.WorldModel.Leafs)) div SizeOf(TMLeaf) - 1;
+    Inc(E.NumLeafs);
+   end
+  else
+   E.NumLeafs := MAX_ENT_LEAFS + 1
  else
   begin
    if Node.Plane.PlaneType > 2 then
@@ -314,7 +310,7 @@ if E.Area.Prev <> nil then
 if (@E <> SV.Edicts) and (E.Free = 0) then
  begin
   DLLFunctions.SetAbsBox(E);
-  if (E.V.MoveType = MOVETYPE_FOLLOW) and (E.V.AimEnt <> nil) then
+  if (E.V.MoveType = MOVETYPE_FOLLOW) and (E.V.AimEnt <> nil) and (E.V.AimEnt.Free = 0) then
    begin
     E.HeadNode := E.V.AimEnt.HeadNode;
     E.NumLeafs := E.V.AimEnt.NumLeafs;
@@ -336,7 +332,7 @@ if (@E <> SV.Edicts) and (E.Free = 0) then
      end;
    end;
 
-  if (E.V.Solid <> SOLID_NOT) or (E.V.Skin < -1) then
+  if (E.V.Solid <> SOLID_NOT) or (E.V.Skin < CONTENTS_EMPTY) then
    if (E.V.Solid = SOLID_BSP) and (SV.PrecachedModels[E.V.ModelIndex] = nil) and (PLChar(PRStrings + E.V.Model)^ = #0) then
     DPrint(['Inserted "', PLChar(PRStrings + E.V.ClassName), '" with no model.'])
    else
@@ -383,9 +379,7 @@ while UInt(L) <> UInt(@Node.SolidEdicts) do
   if E.V.Solid <> SOLID_NOT then
    Continue;
 
-  if (E.V.GroupInfo <> 0) and
-     (((GroupOp = GROUP_OP_AND) and ((E.V.GroupInfo and GroupMask) = 0)) or
-      ((GroupOp = GROUP_OP_NAND) and ((E.V.GroupInfo and GroupMask) > 0))) then
+  if FilterGroup(E.V.GroupInfo, GroupMask) then
    Continue;
 
   M := SV.PrecachedModels[E.V.ModelIndex];
@@ -478,7 +472,7 @@ if Num < 0 then
  end
 else
  begin
-  if (Num < Hull.FirstClipNode) or (Num > Hull.LastClipNode) or (Hull.Planes = nil) then
+  if (Num < Hull.FirstClipNode) or (Num > Hull.LastClipNode) then
    Sys_Error('SV_RecursiveHullCheck: Bad node number.');
 
   Node := @Hull.ClipNodes[Num];
@@ -553,7 +547,6 @@ else
          begin
           Trace.Fraction := MidF;
           Trace.EndPos := Mid;
-          DPrint('Backup past 0.');
           Result := False;
           Exit;
          end;
@@ -576,7 +569,7 @@ var
  Hull: PHull;
  VOut, StartL, EndL, Fwd, Right, Up, V1, V2: TVec3;
  HullNum: Int32;
- B, B2: Boolean;
+ B: Boolean;
  I: Int;
  T: TTrace;
  LastHull: UInt;
@@ -588,18 +581,15 @@ Trace.EndPos := VEnd;
 
 P := SV.PrecachedModels[E.V.ModelIndex];
 if P = nil then
- begin
-  Sys_Error(['SV_SingleClipMoveToEntity: No model for "', PLChar(PRStrings + E.V.ClassName), '".']);
-  Exit;
- end
+ Sys_Error(['SV_ClipMoveToEntity: No model for "', PLChar(PRStrings + E.V.ClassName), '".']);
+
+if P.ModelType = ModStudio then
+ Hull := SV_HullForStudioModel(E, MinS, MaxS, VOut, HullNum)
 else
- if P.ModelType = ModStudio then
-  Hull := SV_HullForStudioModel(E, MinS, MaxS, VOut, HullNum)
- else
-  begin
-   Hull := SV_HullForEntity(E, MinS, MaxS, VOut);
-   HullNum := 1;
-  end;
+ begin
+  Hull := SV_HullForEntity(E, MinS, MaxS, VOut);
+  HullNum := 1;
+ end;
 
 VectorSubtract(VStart, VOut, StartL);
 VectorSubtract(VEnd, VOut, EndL);
@@ -633,9 +623,8 @@ else
     SV_RecursiveHullCheck(Hull^, Hull.FirstClipNode, 0, 1, StartL, EndL, T);
     if (I = 0) or (T.AllSolid > 0) or (T.StartSolid > 0) or (T.Fraction < Trace.Fraction) then
      begin
-      B2 := Trace.StartSolid <> 0;
       Move(T, Trace, SizeOf(Trace));
-      if B2 then
+      if T.StartSolid <> 0 then
        Trace.StartSolid := 1;
       LastHull := I;
      end;
@@ -651,7 +640,7 @@ if Trace.Fraction <> 1 then
     AngleVectorsTranspose(E.V.Angles, @Fwd, @Right, @Up);
     V1[0] := DotProduct(Trace.Plane.Normal, Fwd);
     V1[1] := DotProduct(Trace.Plane.Normal, Right);
-    V1[2] := DotProduct(Trace.Plane.Normal, Up); // is this way
+    V1[2] := DotProduct(Trace.Plane.Normal, Up);
     Trace.Plane.Normal := V1;
    end;
 
@@ -693,13 +682,13 @@ while UInt(L) <> UInt(@Node.SolidEdicts) do
    Sys_Error('SV_ClipToLinks: Trigger in clipping list.');
 
   if (@NewDLLFunctions.ShouldCollide <> nil) and (NewDLLFunctions.ShouldCollide(E^, Clip.PassEdict^) = 0) then
-   Exit; // maybe "continue" would be better
-
-  if ((E.V.Solid = SOLID_BSP) and ((E.V.Flags and FL_MONSTERCLIP) > 0) and (Clip.HullNum = 0)) or
-     ((E.V.Solid <> SOLID_BSP) and (Clip.I1 = 1) and (E.V.MoveType <> MOVETYPE_PUSHSTEP)) then
    Continue;
 
-  if (Clip.I2 <> 0) and (E.V.RenderMode <> 0) and ((E.V.Flags and FL_WORLDBRUSH) = 0) then
+  if ((E.V.Solid = SOLID_BSP) and ((E.V.Flags and FL_MONSTERCLIP) > 0) and (Clip.HullNum = 0)) or
+     (Clip.IgnoreMonsters and (E.V.Solid <> SOLID_BSP) and (E.V.MoveType <> MOVETYPE_PUSHSTEP)) then
+   Continue;
+
+  if Clip.IgnoreGlass and (E.V.RenderMode <> 0) and ((E.V.Flags and FL_WORLDBRUSH) = 0) then
    Continue;
 
   if (Clip.BoxMinS[0] > E.V.AbsMax[0]) or
@@ -815,14 +804,14 @@ function SV_MoveNoEnts(out Trace: TTrace; const VStart, MinS, MaxS, VEnd: TVec3;
 var
  Clip: TMoveClip;
  ClipEnd: TVec3;
- F: Single;
+ OldFraction: Single;
 begin
 MemSet(Clip, SizeOf(Clip), 0);
 SV_ClipMoveToEntity(Clip.Trace, SV.Edicts[0], VStart, MinS, MaxS, VEnd);
 if Clip.Trace.Fraction <> 0 then
  begin
   ClipEnd := Clip.Trace.EndPos;
-  F := Clip.Trace.Fraction;
+  OldFraction := Clip.Trace.Fraction;
   Clip.Trace.Fraction := 1;
 
   Clip.VEnd := @ClipEnd;
@@ -832,14 +821,13 @@ if Clip.Trace.Fraction <> 0 then
   Clip.MinS2 := MinS;
   Clip.MaxS2 := MaxS;  
   Clip.PassEdict := PassEdict;
-  Clip.HullNum := 0;
-  Clip.I1 := MoveType and $FF;
-  Clip.I2 := MoveType shr 8;
+  Clip.IgnoreMonsters := (MoveType and $FF) = MOVE_NOMONSTERS;
+  Clip.IgnoreGlass := (MoveType shr 8) = 1;
 
   SV_MoveBounds(VStart, Clip.MinS2, Clip.MaxS2, ClipEnd, Clip.BoxMinS, Clip.BoxMaxS);
   SV_ClipToWorldBrush(SVAreaNodes[0], Clip);
   GlobalVars.TraceEnt := Clip.Trace.Ent;
-  Clip.Trace.Fraction := Clip.Trace.Fraction * F;
+  Clip.Trace.Fraction := Clip.Trace.Fraction * OldFraction;
  end;
 
 Trace := Clip.Trace;
@@ -867,8 +855,8 @@ if Clip.Trace.Fraction <> 0 then
   Clip.MaxS := @MaxS;
   Clip.PassEdict := PassEdict;
   Clip.HullNum := UInt(MonsterClip);
-  Clip.I1 := MoveType and $FF;
-  Clip.I2 := MoveType shr 8;
+  Clip.IgnoreMonsters := (MoveType and $FF) = MOVE_NOMONSTERS;
+  Clip.IgnoreGlass := (MoveType shr 8) = 1;
 
   if MoveType = MOVE_MISSILE then
    for I := 0 to 2 do

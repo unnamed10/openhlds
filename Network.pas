@@ -6,8 +6,6 @@ interface
 
 uses SysUtils, {$IFDEF MSWINDOWS} Windows, Winsock, {$ELSE} Libc, KernelIoctl, {$ENDIF} Default, SDK;
 
-function Q_ntohs(I: UInt16): UInt16;
-
 function NET_AdrToString(const A: TNetAdr; out Buf; L: UInt): PLChar; overload;
 function NET_BaseAdrToString(const A: TNetAdr; out Buf; L: UInt): PLChar;
 function NET_CompareBaseAdr(const A1, A2: TNetAdr): Boolean;
@@ -46,12 +44,9 @@ procedure Netchan_Clear(var C: TNetchan);
 procedure Netchan_CreateFragments(var C: TNetchan; var SB: TSizeBuf);
 procedure Netchan_CreateFileFragmentsFromBuffer(var C: TNetchan; Name: PLChar; Buffer: Pointer; Size: UInt);
 
-function Netchan_CreateFileFragments(Server: Boolean; C: PNetchan; Name: PLChar): Boolean;
+function Netchan_CreateFileFragments(var C: TNetchan; Name: PLChar): Boolean;
 
 procedure Netchan_FlushIncoming(var C: TNetchan; Index: UInt);
-
-function Netchan_CompressPacket(SB: PSizeBuf): Int;
-function Netchan_DecompressPacket(SB: PSizeBuf): Int;
 
 procedure Netchan_Setup(Source: TNetSrc; var C: TNetchan; const Addr: TNetAdr; ClientID: Int; ClientPtr: PClient; Func: TFragmentSizeFunc);
 
@@ -75,32 +70,31 @@ var
  InFrom, NetFrom: TNetAdr;
 
  NoIP: Boolean = False;
- NoIPX: Boolean = True;
 
- LocalIP, LocalIPX: TNetAdr;
+ LocalIP: TNetAdr;
 
  clockwindow: TCVar = (Name: 'clockwindow'; Data: '0.5');
 
- NetDrop: UInt32 = 0;
+ NetDrop: UInt32 = 0; // amount of dropped incoming packets
 
 implementation
 
 uses BZip2, Common, Console, FileSys, Memory, MsgBuf, Host, HostCmds, Resource, Server, SVClient, SysArgs, SysMain;
 
-type
- ip_mreq = record
-  imr_multiaddr: in_addr;
-  imr_interface: in_addr;
- end;
- PIpMReq = ^TIpMReq;
- TIpMReq = ip_mreq;
+const
+ IPTOS_LOWDELAY = 16;
+ SD_RECEIVE = 0;
+ SD_SEND = 1;
+ SD_BOTH = 2;
+ INADDR_NONE = -1;
 
 var
  OldConfig: Boolean = False;
- FirstConfig: Boolean = True;
- NetConfigured: Boolean = False;
 
- IPSockets, IPXSockets: array[TNetSrc] of TSocket;
+ FirstInit: Boolean = True;
+ NetInit: Boolean = False;
+
+ IPSockets: array[TNetSrc] of TSocket;
 
  InMsgBuffer, NetMsgBuffer: array[1..NETMSG_SIZE] of Byte;
 
@@ -110,8 +104,7 @@ var
  ip_hostport: TCVar = (Name: 'ip_hostport'; Data: '0');
  hostport: TCVar = (Name: 'hostport'; Data: '0');
  defport: TCVar = (Name: 'port'; Data: '27015');
- ipx_hostport: TCVar = (Name: 'ipx_hostport'; Data: '0');
- 
+
  fakelag: TCVar = (Name: 'fakelag'; Data: '0');
  fakeloss: TCVar = (Name: 'fakeloss'; Data: '0');
 
@@ -138,26 +131,19 @@ var
 
  LossCount: array[TNetSrc] of UInt32 = (0, 0, 0);
 
- SendSeqNumber: Int32 = 1;
- // split
- SplitCtx: record
-  InSeq: Int32;
-  TotalPackets, RecvBytes: UInt32;
-  Data: array[1..MAX_NETPACKETLEN] of Byte;
+ SplitCtx: array[0..MAX_SPLIT_CTX - 1] of TSplitContext;
+ CurrentCtx: UInt = Low(SplitCtx);
 
-  // integrated
-  Sequences: array[0..MAX_SPLIT - 1] of Int32;
- end = (Sequences: (-1, -1, -1, -1, -1));
+ SplitSeq: Int32 = 1; // outgoing split sequence
 
  // netchan stuff
- net_log: TCVar = (Name: 'net_log'; Data: '0'); 
  net_showpackets: TCVar = (Name: 'net_showpackets'; Data: '0');
  net_showdrop: TCVar = (Name: 'net_showdrop'; Data: '0');
  net_chokeloop: TCVar = (Name: 'net_chokeloop'; Data: '0');
  sv_filetransfercompression: TCVar = (Name: 'sv_filetransfercompression'; Data: '1');
  sv_filetransfermaxsize: TCVar = (Name: 'sv_filetransfermaxsize'; Data: '20000000');
  sv_filereceivemaxsize: TCVar = (Name: 'sv_filereceivemaxsize'; Data: '1000000');
- sv_receivedecalsonly: TCVar = (Name: 'sv_receivedecalsonly'; Data: '0');
+ sv_receivedecalsonly: TCVar = (Name: 'sv_receivedecalsonly'; Data: '1');
 
  // 0 - disabled
  // 1 - normal packets only
@@ -186,45 +172,35 @@ if UseThread and ThreadInit then
  Sys_LeaveCS(ThreadCS);
 end;
 
-function Q_ntohs(I: UInt16): UInt16;
+function ntohs(I: UInt16): UInt16;
 begin
 Result := (I shl 8) or (I shr 8);
 end;
 
-function Q_htons(I: UInt16): UInt16;
+function htons(I: UInt16): UInt16;
 begin
 Result := (I shl 8) or (I shr 8);
 end;
 
 procedure NetadrToSockadr(const A: TNetAdr; out S: TSockAddr);
 begin
-MemSet(S, SizeOf(S), 0);
 case A.AddrType of
  NA_BROADCAST:
   begin
    S.sin_family := AF_INET;
    S.sin_port := A.Port;
-   UInt32(S.sin_addr.S_addr) := $FFFFFFFF;
+   Int32(S.sin_addr.S_addr) := -1;
+   MemSet(S.sin_zero, SizeOf(S.sin_zero), 0);
   end;
  NA_IP:
   begin
    S.sin_family := AF_INET;
    S.sin_port := A.Port;
-   UInt32(S.sin_addr.S_addr) := UInt32(A.IP);
+   Int32(S.sin_addr.S_addr) := PInt32(@A.IP)^;
+   MemSet(S.sin_zero, SizeOf(S.sin_zero), 0);
   end;
- NA_IPX:
-  begin
-   S.sin_family := AF_IPX;
-   Move(A.IPX, S.sa_data[0], SizeOf(A.IPX));
-   PUInt16(@S.sa_data[10])^ := A.Port;
-  end;
- NA_BROADCAST_IPX:
-  begin
-   S.sin_family := AF_IPX;
-   Move(A.IPX, S.sa_data[0], 4);
-   MemSet(Pointer(@A.IPX[5])^, 6, $FF);
-   PUInt16(@S.sa_data[10])^ := A.Port;
-  end;
+ else
+  MemSet(S, SizeOf(S), 0);
 end;  
 end;
 
@@ -233,16 +209,11 @@ begin
 if S.sa_family = AF_INET then
  begin
   A.AddrType := NA_IP;
-  PUInt32(@A.IP)^ := PUInt32(@S.sin_addr)^;
+  PInt32(@A.IP)^ := Int32(S.sin_addr.S_addr);
   A.Port := S.sin_port;
  end
 else
- if S.sa_family = AF_IPX then
-  begin
-   A.AddrType := NA_IPX;
-   Move(S.sa_data, A.IPX, SizeOf(A.IPX));
-   A.Port := PUInt16(@S.sa_data[10])^;
-  end;
+ MemSet(A, SizeOf(A), 0);
 end;
 
 function NET_CompareAdr(const A1, A2: TNetAdr): Boolean;
@@ -252,9 +223,8 @@ if A1.AddrType <> A2.AddrType then
 else
  case A1.AddrType of
   NA_LOOPBACK: Result := True;
-  NA_IP: Result := (UInt32(A1.IP) = UInt32(A2.IP)) and (A1.Port = A2.Port);
-  NA_IPX: Result := CompareMem(@A1.IPX, @A2.IPX, SizeOf(A2.IPX)) and (A1.Port = A2.Port);
-  else Result := False;  
+  NA_IP: Result := (PUInt32(@A1.IP)^ = PUInt32(@A2.IP)^) and (A1.Port = A2.Port);
+  else Result := False;
  end;
 end;
 
@@ -264,8 +234,8 @@ if A1.AddrType <> A2.AddrType then
  Result := False
 else
  case A1.AddrType of
-  NA_LOOPBACK, NA_IPX: Result := True;
-  NA_IP: Result := (A1.IP[1] = A2.IP[1]) and (A1.IP[2] = A2.IP[2]);
+  NA_LOOPBACK: Result := True;
+  NA_IP: Result := PUInt16(@A1.IP)^ = PUInt16(@A2.IP)^;
   else Result := False;
  end;
 end;
@@ -274,7 +244,7 @@ end;
 function NET_IsReservedAdr(const A: TNetAdr): Boolean;
 begin
 case A.AddrType of
- NA_LOOPBACK, NA_IPX: Result := True;
+ NA_LOOPBACK: Result := True;
  NA_IP: Result := (A.IP[1] = 10) or (A.IP[1] = 127) or
                   ((A.IP[1] = 172) and (A.IP[2] >= 16) and (A.IP[2] <= 31)) or
                   ((A.IP[1] = 192) and (A.IP[2] = 168));
@@ -289,63 +259,16 @@ if A1.AddrType <> A2.AddrType then
 else
  case A1.AddrType of
   NA_LOOPBACK: Result := True;
-  NA_IP: Result := UInt32(A1.IP) = UInt32(A2.IP);
-  NA_IPX: Result := CompareMem(@A1.IPX, @A2.IPX, SizeOf(A2.IPX));
-  else Result := False;  
+  NA_IP: Result := PUInt32(@A1.IP)^ = PUInt32(@A2.IP)^;
+  else Result := False;
  end;
 end;
 
-// not threadsafe, but can be used by gamedll
-var
- AdrBuf: array[1..64] of LChar;
-
-function NET_AdrToString2(const A: TNetAdr): PLChar;
-var
- I: UInt;
- S: PLChar;
-begin
-MemSet(AdrBuf, SizeOf(AdrBuf), 0);
-if A.AddrType = NA_LOOPBACK then
- StrLCopy(@AdrBuf, 'loopback', SizeOf(AdrBuf) - 1)
-else
- if A.AddrType = NA_IP then
-  begin
-   S := @AdrBuf;
-
-   for I := 1 to 4 do
-    begin
-     S := IntToStrE(A.IP[I], S^, 4); // 3 + 1
-     S^ := '.';
-     Inc(UInt(S));
-    end;
-
-   PLChar(UInt(S) - 1)^ := ':';
-   IntToStr(Q_ntohs(A.Port), S^, 6);
-  end
- else
-  begin
-   S := @AdrBuf;
-   for I := 1 to 4 do
-    begin
-     ByteToHex(A.IPX[I], S);
-     Inc(UInt(S), 2);
-    end;
-   S^ := ':';
-   Inc(UInt(S));
-   for I := 5 to 10 do
-    begin
-     ByteToHex(A.IPX[I], S);
-     Inc(UInt(S), 2);
-    end;
-   S^ := ':';
-   Inc(UInt(S));
-   IntToStr(Q_ntohs(A.Port), S^, 6);
-  end;
-
-Result := @AdrBuf;
-end;
-
 function NET_AdrToString(const A: TNetAdr; out Buf; L: UInt): PLChar; overload;
+var
+ I: Int;
+ S: PLChar;
+ AdrBuf: array[1..64] of LChar;
 begin
 if (@Buf = nil) or (L = 0) then
  Result := nil
@@ -353,90 +276,99 @@ else
  begin
   case A.AddrType of
    NA_LOOPBACK: StrLCopy(@Buf, 'loopback', L - 1);
-   NA_IP, NA_BROADCAST: FormatBuf(Buf, L, '%d.%d.%d.%d:%d%s', Length('%d.%d.%d.%d:%d%s'),
-                                  [A.IP[1], A.IP[2], A.IP[3], A.IP[4], Q_ntohs(A.Port), #0]);
-   NA_IPX, NA_BROADCAST_IPX: FormatBuf(Buf, L, '%02x%02x%02x%02x:%02x%02x%02x%02x%02x%02x:%d%s', Length('%02x%02x%02x%02x:%02x%02x%02x%02x%02x%02x:%d%s'),
-                             [A.IPX[1], A.IPX[2], A.IPX[3], A.IPX[4], A.IPX[5], A.IPX[6], A.IPX[7], A.IPX[8], A.IPX[9], A.IPX[10], Q_ntohs(A.Port), #0]);
+   NA_IP, NA_BROADCAST:
+    begin
+     S := @AdrBuf;
+
+     for I := 1 to 4 do
+      begin
+       S := IntToStrE(A.IP[I], S^, 4);
+       S^ := '.';
+       Inc(UInt(S));
+      end;
+
+     PLChar(UInt(S) - 1)^ := ':';
+     IntToStr(ntohs(A.Port), S^, 6);
+     StrLCopy(@Buf, @AdrBuf, L - 1);
+    end;
    else StrLCopy(@Buf, '(bad address)', L - 1);
   end;
 
-  PLChar(UInt(@Buf) + L - 1)^ := #0;
   Result := @Buf;
  end;
 end;
 
 function NET_BaseAdrToString(const A: TNetAdr; out Buf; L: UInt): PLChar;
+var
+ I: Int;
+ S: PLChar;
+ AdrBuf: array[1..64] of LChar;
 begin
-if L = 0 then
- begin
-  Result := nil;
-  Exit;
- end;
-
-if A.AddrType = NA_LOOPBACK then
- StrLCopy(@Buf, 'loopback', L - 1)
+if (@Buf = nil) or (L = 0) then
+ Result := nil
 else
- if A.AddrType = NA_IP then
-  FormatBuf(Buf, L, '%d.%d.%d.%d%s', Length('%d.%d.%d.%d%s'),
-            [A.IP[1], A.IP[2], A.IP[3], A.IP[4], #0])
- else
-  FormatBuf(Buf, L, '%02x%02x%02x%02x:%02x%02x%02x%02x%02x%02x%s', Length('%02x%02x%02x%02x:%02x%02x%02x%02x%02x%02x%s'),
-            [A.IPX[1], A.IPX[2], A.IPX[3], A.IPX[4], A.IPX[5], A.IPX[6], A.IPX[7], A.IPX[8], A.IPX[9], A.IPX[10], #0]);
+ begin
+  case A.AddrType of
+   NA_LOOPBACK: StrLCopy(@Buf, 'loopback', L - 1);
+   NA_IP, NA_BROADCAST:
+    begin
+     S := @AdrBuf;
 
-Result := @Buf;
+     for I := 1 to 4 do
+      begin
+       S := IntToStrE(A.IP[I], S^, 4);
+       S^ := '.';
+       Inc(UInt(S));
+      end;
+
+     PLChar(UInt(S) - 1)^ := #0;
+     StrLCopy(@Buf, @AdrBuf, L - 1);
+    end;
+   else StrLCopy(@Buf, '(bad address)', L - 1);
+  end;
+
+  Result := @Buf;
+ end;
 end;
 
 function NET_StringToSockaddr(Name: PLChar; out S: TSockAddr): Boolean;
-const
- Ofs: array[0..9] of UInt =
-      (0, 2, 4, 6, 9, 11, 13, 15, 17, 19);
 var
- I: UInt;
- Buf: array[1..256] of LChar;
- P: PLChar;
- J: UInt32;
+ Buf: array[1..1024] of LChar;
+ S2: PLChar;
+ I: Int32;
  E: PHostEnt;
 begin
 Result := True;
-MemSet(S, SizeOf(S), 0);
-if (StrLen(Name) > 24) and (PLChar(UInt(Name) + 8)^ = ':') and
-   (PLChar(UInt(Name) + 21)^ = ':') then
+
+S.sin_family := AF_INET;
+MemSet(S.sin_zero, SizeOf(S.sin_zero), 0);
+
+StrLCopy(@Buf, Name, SizeOf(Buf) - 1);
+S2 := StrPos(@Buf, ':');
+if S2 <> nil then
  begin
-  S.sin_family := AF_IPX;
-  for I := Low(Ofs) to High(Ofs) do
-   PByte(@S.sa_data[I])^ := HexToByte(PLChar(UInt(Name) + Ofs[I]));
-  PUInt16(@S.sa_data[High(Ofs) + 1])^ := Q_htons(StrToInt(PLChar(UInt(Name) + 22)));
+  S2^ := #0;
+  S.sin_port := StrToInt(PLChar(UInt(S2) + 1));
+  if S.sin_port <> 0 then
+   S.sin_port := htons(S.sin_port);
  end
 else
+ S.sin_port := 0;
+
+I := inet_addr(@Buf);
+if I = INADDR_NONE then
  begin
-  S.sin_family := AF_INET;
-  S.sin_port := 0;
-  P := StrLCopy(@Buf, Name, SizeOf(Buf) - 1);
-  Buf[High(Buf)] := #0;
-
-  while P^ > #0 do
+  E := gethostbyname(@Buf);
+  if (E = nil) or (E.h_addr_list = nil) or (E.h_addr_list^ = nil) then
    begin
-    if P^ = ':' then
-     begin
-      P^ := #0;
-      S.sin_port := Q_htons(StrToInt(PLChar(UInt(P) + 1)));
-     end;
-
-    Inc(UInt(P));
-   end;
-   
-  J := UInt32(inet_addr(@Buf));
-  if J = UInt32(INADDR_NONE) then
-   begin
-    E := gethostbyname(@Buf);
-    if E = nil then
-     Result := False
-    else
-     J := PUInt32(PPointer(E.h_addr_list)^)^;
-   end;
-
-  PUInt32(@S.sin_addr)^ := J;
+    S.sin_addr.S_addr := 0;
+    Result := False;
+   end
+  else
+   I := PInt32(E.h_addr_list^)^;
  end;
+
+S.sin_addr.S_addr := I;
 end;
 
 function NET_StringToAdr(S: PLChar; out A: TNetAdr): Boolean;
@@ -577,8 +509,8 @@ procedure NET_RemoveFromPacketList(P: PLagPacket);
 begin
 P.Next.Prev := P.Prev;
 P.Prev.Next := P.Next;
-P.Prev := nil;
 P.Next := nil;
+P.Prev := nil;
 end;
 
 function NET_CountLaggedList(P: PLagPacket): Int;
@@ -607,7 +539,7 @@ while (P2 <> nil) and (P2 <> P) do
   P3 := P2.Prev;
   NET_RemoveFromPacketList(P2);
   if P2.Data <> nil then
-   Mem_FreeAndNil(P2.Data);
+   Mem_Free(P2.Data);
   Mem_Free(P2);
   P2 := P3;
  end;
@@ -640,14 +572,6 @@ procedure NET_AdjustLag;
 var
  X, D, SD: Double;
 begin
-X := RealTime - LastLagTime;
-if X < 0 then
- X := 0
-else
- if X > 0.1 then
-  X := 0.1;
-
-LastLagTime := RealTime;
 if not AllowCheats and (fakelag.Value <> 0) then
  begin
   Print('Server must enable cheats to activate fakelag.');
@@ -657,6 +581,15 @@ if not AllowCheats and (fakelag.Value <> 0) then
 else
  if AllowCheats and (fakelag.Value <> FakeLagTime) then
   begin
+   X := RealTime - LastLagTime;
+   if X < 0 then
+    X := 0
+   else
+    if X > 0.1 then
+     X := 0.1;
+
+   LastLagTime := RealTime;
+
    D := fakelag.Value - FakeLagTime;
    SD := X * 200;
    if Abs(D) < SD then
@@ -674,7 +607,7 @@ var
 begin
 if FakeLagTime <= 0 then
  begin
-  NET_ClearLagData(True, True);
+  NET_ClearLagData(False, True);
   Result := Add;
   Exit;
  end;
@@ -733,26 +666,73 @@ end;
 procedure NET_FlushSocket(Source: TNetSrc);
 var
  S: TSocket;
- FL: Int32;
+ AddrLen: Int32;
  Buf: array[1..MAX_NETPACKETLEN] of Byte;
  A: TSockAddr;
 begin
 S := IPSockets[Source];
 if S > 0 then
  begin
-  FL := SizeOf(A);
+  AddrLen := SizeOf(A);
   {$IFDEF MSWINDOWS}
-  while recvfrom(S, Buf, SizeOf(Buf), 0, A, FL) > 0 do ;
+  while recvfrom(S, Buf, SizeOf(Buf), 0, A, AddrLen) > 0 do ;
   {$ELSE}
-  while recvfrom(S, Buf, SizeOf(Buf), 0, @A, @FL) > 0 do ;
+  while recvfrom(S, Buf, SizeOf(Buf), 0, @A, @AddrLen) > 0 do ;
   {$ENDIF}
  end;
 end;
 
-function NET_GetLong(Data: Pointer; Size: UInt; PSize: PUInt32): Boolean;
+function NET_FindSplitContext(const Addr: TNetAdr): PSplitContext;
+var
+ I, J, Index: UInt;
+ P: PSplitContext; 
+ MinTime: Double;
+begin
+MinTime := RealTime;
+Index := 0;
+
+for I := 0 to MAX_SPLIT_CTX - 1 do
+ begin
+  J := (CurrentCtx - I) and (MAX_SPLIT_CTX - 1);
+  P := @SplitCtx[J];
+  if NET_CompareAdr(P.Addr, Addr) then
+   begin
+    Result := P;
+    Exit;
+   end
+  else
+   if P.Time < MinTime then
+    begin
+     MinTime := P.Time;
+     Index := J;
+    end;
+ end;
+
+P := @SplitCtx[Index];
+P.Addr := Addr;
+P.PacketsLeft := -1;
+CurrentCtx := Index;
+Result := P;
+end;
+
+procedure NET_ClearSplitContexts;
+var
+ I: UInt;
+ P: PSplitContext;
+begin
+for I := 0 to MAX_SPLIT_CTX - 1 do
+ begin
+  P := @SplitCtx[I];
+  MemSet(P.Addr, SizeOf(P.Addr), 0);
+  P.Time := 0;
+ end;
+end;
+
+function NET_GetLong(Data: Pointer; Size: UInt; var OutSize: UInt32; const Addr: TNetAdr): Boolean;
 var
  Header: TSplitHeader;
  CurSplit, MaxSplit: UInt;
+ P: PSplitContext;
  I: Int;
 begin
 Result := False;
@@ -764,60 +744,64 @@ MaxSplit := Header.Index and $F;
 if CurSplit >= MAX_SPLIT then
  DPrint(['Malformed split packet current number (', CurSplit, ').'])
 else
- if MaxSplit > MAX_SPLIT then
+ if (MaxSplit > MAX_SPLIT) or (MaxSplit = 0) then
   DPrint(['Malformed split packet max number (', MaxSplit, ').'])
  else
   begin
-   if (SplitCtx.InSeq = OUTOFBAND_TAG) or (SplitCtx.InSeq <> Header.InSeq) then
+   P := NET_FindSplitContext(Addr);
+   if (P.PacketsLeft < 1) or (P.Sequence <> Header.SplitSeq) then
     begin
-     SplitCtx.InSeq := Header.InSeq;
-     SplitCtx.TotalPackets := MaxSplit;
      if net_showpackets.Value = 4 then
-      DPrint(['Restarting split packet context. Number of packets = ', MaxSplit, ', sequence = ', Header.InSeq, '.']);
-    end;
+      if P.PacketsLeft = -1 then
+       DPrint(['New split context with ', MaxSplit, ' packets, sequence = ', Header.SplitSeq, '.'])
+      else
+       DPrint(['Restarting split context with ', MaxSplit, ' packets, sequence = ', Header.SplitSeq, '.']);
+
+     P.Time := RealTime;
+     P.PacketsLeft := MaxSplit;
+     P.Sequence := Header.SplitSeq;
+     P.Size := 0;
+     P.Ack := [];
+    end
+   else
+    if net_showpackets.Value = 4 then
+     DPrint(['Found existing split context with ', MaxSplit, ' packets, sequence = ', Header.SplitSeq, '.']);
 
    Dec(Size, SizeOf(Header));
-   if SplitCtx.Sequences[CurSplit] = Header.InSeq then
-    DPrint(['Ignoring duplicated split packet #', CurSplit + 1, ' of ', MaxSplit, ' (size = ', Size, ' bytes, sequence = ', Header.InSeq, ').'])
+   if CurSplit in P.Ack then
+    DPrint(['Received duplicated split fragment (num = ', CurSplit + 1, '/', MaxSplit, ', sequence = ', Header.SplitSeq, '), ignoring.'])
    else
-    begin
-     if CurSplit = MaxSplit - 1 then
-      SplitCtx.RecvBytes := Size + (MaxSplit - 1) * MAX_SPLIT_FRAGLEN;
+    if P.Size + Size > MAX_NETPACKETLEN then
+     DPrint(['Split context overflowed with ', P.Size + Size, ' bytes (num = ', CurSplit + 1, '/', MaxSplit, ', sequence = ', Header.SplitSeq, ').'])
+    else
+     begin
+      if net_showpackets.Value = 4 then
+       DPrint(['Received split fragment (num = ', CurSplit + 1, '/', MaxSplit, ', sequence = ', Header.SplitSeq, ').']);
 
-     Dec(SplitCtx.TotalPackets);
-     SplitCtx.Sequences[CurSplit] := Header.InSeq;
-     if net_showpackets.Value = 4 then
-      Print(['Incoming split packet #', CurSplit + 1, ' of ', MaxSplit, ' (size = ', Size, ' bytes, sequence = ', Header.InSeq, ').']);
+      Dec(P.PacketsLeft);
+      Include(P.Ack, CurSplit);
+      Move(Pointer(UInt(Data) + SizeOf(Header))^, Pointer(UInt(@P.Data) + P.Size)^, Size);
+      Inc(P.Size, Size);
 
-     if Size + MAX_SPLIT_FRAGLEN * CurSplit > MAX_NETPACKETLEN then
-      begin
-       DPrint(['Malformed split packet size (got ', Size, ' bytes, have ', MAX_SPLIT_FRAGLEN * CurSplit, ' bytes).']);
-       Exit;
-      end
-     else
-      Move(Pointer(UInt(Data) + SizeOf(Header))^, Pointer(UInt(@SplitCtx.Data) + MAX_SPLIT_FRAGLEN * CurSplit)^, Size);
-    end;
-
-   if SplitCtx.TotalPackets = 0 then // All packets were received.
-    begin
-     for I := 0 to MaxSplit - 1 do
-      if SplitCtx.Sequences[I] <> SplitCtx.InSeq then
+      if P.PacketsLeft = 0 then
        begin
-        DPrint(['Received a split packet without all ', MaxSplit, ' parts; part #', I + 1, ' had wrong sequence: ', SplitCtx.Sequences[I], ' (should be ', SplitCtx.InSeq, ').']);
-        Exit;
-       end;
+        for I := 0 to MaxSplit - 1 do
+         if not (I in P.Ack) then
+          begin
+           DPrint(['Received a split packet without all ', MaxSplit, ' parts; sequence = ', Header.SplitSeq, ', ignoring.']);
+           Exit;
+          end;
 
-     SplitCtx.InSeq := OUTOFBAND_TAG;
-     if SplitCtx.RecvBytes <= MAX_NETPACKETLEN then
-      begin
-       Move(SplitCtx.Data, Data^, SplitCtx.RecvBytes);
-       if PSize <> nil then
-        PSize^ := SplitCtx.RecvBytes;
-       Result := True;
-      end
-     else
-      DPrint(['Received a split packet too large (', SplitCtx.RecvBytes, ' bytes, allowed no more than ', MAX_NETPACKETLEN, ').']);
-    end;
+        DPrint(['Received a split packet with sequence = ', Header.SplitSeq, '.']);
+
+        Move(P.Data, Data^, P.Size);
+        OutSize := P.Size;
+
+        MemSet(P.Addr, SizeOf(P.Addr), 0);
+        P.Time := 0;
+        Result := True;
+       end;
+     end;
   end;
 end;
 
@@ -827,70 +811,58 @@ var
  Buf: array[1..MAX_NETPACKETLEN] of Byte;
  NetAdrBuf: array[1..64] of LChar;
  A: TSockAddr;
- FL: Int32;
- I, Size: UInt;
+ AddrLen: Int32;
+ Size: UInt;
  E: Int;
 begin
-Size := 0;
-for I := 1 to 2 do
+S := IPSockets[Source];
+if S > 0 then
  begin
-  if I = 1 then
-   S := IPSockets[Source]
-  else
-   S := IPXSockets[Source];
-  
-  if S > 0 then
+  AddrLen := SizeOf(TSockAddr);
+  {$IFDEF MSWINDOWS}
+  E := recvfrom(S, Buf, SizeOf(Buf), 0, A, AddrLen);
+  {$ELSE}
+  E := recvfrom(S, Buf, SizeOf(Buf), 0, @A, @AddrLen);
+  {$ENDIF}
+  if E = SOCKET_ERROR then
    begin
-    FL := 16;
-    {$IFDEF MSWINDOWS}
-    E := recvfrom(S, Buf, SizeOf(Buf), 0, A, FL);
-    {$ELSE}
-    E := recvfrom(S, Buf, SizeOf(Buf), 0, @A, @FL);
-    {$ENDIF}
-    if E = SOCKET_ERROR then
-     begin
-      E := NET_LastError;
-      if E = {$IFDEF MSWINDOWS}WSAEMSGSIZE{$ELSE}EMSGSIZE{$ENDIF} then
-       DPrint(['NET_QueuePacket: Ignoring oversized network message, allowed no more than ', MAX_NETPACKETLEN, ' bytes.'])
-      else
-       {$IFDEF MSWINDOWS}
-       if (E <> WSAEWOULDBLOCK) and (E <> WSAECONNRESET) and (E <> WSAECONNREFUSED) then
-       {$ELSE}
-       if (E <> EAGAIN) and (E <> ECONNRESET) and (E <> ECONNREFUSED) then
-       {$ENDIF}
-        Print(['NET_QueuePacket: Network error "', NET_ErrorString(E), '".']);
-     end
+    E := NET_LastError;
+    if E = {$IFDEF MSWINDOWS}WSAEMSGSIZE{$ELSE}EMSGSIZE{$ENDIF} then
+     DPrint(['NET_QueuePacket: Ignoring oversized network message, allowed no more than ', MAX_NETPACKETLEN, ' bytes.'])
+    else
+     {$IFDEF MSWINDOWS}
+     if (E <> WSAEWOULDBLOCK) and (E <> WSAECONNRESET) and (E <> WSAECONNREFUSED) then
+     {$ELSE}
+     if (E <> EAGAIN) and (E <> ECONNRESET) and (E <> ECONNREFUSED) then
+     {$ENDIF}
+      Print(['NET_QueuePacket: Network error "', NET_ErrorString(E), '".']);
+   end
+  else
+   begin
+    SockadrToNetadr(A, InFrom);
+    if E > SizeOf(Buf) then
+     DPrint(['NET_QueuePacket: Oversized packet from ', NET_AdrToString(InFrom, NetAdrBuf, SizeOf(NetAdrBuf)), '.'])
     else
      begin
-      SockadrToNetadr(A, InFrom);
-      if E >= SizeOf(Buf) then
-       DPrint(['NET_QueuePacket: Oversized packet from ', NET_AdrToString(InFrom, NetAdrBuf, SizeOf(NetAdrBuf)), '.'])
+      Size := E;
+      NET_TransferRawData(InMessage, @Buf, Size);
+      if PInt32(InMessage.Data)^ = SPLIT_TAG then
+       if InMessage.CurrentSize >= SizeOf(TSplitHeader) then
+        Result := NET_GetLong(InMessage.Data, Size, InMessage.CurrentSize, InFrom)
+       else
+        begin
+         DPrint(['NET_QueuePacket: Invalid incoming split packet length (', InMessage.CurrentSize, '), should be no lesser than ', SizeOf(TSplitHeader), '.']);
+         Result := NET_LagPacket(False, Source, nil, nil);
+        end
       else
-       begin
-        Size := E;
-        Break;
-       end;
-     end;
-   end;
+       Result := NET_LagPacket(True, Source, @InFrom, @InMessage);
 
-  if I = 2 then
-   begin
-    Result := NET_LagPacket(False, Source, nil, nil);
-    Exit;
+      Exit;
+     end;
    end;
  end;
 
-NET_TransferRawData(InMessage, @Buf, Size);
-if PInt32(InMessage.Data)^ = SPLIT_TAG then
- if InMessage.CurrentSize >= SizeOf(TSplitHeader) then
-  Result := NET_GetLong(InMessage.Data, Size, @InMessage.CurrentSize)
- else
-  begin
-   DPrint(['NET_QueuePacket: Invalid incoming split packet length (', InMessage.CurrentSize, ', should be no lesser than ', SizeOf(TSplitHeader), ').']);
-   Result := False; 
-  end
-else
- Result := NET_LagPacket(True, Source, @InFrom, @InMessage);
+Result := NET_LagPacket(False, Source, nil, nil);
 end;
 
 function NET_Sleep: Int;
@@ -907,14 +879,6 @@ FD_ZERO(FDSet);
 for I := Low(I) to High(I) do
  begin
   S := IPSockets[I];
-  if S > 0 then
-   begin
-    FD_SET(S, FDSet);
-    if S > Num then
-     Num := S;
-   end;
-
-  S := IPXSockets[I];
   if S > 0 then
    begin
     FD_SET(S, FDSet);
@@ -973,7 +937,7 @@ while True do
      Break;
    end;
 
-  Sys_Sleep(1);
+  Sys_Sleep(0);
  end;
 
 Result := 0;
@@ -1006,9 +970,6 @@ if UseThread and ThreadInit then
   ThreadInit := False;
  end;
 end;
-
-var
- FirstNotice: Boolean = True;
  
 function NET_AllocMsg(Size: UInt): PNetQueue;
 var
@@ -1016,10 +977,10 @@ var
 begin
 if (Size <= NET_QUEUESIZE) and (NormalQueue <> nil) then
  begin
-  Result := NormalQueue;
-  Result.Size := Size;
-  Result.Normal := True;
-  NormalQueue := NormalQueue.Prev;
+  P := NormalQueue;
+  P.Size := Size;
+  P.Normal := True;
+  NormalQueue := P.Prev;
  end
 else
  begin
@@ -1027,8 +988,9 @@ else
   P.Data := Mem_ZeroAlloc(Size);
   P.Size := Size;
   P.Normal := False;
-  Result := P;
  end;
+
+Result := P;
 end;
 
 procedure NET_FreeMsg(P: PNetQueue);
@@ -1043,48 +1005,6 @@ else
   Mem_Free(P.Data);
   Mem_Free(P);
  end;
-end;
-
-function NET_GetPacket(Source: TNetSrc): Boolean;
-var
- B: Boolean;
- P: PNetQueue;
-begin
-NET_AdjustLag;
-NET_ThreadLock;
-if NET_GetLoopPacket(Source, InFrom, InMessage) then
- B := NET_LagPacket(True, Source, @InFrom, @InMessage)
-else
- if UseThread or not NET_QueuePacket(Source) then
-  B := NET_LagPacket(False, Source, nil, nil)
- else
-  B := True;
-
-if B then
- begin
-  NetMessage.CurrentSize := InMessage.CurrentSize;
-  Move(InMessage.Data^, NetMessage.Data^, NetMessage.CurrentSize);
-  Move(InFrom, NetFrom, SizeOf(NetFrom));
-  Result := True;
- end
-else
- begin
-  P := NetMessages[Source];
-  if P <> nil then
-   begin
-    NetMessages[Source] := P.Prev;
-    NetMessage.CurrentSize := P.Size;
-    Move(P.Data^, NetMessage.Data^, P.Size);
-    Move(P.Addr, NetFrom, SizeOf(NetFrom));
-    MSG_ReadCount := 0;
-    NET_FreeMsg(P);
-    Result := True;
-   end
-  else
-   Result := False;
- end;
-
-NET_ThreadUnlock;
 end;
 
 procedure NET_AllocateQueues;
@@ -1135,103 +1055,145 @@ while P <> nil do
 NormalQueue := nil;
 end;
 
-function NET_SendLong(Source: TNetSrc; Socket: TSocket; Buffer: Pointer; Size: UInt; Flags: Int; var SockAddr: TSockAddr; SLength: UInt): Int;
+function NET_GetPacket(Source: TNetSrc): Boolean;
+var
+ B: Boolean;
+ P: PNetQueue;
+begin
+NET_AdjustLag;
+NET_ThreadLock;
+if NET_GetLoopPacket(Source, InFrom, InMessage) then
+ B := NET_LagPacket(True, Source, @InFrom, @InMessage)
+else
+ if UseThread or not NET_QueuePacket(Source) then
+  B := NET_LagPacket(False, Source, nil, nil)
+ else
+  B := True;
+
+if B then
+ begin
+  NetMessage.CurrentSize := InMessage.CurrentSize;
+  Move(InMessage.Data^, NetMessage.Data^, NetMessage.CurrentSize);
+  Move(InFrom, NetFrom, SizeOf(NetFrom));
+  Result := True;
+ end
+else
+ begin
+  P := NetMessages[Source];
+  if P <> nil then
+   begin
+    NetMessages[Source] := P.Prev;
+    NetMessage.CurrentSize := P.Size;
+    Move(P.Data^, NetMessage.Data^, NetMessage.CurrentSize);
+    Move(P.Addr, NetFrom, SizeOf(NetFrom));
+    NET_FreeMsg(P);
+    Result := True;
+   end
+  else
+   Result := False;
+ end;
+
+NET_ThreadUnlock;
+end;
+
+function NET_SendLong(Source: TNetSrc; Socket: TSocket; Buffer: Pointer; Size: UInt; const NetAdr: TNetAdr; var SockAddr: TSockAddr; AddrLength: UInt): Int;
 var
  Buf: packed record
   Header: TSplitHeader;
   Data: array[0..MAX_SPLIT_FRAGLEN - 1] of Byte;
  end;
  CurSplit, MaxSplit, SentBytes, RemainingBytes, ThisBytes: UInt;
- I: Int;
- A: TNetAdr;
+ E: Int;
+ ShowPackets: Boolean;
  AdrBuf: array[1..64] of LChar;
 begin
-if (Source <> NS_SERVER) or (Size <= MAX_FRAGLEN) then
- Result := sendto(Socket, Buffer^, Size, Flags, SockAddr, SLength)
+if (Size <= MAX_FRAGLEN) or (Source <> NS_SERVER) then
+ Result := sendto(Socket, Buffer^, Size, 0, SockAddr, AddrLength)
 else
  begin
-  Inc(SendSeqNumber);
-  if SendSeqNumber < 0 then
-   SendSeqNumber := 1;
-  Buf.Header.OutSeq := SPLIT_TAG;
-  Buf.Header.InSeq := SendSeqNumber;
-
-  CurSplit := 0;
   MaxSplit := (Size + MAX_SPLIT_FRAGLEN - 1) div MAX_SPLIT_FRAGLEN;
-
-  SentBytes := 0;
-  RemainingBytes := Size;
-  while RemainingBytes > 0 do
+  if MaxSplit > MAX_SPLIT then
    begin
-    if RemainingBytes > MAX_SPLIT_FRAGLEN then
-     ThisBytes := MAX_SPLIT_FRAGLEN
-    else
-     ThisBytes := RemainingBytes;
+    DPrint(['Refusing to send split packet to ', NET_AdrToString(NetAdr, AdrBuf, SizeOf(AdrBuf)), ', the packet is too big (', Size, ' bytes).']);
+    Result := 0;    
+   end
+  else
+   begin
+    Inc(SplitSeq);
+    if SplitSeq < 0 then
+     SplitSeq := 1;
+    Buf.Header.Seq := SPLIT_TAG;
+    Buf.Header.SplitSeq := SplitSeq;
 
-    Buf.Header.Index := MaxSplit or (CurSplit shl 4);
-    Move(Buffer^, Buf.Data, ThisBytes);
-    if net_showpackets.Value = 4 then
+    CurSplit := 0;
+    SentBytes := 0;
+    ShowPackets := net_showpackets.Value = 4;
+    RemainingBytes := Size;
+    while RemainingBytes > 0 do
      begin
-      SockadrToNetadr(SockAddr, A);
-      DPrint(['Sending split packet #', CurSplit + 1, ' of ', MaxSplit, ' (size = ', ThisBytes, ' bytes, sequence = ', SendSeqNumber, ') to ', NET_AdrToString(A, AdrBuf, SizeOf(AdrBuf)), '.']);
+      if RemainingBytes > MAX_SPLIT_FRAGLEN then
+       ThisBytes := MAX_SPLIT_FRAGLEN
+      else
+       ThisBytes := RemainingBytes;
+
+      Buf.Header.Index := MaxSplit or (CurSplit shl 4);
+      Move(Buffer^, Buf.Data, ThisBytes);
+      if ShowPackets then
+       DPrint(['Sending split packet #', CurSplit + 1, ' of ', MaxSplit, ' (size = ', ThisBytes, ' bytes, sequence = ', SplitSeq, ') to ', NET_AdrToString(NetAdr, AdrBuf, SizeOf(AdrBuf)), '.']);
+
+      E := sendto(Socket, Buf, SizeOf(TSplitHeader) + ThisBytes, 0, SockAddr, AddrLength);
+      if E < 0 then
+       begin
+        Result := E;
+        Exit;
+       end
+      else
+       begin
+        Inc(SentBytes, E);
+        Inc(CurSplit);
+        Dec(RemainingBytes, ThisBytes);
+        Inc(UInt(Buffer), ThisBytes);
+       end;
      end;
-
-    I := sendto(Socket, Buf, ThisBytes + SizeOf(Buf.Header), Flags, SockAddr, SLength);
-    if I < 0 then
-     begin
-      Result := I;
-      Exit;
-     end;
-
-    if UInt(I) >= ThisBytes then
-     Inc(SentBytes, ThisBytes);
-
-    Inc(CurSplit);
-    Dec(RemainingBytes, ThisBytes);
-    Inc(UInt(Buffer), ThisBytes);
+     
+    Result := SentBytes;
    end;
-
-  Result := SentBytes;
  end;
 end;
 
 procedure NET_SendPacket(Source: TNetSrc; Size: UInt; Buffer: Pointer; const Dest: TNetAdr);
 var
+ AddrType: TNetAdrType;
  S: TSocket;
  A: TSockAddr;
- I: Int;
+ E: Int;
 begin
-S := 0;
-case Dest.AddrType of
- NA_LOOPBACK:
-  begin
-   NET_SendLoopPacket(Source, Size, Buffer);
-   Exit;
-  end;
- NA_BROADCAST, NA_IP:
-  S := IPSockets[Source];
- NA_IPX, NA_BROADCAST_IPX:
-  S := IPXSockets[Source];
- else
-  Sys_Error(['NET_SendPacket: Bad address type (', UInt(Dest.AddrType), ').']);
-end;
-
-if S > 0 then
+AddrType := Dest.AddrType;
+if (AddrType = NA_BROADCAST) or (AddrType = NA_IP) then
  begin
-  NetadrToSockadr(Dest, A);
-  if NET_SendLong(Source, S, Buffer, Size, 0, A, SizeOf(A)) = SOCKET_ERROR then
+  S := IPSockets[Source];
+  if S > 0 then
    begin
-    I := NET_LastError;
-    {$IFDEF MSWINDOWS}
-    if (I <> WSAEWOULDBLOCK) and (I <> WSAECONNREFUSED) and (I <> WSAECONNRESET) and
-       ((I <> WSAEADDRNOTAVAIL) or ((Dest.AddrType <> NA_BROADCAST) and (Dest.AddrType <> NA_BROADCAST_IPX))) then
-    {$ELSE}
-    if (I <> EAGAIN) and (I <> ECONNREFUSED) and (I <> ECONNRESET) and
-       ((I <> EADDRNOTAVAIL) or ((Dest.AddrType <> NA_BROADCAST) and (Dest.AddrType <> NA_BROADCAST_IPX))) then
-    {$ENDIF}
-     Print(['NET_SendPacket ERROR: ', NET_ErrorString(I)]);
+    NetadrToSockadr(Dest, A);
+    if NET_SendLong(Source, S, Buffer, Size, Dest, A, SizeOf(A)) = SOCKET_ERROR then
+     begin
+      E := NET_LastError;
+      {$IFDEF MSWINDOWS}
+      if (E <> WSAEWOULDBLOCK) and (E <> WSAECONNREFUSED) and (E <> WSAECONNRESET) and
+         ((E <> WSAEADDRNOTAVAIL) or (Dest.AddrType <> NA_BROADCAST)) then
+      {$ELSE}
+      if (E <> EAGAIN) and (E <> ECONNREFUSED) and (E <> ECONNRESET) and
+         ((E <> EADDRNOTAVAIL) or (Dest.AddrType <> NA_BROADCAST)) then
+      {$ENDIF}
+       Print(['NET_SendPacket: Network error "', NET_ErrorString(E), '".']);
+     end;
    end;
- end;
+ end
+else
+ if AddrType = NA_LOOPBACK then
+  NET_SendLoopPacket(Source, Size, Buffer)
+ else
+  Sys_Error(['NET_SendPacket: Bad address type (', UInt(AddrType), ').']);
 end;
 
 function NET_IPSocket(IP: PLChar; Port: UInt16; Reuse: Boolean): TSocket;
@@ -1239,59 +1201,63 @@ var
  S: TSocket;
  A: TSockAddr;
  I: Int32;
+ E: Int;
 begin
-Result := 0;
-I := 1;
 S := socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 if S = INVALID_SOCKET then
  begin
-  I := NET_LastError;
-  if I <> {$IFDEF MSWINDOWS}WSAEAFNOSUPPORT{$ELSE}EAFNOSUPPORT{$ENDIF} then
-   Print(['Warning: NET_IPSocket: Can''t allocate socket on port ', Port, ' - ', NET_ErrorString(I), '.']);
+  E := NET_LastError;
+  if E <> {$IFDEF MSWINDOWS}WSAEAFNOSUPPORT{$ELSE}EAFNOSUPPORT{$ENDIF} then
+   Print(['Error: Can''t allocate socket on port ', Port, ' - ', NET_ErrorString(E), '.']);
  end
 else
- if {$IFDEF MSWINDOWS}ioctlsocket{$ELSE}ioctl{$ENDIF}(S, FIONBIO, I) = SOCKET_ERROR then
-  Print(['Warning: NET_IPSocket: Can''t set non-blocking I/O for socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.'])
- else
-  if setsockopt(S, SOL_SOCKET, SO_BROADCAST, @I, SizeOf(I)) = SOCKET_ERROR then
-   Print(['Warning: NET_IPSocket: Can''t disable broadcast sending for socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.'])
+ begin
+  I := 1;
+  if {$IFDEF MSWINDOWS}ioctlsocket{$ELSE}ioctl{$ENDIF}(S, FIONBIO, I) = SOCKET_ERROR then
+   Print(['Error: Can''t set non-blocking I/O for socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.'])
   else
-   if (Reuse or (COM_CheckParm('-reuse') > 0)) and (setsockopt(S, SOL_SOCKET, SO_REUSEADDR, @I, SizeOf(I)) = SOCKET_ERROR) then
-    Print(['Warning: NET_IPSocket: Can''t allow local address reuse for socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.'])
-   else
-    begin
-     if COM_CheckParm('-tos') > 0 then
-      begin
-       I := 16;
-       Print('Enabling LOWDELAY TOS option.');
-       if setsockopt(S, IPPROTO_IP, 1, @I, SizeOf(I)) = SOCKET_ERROR then
-        begin
-         Print(['Warning: NET_IPSocket: Can''t set LOWDELAY TOS for socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.']);
-         Exit;
-        end;
-      end;
+   begin
+    I := 1;
+    if setsockopt(S, SOL_SOCKET, SO_BROADCAST, @I, SizeOf(I)) = SOCKET_ERROR then
+     Print(['Warning: Can''t enable broadcast capability for socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.']);
 
-     MemSet(A, SizeOf(A), 0);
-     A.sin_family := AF_INET;
-     if (IP <> nil) and (IP^ > #0) and (StrIComp(IP, 'localhost') <> 0) then
-      NET_StringToSockaddr(IP, A);
+    I := 1;
+    if (Reuse or (COM_CheckParm('-reuse') > 0)) and (setsockopt(S, SOL_SOCKET, SO_REUSEADDR, @I, SizeOf(I)) = SOCKET_ERROR) then
+     Print(['Warning: Can''t allow address reuse for socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.']);
 
-     if Port < High(Port) then
-      A.sin_port := Q_htons(Port);
+    I := Int32(COM_CheckParm('-loopback') > 0);
+    if setsockopt(S, IPPROTO_IP, IP_MULTICAST_LOOP, @I, SizeOf(I)) = SOCKET_ERROR then
+     Print(['Warning: Can''t set multicast loopback for socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.']);
+    
+    if COM_CheckParm('-tos') > 0 then
+     begin
+      I := IPTOS_LOWDELAY;
+      if setsockopt(S, IPPROTO_IP, IP_TOS, @I, SizeOf(I)) = SOCKET_ERROR then
+       Print(['Warning: Can''t set LOWDELAY TOS for socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.'])
+      else
+       Print('LOWDELAY TOS option enabled.');
+     end;
 
-     if bind(S, A, SizeOf(A)) = SOCKET_ERROR then
-      begin
-       Print(['Warning: NET_IPSocket: Can''t bind socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.']);
-       {$IFDEF MSWINDOWS}closesocket(S){$ELSE}__close(S){$ENDIF};
-      end
-     else
-      begin
-       I := Int(COM_CheckParm('-loopback') > 0);
-       if setsockopt(S, 0, IP_MULTICAST_LOOP, @I, SizeOf(I)) = SOCKET_ERROR then
-        DPrint(['Warning: NET_IPSocket: Can''t set multicast loopback for socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.']);
-       Result := S;
-      end;
-    end;
+    MemSet(A, SizeOf(A), 0);
+    A.sin_family := AF_INET;
+    if (IP^ > #0) and (StrIComp(IP, 'localhost') <> 0) then
+     NET_StringToSockaddr(IP, A);
+    A.sin_port := htons(Port);
+
+    if bind(S, A, SizeOf(A)) = SOCKET_ERROR then
+     Print(['Error: Can''t bind socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.'])
+    else
+     begin
+      Result := S;
+      Exit;
+     end;
+   end;
+
+  {$IFDEF MSWINDOWS}shutdown(S, SD_BOTH); closesocket(S);
+  {$ELSE}shutdown(S, SHUT_RDWR); __close(S);{$ENDIF};
+ end;
+
+Result := 0;
 end;
 
 procedure NET_OpenIP;
@@ -1309,11 +1275,10 @@ if IPSockets[NS_SERVER] = 0 then
      begin
       CVar_SetValue('hostport', defport.Value);
       P := defport.Value;
+      if P = 0 then
+       P := NET_SERVERPORT;
      end;
    end;
-
-  if Frac(P) <> 0 then
-   Print('Warning: NET_OpenIP: Port value has float fraction, truncating.'); 
 
   IPSockets[NS_SERVER] := NET_IPSocket(ipname.Data, Trunc(P), False);
   if IPSockets[NS_SERVER] = 0 then
@@ -1323,131 +1288,54 @@ if IPSockets[NS_SERVER] = 0 then
 NET_ThreadUnlock;
 end;
 
-function NET_IPXSocket(Port: UInt16): TSocket;
-var
- S: TSocket;
- A: TSockAddr;
- I: Int32;
-begin
-Result := 0;
-I := 1;
-S := socket(AF_IPX, SOCK_DGRAM, 1000);
-if S = INVALID_SOCKET then
- begin
-  I := NET_LastError;
-  if I <> {$IFDEF MSWINDOWS}WSAEAFNOSUPPORT{$ELSE}EAFNOSUPPORT{$ENDIF} then
-   Print(['Warning: NET_IPXSocket: Can''t allocate socket on port ', Port, ' - ', NET_ErrorString(I), '.']);
- end
-else
- if {$IFDEF MSWINDOWS}ioctlsocket{$ELSE}ioctl{$ENDIF}(S, FIONBIO, I) = SOCKET_ERROR then
-  Print(['Warning: NET_IPXSocket: Can''t set non-blocking I/O for socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.'])
- else
-  if setsockopt(S, SOL_SOCKET, SO_BROADCAST, @I, SizeOf(I)) = SOCKET_ERROR then
-   Print(['Warning: NET_IPXSocket: Can''t disable broadcast sending for socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.'])
-  else
-   if setsockopt(S, SOL_SOCKET, SO_REUSEADDR, @I, SizeOf(I)) = SOCKET_ERROR then
-    Print(['Warning: NET_IPXSocket: Can''t allow local address reuse for socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.'])
-   else
-    begin
-     MemSet(A, SizeOf(A), 0);
-     A.sin_family := AF_IPX;
-
-     if Port < High(Port) then
-      PUInt16(@A.sa_data[10])^ := Q_htons(Port);
-
-     if bind(S, A, 14) = SOCKET_ERROR then
-      begin
-       Print(['Warning: NET_IPXSocket: Can''t bind socket on port ', Port, ' - ', NET_ErrorString(NET_LastError), '.']);
-       {$IFDEF MSWINDOWS}closesocket(S){$ELSE}__close(S){$ENDIF};
-      end
-     else
-      Result := S;
-    end;
-end;
-
-procedure NET_OpenIPX;
-var
- P: Single;
-begin
-NET_ThreadLock;
-if IPXSockets[NS_SERVER] = 0 then
- begin
-  P := ipx_hostport.Value;
-  if P = 0 then
-   begin
-    P := hostport.Value;
-    if P = 0 then
-     begin
-      CVar_SetValue('hostport', defport.Value);
-      P := defport.Value;
-     end;
-   end;
-
-  if Frac(P) <> 0 then
-   Print('Warning: NET_OpenIPX: Port value has float fraction, truncating.');
-      
-  IPXSockets[NS_SERVER] := NET_IPXSocket(Trunc(P));
- end;
-NET_ThreadUnlock;
-end;
-
 procedure NET_GetLocalAddress;
 var
  Buf: array[1..256] of LChar;
- AdrBuf: array[1..64] of LChar;
+ AdrBuf: array[1..32] of LChar;
  NL: {$IFDEF MSWINDOWS}Int32{$ELSE}UInt32{$ENDIF};
  S: TSockAddr;
 begin
-MemSet(LocalIP, SizeOf(LocalIP), 0);
-MemSet(LocalIPX, SizeOf(LocalIPX), 0);
-
-if NoIP then
- Print('TCP/IP disabled.')
-else
+if not NoIP then
  begin
-  if StrIComp(ipname.Data, 'localhost') <> 0 then
-   StrLCopy(@Buf, ipname.Data, SizeOf(Buf) - 1)
+  if StrIComp(ipname.Data, 'localhost') = 0 then
+   begin
+    gethostname(@Buf, SizeOf(Buf));
+    Buf[High(Buf)] := #0;
+   end
   else
-   gethostname(@Buf, SizeOf(Buf));
-  Buf[High(Buf)] := #0;
+   StrLCopy(@Buf, ipname.Data, SizeOf(Buf) - 1);
 
   NET_StringToAdr(@Buf, LocalIP);
-  NL := 16;
+  NL := SizeOf(TSockAddr);
   if getsockname(IPSockets[NS_SERVER], S, NL) <> 0 then
    begin
     NoIP := True;
     Print(['Couldn''t get TCP/IP address, TCP/IP disabled.' + LineBreak +
-          'Reason: ', NET_ErrorString(NET_LastError), '.']);
+           'Reason: ', NET_ErrorString(NET_LastError), '.']);
    end
   else
    begin
     LocalIP.Port := S.sin_port;
     Print(['Server IP address: ', NET_AdrToString(LocalIP, AdrBuf, SizeOf(AdrBuf)), '.']);
     CVar_DirectSet(net_address, @Buf);
+    Exit;
    end;
- end;
+ end
+else
+ Print('TCP/IP disabled.');
 
-if not NoIPX then
- begin
-  NL := 14;
-  if getsockname(IPXSockets[NS_SERVER], S, NL) <> 0 then
-   NoIPX := True
-  else
-   begin
-    SockadrToNetadr(S, LocalIPX);
-    Print(['Server IPX address: ', NET_AdrToString(LocalIPX, AdrBuf, SizeOf(AdrBuf)), '.']);
-   end;
- end;
+MemSet(LocalIP, SizeOf(LocalIP), 0);
 end;
 
 function NET_IsConfigured: Boolean;
 begin
-Result := NetConfigured;
+Result := NetInit;
 end;
 
 procedure NET_Config(EnableNetworking: Boolean);
 var
  I: TNetSrc;
+ S: TSocket;
 begin
 if OldConfig <> EnableNetworking then
  begin
@@ -1456,15 +1344,15 @@ if OldConfig <> EnableNetworking then
    begin
     if not NoIP then
      NET_OpenIP;
-    if not NoIPX then
-     NET_OpenIPX;
-    if FirstConfig then
+
+    if FirstInit then
      begin
-      FirstConfig := False;
+      FirstInit := False;
       NET_GetLocalAddress;
      end;
 
-    NetConfigured := True;
+    NET_ClearSplitContexts;
+    NetInit := True;
    end
   else
    begin
@@ -1472,20 +1360,17 @@ if OldConfig <> EnableNetworking then
 
     for I := Low(TNetSrc) to High(TNetSrc) do
      begin
-      if IPSockets[I] > 0 then
+      S := IPSockets[I];
+      if S > 0 then
        begin
-        {$IFDEF MSWINDOWS}closesocket(IPSockets[I]);{$ELSE}__close(IPSockets[I]);{$ENDIF}
+        {$IFDEF MSWINDOWS}shutdown(S, SD_RECEIVE); closesocket(S);
+        {$ELSE}shutdown(S, SHUT_RD); __close(S);{$ENDIF}
         IPSockets[I] := 0;
-       end;
-      if IPXSockets[I] > 0 then
-       begin
-        {$IFDEF MSWINDOWS}closesocket(IPXSockets[I]);{$ELSE}__close(IPXSockets[I]);{$ENDIF}
-        IPXSockets[I] := 0;
        end;
      end;
 
     NET_ThreadUnlock;
-    NetConfigured := False;
+    NetInit := False;
    end;
  end;
 end;
@@ -1496,22 +1381,17 @@ var
  J: TNetSrc;
  P: PLagPacket;
 begin
-Cmd_AddCommand('maxplayers', @Cmd_Maxplayers_F);
-
 CVar_RegisterVariable(clockwindow);
-
 CVar_RegisterVariable(net_address);
 CVar_RegisterVariable(ipname);
 CVar_RegisterVariable(ip_hostport);
 CVar_RegisterVariable(hostport);
 CVar_RegisterVariable(defport);
-CVar_RegisterVariable(ipx_hostport);
 CVar_RegisterVariable(fakelag);
 CVar_RegisterVariable(fakeloss);
 
 UseThread := COM_CheckParm('-netthread') > 0;
 NetSleepForever := COM_CheckParm('-netsleep') = 0;
-NoIPX := COM_CheckParm('-noipx') > 0;
 NoIP := COM_CheckParm('-noip') > 0;
 
 I := COM_CheckParm('-port');
@@ -1523,7 +1403,7 @@ if I > 0 then
  CVar_DirectSet(clockwindow, COM_ParmValueByIndex(I));
 
 NetMessage.Name := 'net_message';
-NetMessage.AllowOverflow := [];
+NetMessage.AllowOverflow := [FSB_ALLOWOVERFLOW];
 NetMessage.Data := @NetMsgBuffer;
 NetMessage.MaxSize := SizeOf(NetMsgBuffer);
 NetMessage.CurrentSize := 0;
@@ -1542,6 +1422,7 @@ for J := Low(LagData) to High(LagData) do
  end;
 
 NET_AllocateQueues;
+NET_ClearSplitContexts;
 DPrint('Base networking initialized.');
 end;
 
@@ -1560,42 +1441,9 @@ end;
 
 procedure NET_Shutdown;
 begin
-NET_ThreadLock;
-NET_ClearLaggedList(@LagData[NS_CLIENT]);
-NET_ClearLaggedList(@LagData[NS_SERVER]);
-NET_ThreadUnlock;
+NET_ClearLagData(True, True);
 NET_Config(False);
 NET_FlushQueues;
-end;
-
-function NET_JoinGroup(Source: TNetSrc; const A: TNetAdr): Boolean;
-var
- Req: TIpMReq;
- E: Int;
-begin
-PUInt32(@Req.imr_multiaddr)^ := PUInt32(@A.IP)^;
-PUInt32(@Req.imr_interface)^ := 0;
-
-if setsockopt(IPSockets[Source], IPPROTO_IP, IP_ADD_MEMBERSHIP, @Req, SizeOf(Req)) = SOCKET_ERROR then
- begin
-  E := NET_LastError;
-  if E <> {$IFDEF MSWINDOWS}WSAEAFNOSUPPORT{$ELSE}EAFNOSUPPORT{$ENDIF} then
-   Print(['Warning: NET_JoinGroup: IP_ADD_MEMBERSHIP: ', NET_ErrorString(E)]);
-  Result := False;
- end
-else
- Result := True;
-end;
-
-function NET_LeaveGroup(Source: TNetSrc; const A: TNetAdr): Boolean;
-var
- Req: TIpMReq;
-begin
-PUInt32(@Req.imr_multiaddr)^ := PUInt32(@A.IP)^;
-PUInt32(@Req.imr_interface)^ := 0;
-
-Result := (setsockopt(IPSockets[Source], IPPROTO_IP, IP_ADD_MEMBERSHIP, @Req, SizeOf(Req)) <> SOCKET_ERROR) or
-          (NET_LastError = {$IFDEF MSWINDOWS}WSAEAFNOSUPPORT{$ELSE}EAFNOSUPPORT{$ENDIF});
 end;
 
 
@@ -1613,7 +1461,8 @@ SB.CurrentSize := 0;
 
 MSG_WriteLong(SB, OUTOFBAND_TAG);
 SZ_Write(SB, Data, Size);
-NET_SendPacket(Source, SB.CurrentSize, SB.Data, Addr);
+if not (FSB_OVERFLOWED in SB.AllowOverflow) then
+ NET_SendPacket(Source, SB.CurrentSize, SB.Data, Addr);
 end;
 
 procedure Netchan_UnlinkFragment(Frag: PFragBuf; var Base: PFragBuf);
@@ -1699,12 +1548,13 @@ begin
 Netchan_ClearFragments(C);
 if C.ReliableLength > 0 then
  begin
-  DPrint(['Netchan_Clear: Reliable length = ', C.ReliableLength, '; incoming reliable acknowledged = ', C.IncomingReliableAcknowledged, '.']);
   C.ReliableLength := 0;
   C.ReliableSequence := C.ReliableSequence xor 1;
  end;
 
+SZ_Clear(C.NetMessage);
 C.ClearTime := 0;
+MemSet(C.Flow, SizeOf(C.Flow), 0);
 
 for I := 1 to 2 do
  begin
@@ -1723,7 +1573,10 @@ end;
 
 procedure Netchan_Setup(Source: TNetSrc; var C: TNetchan; const Addr: TNetAdr; ClientID: Int; ClientPtr: PClient; Func: TFragmentSizeFunc);
 begin
-Netchan_Clear(C);
+Netchan_ClearFragments(C);
+if C.TempBuffer <> nil then
+ Mem_Free(C.TempBuffer);
+
 MemSet(C, SizeOf(C), 0);
 C.Source := Source;
 C.Addr := Addr;
@@ -1743,13 +1596,13 @@ end;
 
 function Netchan_CanPacket(var C: TNetchan): Boolean;
 begin
-if (net_chokeloop.Value <> 0) or (C.Addr.AddrType <> NA_LOOPBACK) then
- Result := C.ClearTime < RealTime
-else
+if (C.Addr.AddrType = NA_LOOPBACK) and (net_chokeloop.Value = 0) then
  begin
   C.ClearTime := RealTime;
   Result := True;
- end;
+ end
+else
+ Result := C.ClearTime < RealTime;
 end;
 
 procedure Netchan_UpdateFlow(var C: TNetchan);
@@ -1760,9 +1613,6 @@ var
  FS: PNetchanFlowStats;
  PrevTime, Time: Double;
 begin
-if @C = nil then
- Exit;
-
 BytesTotal := 0;
 Time := 0;
 
@@ -1796,10 +1646,10 @@ end;
 procedure Netchan_Transmit(var C: TNetchan; Size: UInt; Buffer: Pointer);
 var
  SB: TSizeBuf;
- SBData: array[1..MAX_LOOPBACK_PACKETLEN] of Byte;
+ SBData: array[1..4040] of Byte;
  NetAdrBuf: array[1..64] of Byte;
  FileNameBuf: array[1..MAX_PATH_W] of LChar;
- Reliable, HasPendingNetMsg, HasPendingAny, B, B2: Boolean;
+ SendReliable, HasPendingNetMsg, HasPendingFrag, B, Fragmented: Boolean;
  I, FS: UInt;
  HasPendingData: array[1..2] of Boolean;
  FB: PFragBuf;
@@ -1815,12 +1665,11 @@ SB.MaxSize := SizeOf(SBData) - 3;
 SB.CurrentSize := 0;
 
 if FSB_OVERFLOWED in C.NetMessage.AllowOverflow then
- Print([NET_AdrToString(C.Addr, NetAdrBuf, SizeOf(NetAdrBuf)), ': Outgoing message overflow.'])
+ DPrint([NET_AdrToString(C.Addr, NetAdrBuf, SizeOf(NetAdrBuf)), ': Outgoing message overflow.'])
 else
  begin
-  Reliable := (C.IncomingAcknowledged > C.LastReliableSequence) and
+  SendReliable := (C.IncomingAcknowledged > C.LastReliableSequence) and
                   (C.IncomingReliableAcknowledged <> C.ReliableSequence);
-  B2 := Reliable;
 
   if C.ReliableLength = 0 then
    begin
@@ -1828,7 +1677,7 @@ else
     for I := 1 to 2 do
      HasPendingData[I] := C.FragBufBase[I] <> nil;
 
-    HasPendingNetMsg := C.NetMessage.CurrentSize <> 0;
+    HasPendingNetMsg := C.NetMessage.CurrentSize > 0;
     if HasPendingNetMsg and HasPendingData[1] then
      begin
       HasPendingNetMsg := False;
@@ -1839,7 +1688,7 @@ else
        end;
      end;
 
-    HasPendingAny := False;
+    HasPendingFrag := False;
     for I := 1 to 2 do
      begin
       C.FragBufOffset[I] := 0;
@@ -1847,13 +1696,13 @@ else
       C.FragBufSequence[I] := 0;
       C.FragBufSize[I] := 0;
       if HasPendingData[I] then
-       HasPendingAny := True;
+       HasPendingFrag := True;
      end;
 
-    if HasPendingNetMsg or HasPendingAny then
+    if HasPendingNetMsg or HasPendingFrag then
      begin
       C.ReliableSequence := C.ReliableSequence xor 1;
-      Reliable := True;
+      SendReliable := True;
      end;
 
     if HasPendingNetMsg then
@@ -1869,7 +1718,7 @@ else
      begin
       FB := C.FragBufBase[I];
       if FB <> nil then
-       if FB.B1 and not FB.B2 then
+       if FB.FileFrag and not FB.FileBuffer then
         FS := FB.FragmentSize
        else
         FS := FB.FragMessage.CurrentSize
@@ -1879,7 +1728,7 @@ else
       if HasPendingData[I] and (FB <> nil) and (FS + C.ReliableLength < 1200) then
        begin
         C.FragBufSequence[I] := (FB.Index shl 16) or (C.FragBufSplitCount[I] and $FFFF);
-        if FB.B1 and not FB.B2 then
+        if FB.FileFrag and not FB.FileBuffer then
          begin
           if FB.Compressed then
            begin
@@ -1911,27 +1760,20 @@ else
      end;
    end;
 
-  // Fragbufs are in order now. This is the outermost level.
-  B := False;
-  for I := 1 to 2 do
-   if C.FragBufActive[I] then
-    begin
-     B := True;
-     Break;
-    end;
+  // writing
+  Fragmented := C.FragBufActive[1] or C.FragBufActive[2];
 
-  Seq := C.OutgoingSequence or (Int(Reliable) shl 31);
+  Seq := C.OutgoingSequence or (Int(SendReliable) shl 31);
   Seq2 := C.IncomingSequence or (C.IncomingReliableSequence shl 31);
-  if Reliable and B then
+  if SendReliable and Fragmented then
    Seq := Seq or $40000000;
 
-  Inc(C.OutgoingSequence);
   MSG_WriteLong(SB, Seq);
   MSG_WriteLong(SB, Seq2);
-  
-  if Reliable then
+
+  if SendReliable then
    begin
-    if B then
+    if Fragmented then
      for I := 1 to 2 do
       if C.FragBufActive[I] then
        begin
@@ -1944,15 +1786,17 @@ else
        MSG_WriteByte(SB, 0);
 
     SZ_Write(SB, @C.ReliableBuf, C.ReliableLength);
-    C.LastReliableSequence := C.OutgoingSequence - 1;
+    C.LastReliableSequence := C.OutgoingSequence;
    end;
 
-  if not B2 then
+  Inc(C.OutgoingSequence);
+
+  if not SendReliable then
    I := SB.MaxSize
   else
    I := MAX_FRAGLEN;
 
-  if (SB.CurrentSize > I) or (I - SB.CurrentSize < Size) then
+  if SB.CurrentSize + Size > I then
    DPrint('Netchan_Transmit: Unreliable message would overflow, ignoring.')
   else
    if (Buffer <> nil) and (Size > 0) then
@@ -1967,8 +1811,7 @@ else
   Inc(C.Flow[1].InSeq);
   Netchan_UpdateFlow(C);
 
-  Netchan_CompressPacket(@SB);
-  COM_Munge2(Pointer(UInt(SB.Data) + 8), SB.CurrentSize - 8, (C.OutgoingSequence - 1) and $FF);
+  COM_Munge2(Pointer(UInt(SB.Data) + 8), SB.CurrentSize - 8, Byte(C.OutgoingSequence - 1));
   NET_SendPacket(C.Source, SB.CurrentSize, SB.Data, C.Addr);
 
   if SV.Active and (sv_lan.Value <> 0) and (sv_lan_rate.Value > 1000) then
@@ -1976,14 +1819,14 @@ else
   else
    Rate := 1 / C.Rate;
 
-  if C.ClearTime < RealTime then
-   C.ClearTime := RealTime;
-
-  C.ClearTime := C.ClearTime + (SB.CurrentSize + UDP_OVERHEAD) * Rate;
-
+  if C.ClearTime <= RealTime then
+   C.ClearTime := RealTime + (SB.CurrentSize + UDP_OVERHEAD) * Rate
+  else
+   C.ClearTime := C.ClearTime + (SB.CurrentSize + UDP_OVERHEAD) * Rate;
+  
   if (net_showpackets.Value <> 0) and (net_showpackets.Value <> 2) then
    Print([' s --> sz=', SB.CurrentSize, ' seq=', C.OutgoingSequence - 1, ' ack=', C.IncomingSequence, ' rel=',
-          Int(Reliable), ' tm=', SV.Time]);
+          Int(SendReliable), ' tm=', SV.Time]);
  end;
 end;
 
@@ -2004,17 +1847,21 @@ while P <> nil do
 if Alloc then
  begin
   P := Mem_ZeroAlloc(SizeOf(P^));
-  P.Index := Index;
-  P.FragMessage.Name := 'Frag Buffer';
-  P.FragMessage.AllowOverflow := [FSB_ALLOWOVERFLOW];
-  P.FragMessage.Data := @P.Data;
-  P.FragMessage.MaxSize := SizeOf(P.Data);
-  P.FragMessage.CurrentSize := 0;
-  Netchan_AddBufferToList(Base, P);
-  Result := P;
- end
-else
- Result := nil;
+  if P <> nil then
+   begin
+    P.Index := Index;
+    P.FragMessage.Name := 'Frag Buffer';
+    P.FragMessage.AllowOverflow := [FSB_ALLOWOVERFLOW];
+    P.FragMessage.Data := @P.Data;
+    P.FragMessage.MaxSize := SizeOf(P.Data);
+    P.FragMessage.CurrentSize := 0;
+    Netchan_AddBufferToList(Base, P);
+    Result := P;
+    Exit;
+   end;
+ end;
+
+Result := nil;
 end;
 
 procedure Netchan_CheckForCompletion(var C: TNetchan; Index, Total: UInt);
@@ -2037,36 +1884,31 @@ if P <> nil then
  end;
 end;
 
-function Netchan_Validate(var C: TNetchan; Frag: PBoolArray; Seq: PInt32Array; Offset, Size: PInt16Array): Boolean;
+function Netchan_ValidateHeader(Ready: Boolean; Seq, Offset, Size: UInt): Boolean;
 var
- I: UInt;
- Index, SplitCount: Int16;
+ Index, Count: UInt;
 begin
-for I := Low(BoolArray) to Low(BoolArray) + 1 do
- if Frag[I] then
-  begin
-   Index := Seq[I] shr 16;
-   SplitCount := Seq[I] and $FFFF;
-   Result := (Index >= 0) and (Index <= 25000) and (SplitCount >= 0) and (SplitCount <= 25000) and
-             (Size[I] >= 0) and (Size[I] <= 2048) and (Offset[I] >= 0) and (Offset[I] <= 16384);
-   if not Result then
-    Exit;
-  end;
+Index := Seq shr 16;
+Count := Seq and $FFFF;
 
-Result := True;
+if not Ready then
+ Result := True
+else
+ Result := (Index <= 25000) and (Count <= 25000) and (Size <= 2048) and (Offset <= 16384) and
+           (MSG_ReadCount + Offset + Size <= NetMessage.CurrentSize);
 end;
 
 function Netchan_Process(var C: TNetchan): Boolean;
 var
  Seq, Ack: Int32;
  I: UInt;
- Rel, Validate, RelAck, Security: Boolean;
- A1: array[1..2] of Boolean;
- A2: array[1..2] of UInt32;
- A3, A4: array[1..2] of UInt16;
+ Rel, Fragmented, RelAck, Security: Boolean;
+ FragReady: array[1..2] of Boolean;
+ FragSeq: array[1..2] of UInt32;
+ FragOffset, FragSize: array[1..2] of UInt16;
  NetAdrBuf: array[1..64] of LChar;
  FP: PNetchanFlowStats;
- FB: PFragBuf;
+ P: PFragBuf;
 begin
 Result := False;
 
@@ -2074,45 +1916,53 @@ if not NET_CompareAdr(NetFrom, C.Addr) then
  Exit;
 
 C.LastReceived := RealTime;
-MSG_BeginReading;
 
+MSG_BeginReading;
 Seq := MSG_ReadLong;
 Ack := MSG_ReadLong;
 
 Rel := (Seq and $80000000) > 0;
-Validate := (Seq and $40000000) > 0;
+Fragmented := (Seq and $40000000) > 0;
 RelAck := (Ack and $80000000) > 0;
 Security := (Ack and $40000000) > 0;
+Seq := Seq and $3FFFFFFF;
+Ack := Ack and $3FFFFFFF;
 
-if Security or MSG_BadRead then
+if MSG_BadRead or Security then
  Exit;
 
-COM_UnMunge2(Pointer(UInt(NetMessage.Data) + 8), NetMessage.CurrentSize - 8, Seq and $FF);
-Netchan_DecompressPacket(@NetMessage);
-if Validate then
+COM_UnMunge2(Pointer(UInt(NetMessage.Data) + 8), NetMessage.CurrentSize - 8, Byte(Seq));
+if Fragmented then
  begin
   for I := 1 to 2 do
    if MSG_ReadByte > 0 then
     begin
-     A1[I] := True;
-     A2[I] := MSG_ReadLong;
-     A3[I] := MSG_ReadShort;
-     A4[I] := MSG_ReadShort;
+     FragReady[I] := True;
+     FragSeq[I] := MSG_ReadLong;
+     FragOffset[I] := MSG_ReadShort;
+     FragSize[I] := MSG_ReadShort;
     end
    else
     begin
-     A1[I] := False;
-     A2[I] := 0;
-     A3[I] := 0;
-     A4[I] := 0;
+     FragReady[I] := False;
+     FragSeq[I] := 0;
+     FragOffset[I] := 0;
+     FragSize[I] := 0;
     end;
 
-  if not Netchan_Validate(C, @A1, @A2, @A3, @A4) then
-   Exit;
- end;
+  for I := 1 to 2 do
+   if not Netchan_ValidateHeader(FragReady[I], FragSeq[I], FragOffset[I], FragSize[I]) then
+    begin
+     DPrint('Received a packet with invalid fragment header, ignoring.');
+     Exit;
+    end;
 
-Seq := Seq and $3FFFFFFF;
-Ack := Ack and $3FFFFFFF;
+  if FragReady[1] and FragReady[2] and (FragOffset[2] < FragSize[1]) then
+   begin
+    DPrint('Received a packet with invalid fragment offset pair, ignoring.');
+    Exit;
+   end;
+ end;
 
 if (net_showpackets.Value <> 0) and (net_showpackets.Value <> 3) then
  Print([' s <-- sz=', NetMessage.CurrentSize, ' seq=', Seq, ' ack=', Ack, ' rel=',
@@ -2139,50 +1989,55 @@ if Seq > C.IncomingSequence then
   Inc(C.Flow[2].InSeq);
   Netchan_UpdateFlow(C);
 
-  if Validate then
+  if not Fragmented then
+   Result := True
+  else
    begin
     for I := 1 to 2 do
-     if A1[I] then
+     if FragReady[I] then
       begin
-       if A2[I] > 0 then
+       if FragSeq[I] > 0 then
         begin
-         FB := Netchan_FindBufferByID(C.IncomingBuf[I], A2[I], True);
-         if FB <> nil then
+         P := Netchan_FindBufferByID(C.IncomingBuf[I], FragSeq[I], True);
+         if P = nil then
+          DPrint(['Netchan_Process: Couldn''t allocate or find buffer #', FragSeq[I] shr 16, '.'])
+         else
           begin
-           SZ_Clear(FB.FragMessage);
-           // Check this line for something like A3 is 16384
-           SZ_Write(FB.FragMessage, Pointer(UInt(NetMessage.Data) + MSG_ReadCount + A3[I]), A4[I]);
-           if FSB_OVERFLOWED in FB.FragMessage.AllowOverflow then
+           SZ_Clear(P.FragMessage);
+           SZ_Write(P.FragMessage, Pointer(UInt(NetMessage.Data) + MSG_ReadCount + FragOffset[I]), FragSize[I]);
+           if FSB_OVERFLOWED in P.FragMessage.AllowOverflow then
             begin
+             DPrint('Fragment buffer overflowed.');
              Include(C.NetMessage.AllowOverflow, FSB_OVERFLOWED);
              Exit;
             end;
-          end
-         else
-          Print(['Netchan_Process: Couldn''t allocate or find buffer ', A2[I] shr 16, '.']);
-         Netchan_CheckForCompletion(C, I, A2[I] and $FFFF);
+          end;
+
+         Netchan_CheckForCompletion(C, I, FragSeq[I] and $FFFF);
         end;
 
-       Move(Pointer(UInt(NetMessage.Data) + MSG_ReadCount + A3[I] + A4[I])^,
-            Pointer(UInt(NetMessage.Data) + MSG_ReadCount + A3[I])^,
-            NetMessage.CurrentSize - A4[I] - A3[I] - MSG_ReadCount);
+       Move(Pointer(UInt(NetMessage.Data) + MSG_ReadCount + FragOffset[I] + FragSize[I])^,
+            Pointer(UInt(NetMessage.Data) + MSG_ReadCount + FragOffset[I])^,
+            NetMessage.CurrentSize - FragSize[I] - FragOffset[I] - MSG_ReadCount);
 
-       Dec(NetMessage.CurrentSize, A4[I]);
+       Dec(NetMessage.CurrentSize, FragSize[I]);
        if I = 1 then
-        Dec(A3[2], A4[1]);
+        Dec(FragOffset[2], FragSize[1]);
       end;
+     
     if NetMessage.CurrentSize > 16 then
      Result := True;
-   end
-  else
-   Result := True;
+   end;
  end
 else
- if net_showdrop.Value <> 0 then
-  if Seq = C.IncomingSequence then
-   Print([NET_AdrToString(C.Addr, NetAdrBuf, SizeOf(NetAdrBuf)), ': Duplicate packet ', Seq, ' at ', C.IncomingSequence, '.'])
-  else
-   Print([NET_AdrToString(C.Addr, NetAdrBuf, SizeOf(NetAdrBuf)), ': Out of order packet ', Seq, ' at ', C.IncomingSequence, '.'])
+ begin
+  NetDrop := 0;
+  if net_showdrop.Value <> 0 then
+   if Seq = C.IncomingSequence then
+    Print([NET_AdrToString(C.Addr, NetAdrBuf, SizeOf(NetAdrBuf)), ': Duplicate packet ', Seq, ' at ', C.IncomingSequence, '.'])
+   else
+    Print([NET_AdrToString(C.Addr, NetAdrBuf, SizeOf(NetAdrBuf)), ': Out of order packet ', Seq, ' at ', C.IncomingSequence, '.'])
+ end;    
 end;
 
 procedure Netchan_FragSend(var C: TNetchan);
@@ -2196,7 +2051,7 @@ for I := 1 to 2 do
    P := C.FragBufDirs[I];
    C.FragBufDirs[I] := P.Next;
    P.Next := nil;
-
+   
    C.FragBufBase[I] := P.FragBuf;
    C.FragBufSplitCount[I] := P.Count;
    Mem_Free(P);
@@ -2215,7 +2070,7 @@ if @Base <> nil then
   begin
    P2 := Base;
    while P2.Next <> nil do
-    if ((P2.Next.Index shr 16) and $FFFF) > ((P.Index shr 16) and $FFFF) then
+    if (P2.Next.Index shr 16) > (P.Index shr 16) then
      begin
       P.Next := P2.Next.Next;
       P2.Next := P;
@@ -2234,6 +2089,7 @@ var
 begin
 P := Mem_ZeroAlloc(SizeOf(P^));
 P.FragMessage.Name := 'Frag Buffer Alloc''d';
+P.FragMessage.AllowOverflow := [FSB_ALLOWOVERFLOW];
 P.FragMessage.Data := @P.Data;
 P.FragMessage.MaxSize := SizeOf(P.Data);
 Result := P;
@@ -2278,8 +2134,8 @@ if (net_compress.Value = 1) or (net_compress.Value = 3) then
    begin
     Inc(DstLen, SizeOf(Buf.Tag));
     DPrint(['Compressing split packet (', SB.CurrentSize, ' -> ', DstLen, ' bytes).']);
-    Move(Buf, SB.Data^, DstLen);
-    SB.CurrentSize := DstLen;
+    SZ_Clear(SB);
+    SZ_Write(SB, @Buf, DstLen);
    end;
  end;
 
@@ -2303,18 +2159,17 @@ while RemainingSize > 0 do
   FB := Netchan_AllocFragBuf;
   if FB = nil then
    begin
-    Print('Couldn''t allocate fragment buffer.');
+    DPrint('Couldn''t allocate fragment buffer.');
     Netchan_ClearFragBufs(Dir.FragBuf);
     Mem_Free(Dir);
 
-    SV_DropClient(HostClient^, False, 'Memory allocation problem on the server.');
+    if C.Client <> nil then
+     SV_DropClient(PClient(C.Client)^, False, 'Server failed to allocate a fragment buffer.');
     Exit;
    end;
 
   FB.Index := FragIndex;
   Inc(FragIndex);
-  SZ_Clear(FB.FragMessage);
-
   SZ_Write(FB.FragMessage, Pointer(UInt(SB.Data) + DataOffset), ThisSize);
   Inc(DataOffset, ThisSize);
   Dec(RemainingSize, ThisSize);
@@ -2397,20 +2252,20 @@ while RemainingSize > 0 do
   FB := Netchan_AllocFragBuf;
   if FB = nil then
    begin
-    Print('Couldn''t allocate fragment buffer.');
+    DPrint('Couldn''t allocate fragment buffer.');
     Netchan_ClearFragBufs(Dir.FragBuf);
     Mem_Free(Dir);
 
     if Compressed then
      Mem_Free(Buffer);
 
-    SV_DropClient(HostClient^, False, 'Memory allocation problem on the server.');
+    if C.Client <> nil then
+     SV_DropClient(PClient(C.Client)^, False, 'Server failed to allocate a fragment buffer.');
     Exit;
    end;
 
   FB.Index := FragIndex;
   Inc(FragIndex);
-  SZ_Clear(FB.FragMessage);
 
   if NeedHeader then
    begin
@@ -2432,13 +2287,13 @@ while RemainingSize > 0 do
 
   FB.FragmentSize := ThisSize;
   FB.FileOffset := FileOffset;
-  FB.B1 := True;
-  FB.B2 := True;
+  FB.FileFrag := True;
+  FB.FileBuffer := True;
 
   MSG_WriteBuffer(FB.FragMessage, ThisSize, Pointer(UInt(Buffer) + FileOffset));
   Inc(FileOffset, ThisSize);
   Dec(RemainingSize, ThisSize);
-  
+
   Netchan_AddFragBufToTail(Dir, FB);
  end;
 
@@ -2456,27 +2311,26 @@ if Compressed then
  Mem_Free(Buffer);
 end;
 
-function Netchan_CreateFileFragments(Server: Boolean; C: PNetchan; Name: PLChar): Boolean;
+function Netchan_CreateFileFragments(var C: TNetchan; Name: PLChar): Boolean;
 var
  FileNameBuf: array[1..MAX_PATH_W] of LChar;
  NetAdrBuf: array[1..64] of LChar;
  Compressed, NeedHeader: Boolean;
  F: TFile;
- SrcP, DstP: Pointer;
- FileSizeC, FileSizeUC, DL, FuncFragSize, FragIndex, ThisFragSize, TotalSize: UInt;
+ SrcBuf, DstBuf: Pointer;
+ Size, DstLen, ClientFragSize, FragIndex, ThisSize, FileOffset, RemainingSize, HeaderOverhead: UInt;
  Dir, P: PFragBufDir;
  FB: PFragBuf;
 begin
 Result := False;
 Compressed := False;
+
 StrLCopy(@FileNameBuf, Name, SizeOf(FileNameBuf) - 1);
 StrLCat(@FileNameBuf, '.ztmp', SizeOf(FileNameBuf) - 1);
-
 if FS_Open(F, @FileNameBuf, 'r') and (FS_GetFileTime(@FileNameBuf) >= FS_GetFileTime(Name)) then
  begin
-  FileSizeC := FS_Size(F);
+  RemainingSize := FS_Size(F);
   FS_Close(F);
-  Compressed := True;
 
   if not FS_Open(F, Name, 'r') then
    begin
@@ -2484,14 +2338,15 @@ if FS_Open(F, @FileNameBuf, 'r') and (FS_GetFileTime(@FileNameBuf) >= FS_GetFile
     Exit;
    end;
 
-  FileSizeUC := FS_Size(F);
-  if FileSizeUC > sv_filetransfermaxsize.Value then
+  Size := FS_Size(F);
+  FS_Close(F);
+  if Size > sv_filetransfermaxsize.Value then
    begin
-    Print(['Warning: File "', Name, '" is too big to transfer from host ', NET_AdrToString(C.Addr, NetAdrBuf, SizeOf(NetAdrBuf)), '.']);
+    Print(['Warning: File "', Name, '" is too big to transfer to ', NET_AdrToString(C.Addr, NetAdrBuf, SizeOf(NetAdrBuf)), '.']);
     Exit;
    end;
 
-  FS_Close(F);
+  Compressed := True;
  end
 else
  begin
@@ -2501,73 +2356,80 @@ else
     Exit;
    end;
 
-  FileSizeC := FS_Size(F);
-  FileSizeUC := FileSizeC;
-
-  if FileSizeUC > sv_filetransfermaxsize.Value then
+  Size := FS_Size(F);
+  RemainingSize := Size;  
+  if Size > sv_filetransfermaxsize.Value then
    begin
-    Print(['Warning: File "', Name, '" is too big to transfer from host ', NET_AdrToString(C.Addr, NetAdrBuf, SizeOf(NetAdrBuf)), '.']);
+    Print(['Warning: File "', Name, '" is too big to transfer to ', NET_AdrToString(C.Addr, NetAdrBuf, SizeOf(NetAdrBuf)), '.']);
+    FS_Close(F);
     Exit;
    end;
 
-  if (sv_filetransfercompression.Value <> 0) or (net_compress.Value = 2) or (net_compress.Value = 3) then
+  if (sv_filetransfercompression.Value = 0) and (net_compress.Value <> 2) and (net_compress.Value <> 3) then
+   FS_Close(F)
+  else
    begin
-    SrcP := Mem_Alloc(FileSizeUC);
-    if FS_Read(F, SrcP, FileSizeUC) <> FileSizeUC then
+    SrcBuf := Mem_Alloc(Size);
+    if FS_Read(F, SrcBuf, Size) <> Size then
      begin
       Print(['Warning: File read error in "', Name, '".']);
-      Mem_Free(SrcP);
+      Mem_Free(SrcBuf);
       FS_Close(F);
       Exit;
      end;
 
-    DstP := Mem_Alloc(FileSizeUC);
-    DL := FileSizeUC;
-    if BZ2_bzBuffToBuffCompress(DstP, @DL, SrcP, FileSizeUC, 9, 0, 30) = BZ_OK then
+    DstBuf := Mem_Alloc(Size);
+    DstLen := Size;
+    if BZ2_bzBuffToBuffCompress(DstBuf, @DstLen, SrcBuf, Size, 9, 0, 30) = BZ_OK then
      begin
       FS_Close(F);
 
       if FS_Open(F, @FileNameBuf, 'wo') then
        begin
-        DPrint(['Creating compressed version of file "', Name, '" (', FileSizeUC, ' -> ', DL, ').']);
-        FS_Write(F, DstP, DL);
+        DPrint(['Creating compressed version of file "', Name, '" (', Size, ' -> ', DstLen, ').']);
+        FS_Write(F, DstBuf, DstLen);
         FS_Close(F);
-        FileSizeC := DL;
+        RemainingSize := DstLen;
         Compressed := True;
        end;
      end;
-    Mem_Free(DstP);
-    Mem_Free(SrcP);     
-   end
-  else
-   FS_Close(F);
+
+    Mem_Free(DstBuf);
+    Mem_Free(SrcBuf);     
+   end;
  end;
 
-FuncFragSize := C.FragmentFunc(C.Client);
+if (@C.FragmentFunc <> nil) and (C.Client <> nil) then
+ ClientFragSize := C.FragmentFunc(C.Client)
+else
+ ClientFragSize := 1024;
+
 Dir := Mem_ZeroAlloc(SizeOf(Dir^));
 FragIndex := 1;
 NeedHeader := True;
-TotalSize := 0;
+FileOffset := 0;
 
-while FileSizeC > 0 do
+while RemainingSize > 0 do
  begin
-  ThisFragSize := FileSizeC;
-  if ThisFragSize >= FuncFragSize then
-   ThisFragSize := FuncFragSize;
+  if RemainingSize < ClientFragSize then
+   ThisSize := RemainingSize
+  else
+   ThisSize := ClientFragSize;
 
   FB := Netchan_AllocFragBuf;
   if FB = nil then
    begin
-    Print('Couldn''t allocate fragment buffer.');
+    DPrint('Couldn''t allocate fragment buffer.');
+    Netchan_ClearFragBufs(Dir.FragBuf);
     Mem_Free(Dir);
-    if Server then
-     SV_DropClient(HostClient^, False, 'MAlloc problem.');
+
+    if C.Client <> nil then
+     SV_DropClient(PClient(C.Client)^, False, 'Server failed to allocate a fragment buffer.');
     Exit;
    end;
 
   FB.Index := FragIndex;
   Inc(FragIndex);
-  SZ_Clear(FB.FragMessage);
 
   if NeedHeader then
    begin
@@ -2578,22 +2440,23 @@ while FileSizeC > 0 do
     else
      MSG_WriteString(FB.FragMessage, 'uncompressed');
 
-    MSG_WriteLong(FB.FragMessage, FileSizeUC);
-    Dec(ThisFragSize, FB.FragMessage.CurrentSize);
-   end;
-
-  FB.B1 := True;
-  FB.Compressed := True;
-  FB.FileOffset := TotalSize;
-  FB.FragmentSize := ThisFragSize;
-  StrLCopy(@FB.FileName, Name, MAX_PATH_A - 1);
-  FB.FileName[High(FB.FileName)] := #0;
-
-  Inc(TotalSize, ThisFragSize);
-  if FileSizeC > ThisFragSize then
-   Dec(FileSizeC, ThisFragSize)
+    MSG_WriteLong(FB.FragMessage, Size);
+    HeaderOverhead := FB.FragMessage.CurrentSize;
+   end
   else
-   FileSizeC := 0;
+   HeaderOverhead := 0;
+
+  if ThisSize > HeaderOverhead then
+   Dec(ThisSize, HeaderOverhead);
+
+  FB.FragmentSize := ThisSize;
+  FB.FileOffset := FileOffset;
+  FB.FileFrag := True;
+  FB.Compressed := Compressed;
+  StrLCopy(@FB.FileName, Name, MAX_PATH_A - 1);
+
+  Inc(FileOffset, ThisSize);
+  Dec(RemainingSize, ThisSize);
 
   Netchan_AddFragBufToTail(Dir, FB);
  end;
@@ -2634,7 +2497,7 @@ function Netchan_CopyNormalFragments(var C: TNetchan): Boolean;
 var
  P, P2: PFragBuf;
  DL: UInt;
- Buf: array[1..65536] of Byte;
+ Buf: array[1..65536+256+32] of Byte;
 begin
 Result := False;
 
@@ -2642,7 +2505,6 @@ if C.IncomingActive[1] then
  if C.IncomingBuf[1] <> nil then
   begin
    SZ_Clear(NetMessage);
-   MSG_BeginReading;
 
    P := C.IncomingBuf[1];
    while P <> nil do
@@ -2652,29 +2514,66 @@ if C.IncomingActive[1] then
      Mem_Free(P);
      P := P2;
     end;
+   
+   if FSB_OVERFLOWED in NetMessage.AllowOverflow then
+    DPrint('Netchan_CopyNormalFragments: Fragment buffer overflowed, ignoring.')
+   else
+    if PUInt32(NetMessage.Data)^ = BZIP2_TAG then
+     begin
+      DL := SizeOf(Buf);
+      if BZ2_bzBuffToBuffDecompress(@Buf, @DL, Pointer(UInt(NetMessage.Data) + SizeOf(UInt32)), NetMessage.CurrentSize - SizeOf(UInt32), 1, 0) = BZ_OK then
+       begin
+        Move(Buf, NetMessage.Data^, DL);
+        NetMessage.CurrentSize := DL;
+        Result := True;
+       end
+      else
+       NetMessage.CurrentSize := 0;
+     end
+    else
+     Result := True;
 
-   if PUInt32(NetMessage.Data)^ = BZIP2_TAG then
+   if not Result then
     begin
-     DL := SizeOf(Buf);
-     if BZ2_bzBuffToBuffDecompress(@Buf, @DL, Pointer(UInt(NetMessage.Data) + SizeOf(UInt32)), NetMessage.CurrentSize - SizeOf(UInt32), 1, 0) = BZ_OK then
-      begin
-       Move(Buf, NetMessage.Data^, DL);
-       NetMessage.CurrentSize := DL;
-      end
-     else
-      NetMessage.CurrentSize := 0;
+     SZ_Clear(NetMessage);
+     MSG_BeginReading;
     end;
 
    C.IncomingBuf[1] := nil;
    C.IncomingActive[1] := False;
-   Result := True;
   end
  else
   begin
-   Print('Netchan_CopyNormalFragments: Called with no fragments readied.');
+   DPrint('Netchan_CopyNormalFragments: Called with no fragments readied.');
    C.IncomingActive[1] := False;
   end;
 end;
+
+function Netchan_DecompressIncoming(FileName: PLChar; var Src: Pointer; var TotalSize: UInt; IncomingSize: UInt): Boolean;
+var
+ P: Pointer;
+begin
+Result := False;
+if IncomingSize >= sv_filereceivemaxsize.Value then
+ DPrint(['Incoming decompressed size for file "', PLChar(FileName), '" is too big, ignoring.'])
+else
+ begin
+  P := Mem_Alloc(IncomingSize + 1);
+  DPrint(['Decompressing file "', PLChar(FileName), '" (', TotalSize, ' -> ', IncomingSize, ').']);
+  if BZ2_bzBuffToBuffDecompress(P, @IncomingSize, Src, TotalSize, 1, 0) <> BZ_OK then
+   begin
+    DPrint(['Decompression failed for incoming file "', PLChar(FileName), '".']);
+    Mem_Free(P);
+   end
+  else
+   begin
+    Mem_Free(Src);
+    Src := P;
+    TotalSize := IncomingSize;
+    Result := True;
+   end;
+ end;
+end;             
 
 function Netchan_CopyFileFragments(var C: TNetchan): Boolean;
 var
@@ -2687,156 +2586,126 @@ begin
 Result := False;
 
 if C.IncomingActive[2] then
- if C.IncomingBuf[2] = nil then
+ if C.IncomingBuf[2] <> nil then
   begin
-   Print('Netchan_CopyFileFragments: Called with no fragments readied.');
-   C.IncomingActive[2] := False;
+   SZ_Clear(NetMessage);
+   MSG_BeginReading;
+
+   P := C.IncomingBuf[2];
+   if P.FragMessage.CurrentSize > NetMessage.MaxSize then
+    DPrint('File fragment buffer overflowed.')
+   else
+    begin
+     if P.FragMessage.CurrentSize > 0 then
+      SZ_Write(NetMessage, P.FragMessage.Data, P.FragMessage.CurrentSize);
+
+     StrLCopy(@FileName, MSG_ReadString, SizeOf(FileName) - 1);
+     Compressed := StrIComp(MSG_ReadString, 'bz2') = 0;
+     IncomingSize := MSG_ReadLong;
+
+     if MSG_BadRead then
+      DPrint('File fragment received with invalid header.')
+     else
+      if FileName[1] = #0 then
+       DPrint('File fragment received with no filename.')
+      else
+       if not IsSafeFile(@FileName) then
+        DPrint('File fragment received with unsafe path.')
+       else
+        begin
+         StrLCopy(@C.FileName, @FileName, SizeOf(C.FileName) - 1);
+
+         if FileName[1] <> '!' then
+          begin
+           if sv_receivedecalsonly.Value <> 0 then
+            begin
+             DPrint(['Received a non-decal file "', PLChar(@FileName), '", ignored.']);
+             Netchan_FlushIncoming(C, 2);
+             Exit;
+            end;
+
+           if FS_FileExists(@FileName) then
+            begin
+             DPrint(['Can''t download "', PLChar(@FileName), '", already exists.']);
+             Netchan_FlushIncoming(C, 2);
+             Result := True;
+             Exit;
+            end;
+
+           COM_CreatePath(@FileName);
+          end;
+
+         TotalSize := 0;
+         while P <> nil do
+          begin
+           Inc(TotalSize, P.FragMessage.CurrentSize);
+           if P = C.IncomingBuf[2] then
+            Dec(TotalSize, MSG_ReadCount);
+           P := P.Next;
+          end;
+
+         Src := Mem_ZeroAlloc(TotalSize + 1);
+         if Src = nil then
+          DPrint(['Buffer allocation failed on ', TotalSize + 1, ' bytes.'])
+         else
+          begin
+           CurrentSize := 0;
+
+           P := C.IncomingBuf[2];
+           while P <> nil do
+            begin
+             P2 := P.Next;
+             if P = C.IncomingBuf[2] then
+              begin
+               Dec(P.FragMessage.CurrentSize, MSG_ReadCount);
+               Data := Pointer(UInt(P.FragMessage.Data) + MSG_ReadCount);
+              end
+             else
+              Data := P.FragMessage.Data;
+
+             Move(Data^, Pointer(UInt(Src) + CurrentSize)^, P.FragMessage.CurrentSize);
+             Inc(CurrentSize, P.FragMessage.CurrentSize);
+             Mem_Free(P);
+             P := P2;
+            end;
+
+           C.IncomingBuf[2] := nil;
+           C.IncomingActive[2] := False;
+
+           if not Compressed or Netchan_DecompressIncoming(@FileName, Src, TotalSize, IncomingSize) then
+            begin
+             if FileName[1] = '!' then
+              begin
+               if C.TempBuffer <> nil then
+                Mem_FreeAndNil(C.TempBuffer);
+               C.TempBuffer := Src;
+               C.TempBufferSize := TotalSize;
+              end
+             else
+              begin
+               COM_WriteFile(@FileName, Src, TotalSize);
+               Mem_Free(Src);
+              end;
+
+             SZ_Clear(NetMessage);
+             MSG_BeginReading;
+             C.IncomingBuf[2] := nil;
+             C.IncomingActive[2] := False;
+             Result := True;
+             Exit;
+            end;
+
+           Mem_Free(Src);
+          end;
+        end;
+    end;
+
+   Netchan_FlushIncoming(C, 2);
   end
  else
   begin
-   P := C.IncomingBuf[2];
-
-   SZ_Clear(NetMessage);
-   MSG_BeginReading;
-   if P.FragMessage.CurrentSize > 0 then
-    SZ_Write(NetMessage, P.FragMessage.Data, P.FragMessage.CurrentSize);
-   
-   StrLCopy(@FileName, MSG_ReadString, SizeOf(FileName) - 1);
-   Compressed := StrIComp(MSG_ReadString, 'bz2') = 0;
-   IncomingSize := MSG_ReadLong;
-
-   if MSG_BadRead then
-    begin
-     Print('File fragment received with invalid header.' + LineBreak + 'Flushing input queue.');
-     Netchan_FlushIncoming(C, 2);
-    end
-   else
-    if FileName[1] = #0 then
-     begin
-      Print('File fragment received with no filename.' + LineBreak + 'Flushing input queue.');
-      Netchan_FlushIncoming(C, 2);
-     end
-    else
-     if not IsSafeFile(@FileName) then
-      begin
-       Print('File fragment received with unsafe path, ignoring.' + LineBreak + 'Flushing input queue.');
-       Netchan_FlushIncoming(C, 2);
-      end
-     else
-      begin
-       StrLCopy(@C.FileName, @FileName, SizeOf(C.FileName) - 1);
-
-       if FileName[1] <> '!' then
-        begin
-         if sv_receivedecalsonly.Value <> 0 then
-          begin
-           Print(['Received a non-decal file "', PLChar(@FileName), '", ignored.']);
-           Netchan_FlushIncoming(C, 2);
-           Exit;
-          end;
-
-         if FS_FileExists(@FileName) then
-          begin
-           Print(['Can''t download "', PLChar(@FileName), '", already exists.']);
-           Netchan_FlushIncoming(C, 2);
-           Result := True;
-           Exit;
-          end;
-
-         COM_CreatePath(@FileName);
-        end;
-
-       TotalSize := 0;
-       while P <> nil do
-        begin
-         Inc(TotalSize, P.FragMessage.CurrentSize);
-         if P = C.IncomingBuf[2] then
-          Dec(TotalSize, MSG_ReadCount);
-         P := P.Next;
-        end;
-
-       Src := Mem_ZeroAlloc(TotalSize + 1);
-       if Src = nil then
-        begin
-         Print(['Buffer allocation failed on ', TotalSize + 1, ' bytes.']);
-         Netchan_FlushIncoming(C, 2);
-         Exit;
-        end;
-
-       P := C.IncomingBuf[2];
-       CurrentSize := 0;
-       while P <> nil do
-        begin
-         P2 := P.Next;
-         if P = C.IncomingBuf[2] then
-          begin
-           Dec(P.FragMessage.CurrentSize, MSG_ReadCount);
-           Data := Pointer(UInt(P.FragMessage.Data) + MSG_ReadCount);
-          end
-         else
-          Data := P.FragMessage.Data;
-
-         Move(Data^, Pointer(UInt(Src) + CurrentSize)^, P.FragMessage.CurrentSize);
-         Inc(CurrentSize, P.FragMessage.CurrentSize);
-         Mem_Free(P);
-         P := P2;
-        end;
-
-       if Compressed then
-        if IncomingSize >= sv_filereceivemaxsize.Value then
-         begin
-          Print(['Incoming decompressed size for file "', PLChar(@C.FileName), '" is too big, ignoring.']);
-          C.IncomingBuf[2] := nil;
-          C.IncomingActive[2] := False;
-          Netchan_FlushIncoming(C, 2);
-          Mem_Free(Src);
-          Exit;
-         end
-        else
-         begin
-          Data := Mem_Alloc(IncomingSize + 1);
-          DPrint(['Decompressing file "', PLChar(@FileName), '" (', TotalSize, ' -> ', IncomingSize, ').']);
-          if BZ2_bzBuffToBuffDecompress(Data, @IncomingSize, Src, TotalSize, 1, 0) <> BZ_OK then
-           begin
-            Print(['Decompression failed for incoming file "', PLChar(@C.FileName), '".']);
-            C.IncomingBuf[2] := nil;
-            C.IncomingActive[2] := False;
-            Netchan_FlushIncoming(C, 2);
-            Mem_Free(Src);
-            Mem_Free(Data);
-            Exit;
-           end
-          else
-           begin
-            Mem_Free(Src);
-            TotalSize := IncomingSize;
-            Src := Data;
-           end;
-         end;
-
-       if FileName[1] = '!' then
-        begin
-         if C.TempBuffer <> nil then
-          begin
-           DPrint('Netchan_CopyFileFragments: Freeing holdover tempbuffer.');
-           Mem_Free(C.TempBuffer);
-          end;
-
-         C.TempBuffer := Src;
-         C.TempBufferSize := TotalSize;
-        end
-       else
-        begin
-         COM_WriteFile(@FileName, Src, TotalSize);
-         Mem_Free(Src);
-        end;
-
-       SZ_Clear(NetMessage);
-       MSG_ReadCount := 0;
-       C.IncomingBuf[2] := nil;
-       C.IncomingActive[2] := False;
-       Result := True;
-      end;
+   DPrint('Netchan_CopyFileFragments: Called with no fragments readied.');
+   C.IncomingActive[2] := False;
   end;
 end;
 
@@ -2857,7 +2726,6 @@ end;
 
 procedure Netchan_Init;
 begin
-CVar_RegisterVariable(net_log);
 CVar_RegisterVariable(net_showpackets);
 CVar_RegisterVariable(net_showdrop);
 CVar_RegisterVariable(net_chokeloop);
@@ -2865,18 +2733,7 @@ CVar_RegisterVariable(sv_filetransfercompression);
 CVar_RegisterVariable(sv_filetransfermaxsize);
 CVar_RegisterVariable(sv_filereceivemaxsize);
 CVar_RegisterVariable(sv_receivedecalsonly);
-
 CVar_RegisterVariable(net_compress);
-end;
-
-function Netchan_CompressPacket(SB: PSizeBuf): Int;
-begin
-Result := 0;
-end;
-
-function Netchan_DecompressPacket(SB: PSizeBuf): Int;
-begin
-Result := 0;
 end;
 
 {$IFDEF MSWINDOWS}

@@ -13,8 +13,7 @@ procedure Sys_Sleep(MS: UInt);
 
 procedure Sys_DebugOutStraight(S: PLChar);
 
-procedure Sys_InitServer;
-procedure Sys_InitGame;
+procedure Sys_Init;
 
 procedure Sys_Shutdown;
 
@@ -43,8 +42,6 @@ var
  IsNT4: Boolean = False;
  IsWin95: Boolean = False;
  IsWin98: Boolean = False;
-
- HasMMXSupport: Boolean = False;
 
  InSysError: Boolean = False;
 
@@ -273,12 +270,12 @@ end;
 procedure Sys_CheckOSVersion;
 {$IFDEF MSWINDOWS}
 var
- Info: TOSVersionInfo;
+ Info: TOSVersionInfoA;
 begin
 MemSet(Info, SizeOf(Info), 0);
 Info.dwOSVersionInfoSize := SizeOf(Info);
 
-if not GetVersionEx(Info) then
+if not GetVersionExA(Info) then
  Sys_Error('Sys_GetOSInfo: Couldn''t get OS info.')
 else
  with Info do
@@ -298,38 +295,52 @@ begin
 end;
 {$ENDIF}
 
-procedure Sys_Init;
-begin
-Sys_InitClock;
-Sys_CheckOSVersion;
-Sys_SetStartTime;
-end;
-
 procedure Sys_InitMemory;
 var
  S: PLChar;
+ B: Boolean;
 begin
+B := False;
+
 if COM_CheckParm('-minmemory') > 0 then
- HostInfo.MemSize := $E00000
+ HostInfo.MemSize := 14*1024*1024
 else
  begin
   S := COM_ParmValueByName('-heapsize');
   if S^ > #0 then
-   HostInfo.MemSize := StrToIntDef(S, $2000000 shr 10) shl 10
+   begin
+    B := True;
+    HostInfo.MemSize := StrToIntDef(S, 32*1024) * 1024;
+    if HostInfo.MemSize < 4*1024*1024 then
+     begin
+      Print('The avaliable heap size should be no lesser than 4 MB.');
+      HostInfo.MemSize := 4*1024*1024;
+     end;
+   end
   else
-   HostInfo.MemSize := $2000000;
+   HostInfo.MemSize := 32*1024*1024;
  end;
  
 with HostInfo do
  begin
   GetMem(MemBase, MemSize);
+  if B and (MemBase = nil) then
+   begin
+    Print(['Unable to allocate ', MemSize div (1024*1024), ' MB (defined by -heapsize).',
+           'Falling back to the default value.']);
+    MemSize := 32*1024*1024;
+    GetMem(MemBase, MemSize);
+   end;
+
   if MemBase = nil then
-   Sys_Error(['Sys_InitMemory: Unable to allocate ', MemSize div (1024 * 1024), ' MB.']);
+   Sys_Error(['Sys_InitMemory: Unable to allocate ', MemSize div (1024*1024), ' MB.']);
  end;
 end;
 
-procedure Sys_InitServer;
+procedure Sys_Init;
 begin
+HostInit := False;
+
 Sys_InitArgs;
 
 UseAddonsDir := COM_CheckParm('-addons') > 0;
@@ -337,21 +348,15 @@ UseHDModels := COM_CheckParm('-hdmodels') > 0;
 
 FileSystem_Init;
 HostInfo.BaseDir := BaseDir;
-end;
-
-procedure Sys_InitGame;
-begin
-HostInit := False;
 
 MemSet(ModInfo, SizeOf(ModInfo), 0);
 
-Sys_Init;
-
-// FS_LogLevelLoadStarted("Launcher");
+Sys_InitClock;
+Sys_CheckOSVersion;
+Sys_SetStartTime;
 
 SeedRandomNumberGenerator;
 Sys_InitMemory;
-HasMMXSupport := True;
 Host_Init;
 
 if HostInit then

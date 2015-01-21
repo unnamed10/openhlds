@@ -43,6 +43,7 @@ function Cache_Alloc(var C: TCacheUser; Size: UInt; Name: PLChar): Pointer;
 
 procedure SZ_Alloc(Name: PLChar; var Buffer: TSizeBuf; Size: UInt);
 procedure SZ_Clear(var Buffer: TSizeBuf);
+function SZ_WouldOverflow(const Buffer: TSizeBuf; Length: UInt): Boolean;
 function SZ_GetSpace(var Buffer: TSizeBuf; Length: UInt): Pointer;
 procedure SZ_Write(var Buffer: TSizeBuf; Data: Pointer; Length: UInt);
 procedure SZ_Print(var Buffer: TSizeBuf; Data: PLChar);
@@ -814,8 +815,8 @@ end;
 
 procedure SZ_Alloc(Name: PLChar; var Buffer: TSizeBuf; Size: UInt);
 begin
-if Size < 256 then
- Size := 256;
+if Size < 32 then
+ Size := 32;
 
 Buffer.Name := Name;
 Buffer.AllowOverflow := [];
@@ -828,6 +829,11 @@ procedure SZ_Clear(var Buffer: TSizeBuf);
 begin
 Buffer.CurrentSize := 0;
 Exclude(Buffer.AllowOverflow, FSB_OVERFLOWED);
+end;
+
+function SZ_WouldOverflow(const Buffer: TSizeBuf; Length: UInt): Boolean;
+begin
+Result := Buffer.CurrentSize + Length > Buffer.MaxSize;
 end;
 
 function SZ_GetSpace(var Buffer: TSizeBuf; Length: UInt): Pointer;
@@ -984,33 +990,36 @@ end;
 
 procedure Memory_Init(Buffer: Pointer; Size: UInt);
 var
- Index: UInt;
+ I: UInt;
+ S: PLChar;
 begin
 HunkBase := Buffer;
 HunkSize := Size;
 HunkLowUsed := 0;
 HunkHighUsed := 0;
 
-// Not initialized in HLDS
 HunkTempActive := False;
 HunkTempMark := 0;
 
 Cache_Init;
 
-Index := COM_CheckParm('-zone');
-if (Index > 0) and COM_ParmInBounds(Index + 1) then
+S := COM_ParmValueByName('-zone');
+if S^ > #0 then
  begin
-  Size := StrToInt(COM_ParmValueByIndex(Index));
-  if Size = 0 then
+  I := StrToInt(S);
+  if I = 0 then
    Sys_Error('Memory_Init: You must specify a size in KB after "-zone".')
   else
-   Size := Size shl 10;
+   if I >= Size + 1024*1024 then
+    Sys_Error('Custom "-zone" size is too big (can''t be higher than the avaliable hunk).')
+   else
+    I := I * 1024;
  end
 else
- Size := $200000;
+ I := 2*1024*1024;
 
-MainZone := Hunk_AllocName(Size, 'zone');
-Z_ClearZone(MainZone^, Size);
+MainZone := Hunk_AllocName(I, 'zone');
+Z_ClearZone(MainZone^, I);
 
 CVar_RegisterVariable(mem_dbgfile);
 CVar_RegisterVariable(mem_checkheap);

@@ -145,7 +145,7 @@ if P = nil then
   Sys_EnterCS(ConsoleCS);
 
   if CmdList.Cmd[1] > #0 then
-   Cmd_ExecuteString(@CmdList.Cmd, csServer);
+   Cmd_ExecuteString(@CmdList.Cmd, csConsole);
 
   if LastCmd = nil then
    LastCmd := @CmdList;
@@ -156,7 +156,7 @@ if P = nil then
     P3 := P2.Next;
 
     if P2.Cmd[1] > #0 then
-     Cmd_ExecuteString(@P2.Cmd, csServer);
+     Cmd_ExecuteString(@P2.Cmd, csConsole);
 
     Mem_Free(P2);
     P2 := P3;

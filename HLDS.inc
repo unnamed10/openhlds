@@ -16,5 +16,5 @@
 // Doesn't do anything on HLDS, but if this include file is used to compile a Windows DLL,
 // this parameter can be used to avoid unnecessary fixups in relocations table.
 {$IFDEF MSWINDOWS}
- {$IMAGEBASE $600000}
+ {$IMAGEBASE $01D00000}
 {$ENDIF}

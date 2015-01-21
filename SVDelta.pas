@@ -171,6 +171,8 @@ end;
 procedure SV_ParseDelta(var C: TClient);
 begin
 C.UpdateMask := MSG_ReadByte;
+if MSG_BadRead then
+ C.UpdateMask := -1;
 end;
 
 end.

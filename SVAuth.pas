@@ -7,13 +7,7 @@ interface
 uses Default, SDK;
 
 function SV_CreateSID(const C: TClient): Int64;
-
 function SV_GetClientIDString(const C: TClient): PLChar;
-function SV_GetClientID(const C: TClient): Int64;
-
-function SV_StringToUID(S: PLChar): Int64;
-function SV_UIDToString(ID: Int64): PLChar;
-
 
 implementation
 
@@ -33,28 +27,10 @@ else
  if C.HLTV then
   Result := 'HLTV'
  else
-  if C.Netchan.Addr.AddrType = NA_LOOPBACK then
-   Result := 'LOOPBACK'
+  if NET_IsReservedAdr(C.Netchan.Addr) then
+   Result := 'STEAM_ID_LAN'
   else
-   if NET_IsReservedAdr(C.Netchan.Addr) then
-    Result := 'LAN'
-   else
-    Result := 'PLAYER';
-end;
-
-function SV_GetClientID(const C: TClient): Int64;
-begin
-Result := 1;
-end;
-
-function SV_StringToUID(S: PLChar): Int64;
-begin
-Result := 1;
-end;
-
-function SV_UIDToString(ID: Int64): PLChar;
-begin
-Result := '';
+   Result := 'STEAM_0:0:12345';
 end;
 
 end.

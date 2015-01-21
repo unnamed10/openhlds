@@ -18,15 +18,14 @@ procedure Host_Map(Name: PLChar; Save: Boolean);
 procedure Host_Say(Team: Boolean);
 
 procedure Host_EndSection(Name: PLChar);
-procedure Host_ClearClients(KeepFrames: Boolean);
 
-procedure Host_ClearMemory(B: Boolean);
+procedure Host_ClearMemory(KeepClients: Boolean);
 
 procedure Host_Error(Msg: PLChar); overload;
 procedure Host_Error(const Msg: array of const); overload;
 
 procedure Host_ShutdownServer(SkipNotify: Boolean);
-procedure Host_ClientCommands(S: PLChar);
+procedure Host_ClientCommands(var C: TClient; S: PLChar);
 
 function Host_Frame: Boolean;
 
@@ -55,13 +54,7 @@ var
  host_speeds: TCVar = (Name: 'host_speeds'; Data: '0');
  host_profile: TCVar = (Name: 'host_profile'; Data: '0');
 
-
- // custom
-
- // 0/1: toggle, 2: password
  pausable: TCVar = (Name: 'pausable'; Data: '0'; Flags: [FCVAR_SERVER]);
- // password for pause control
- pausablepwd: TCVar = (Name: 'pausablepwd'; Data: ''; Flags: [FCVAR_PROTECTED]);
 
  HostInit: Boolean = False;
  HostInfo: THostParms;
@@ -100,7 +93,6 @@ var
 
  HostFrameTime: Double;
  HostFrameCount: UInt = 0;
- SCRSkipUpdate: Boolean;
 
  HostTimes: record
   Cur, Prev, Frame: Double;
@@ -165,60 +157,26 @@ else
 CBuf_AddText(#10'disconnect'#10);
 end;
 
-procedure Host_ClearClients(KeepFrames: Boolean);
-var
- I, J: Int;
- C: PClient;
- Addr: TNetAdr;
+procedure Host_ClearMemory(KeepClients: Boolean);
 begin
-for I := 0 to SVS.MaxClients - 1 do
- begin
-  C := @SVS.Clients[I];
-  HostClient := C;  
-  if C.Frames <> nil then
-   for J := 0 to SVUpdateBackup - 1 do
-    begin
-     SV_ClearPacketEntities(C.Frames[J]);
-     C.Frames[J].SentTime := 0;
-     C.Frames[J].PingTime := -1;     
-    end;
-
-  if C.Netchan.Addr.AddrType <> NA_UNUSED then
-   begin
-    Addr := C.Netchan.Addr;
-    MemSet(C.Netchan, SizeOf(C.Netchan), 0);
-    Netchan_Setup(NS_SERVER, C.Netchan, Addr, I, HostClient, SV_GetFragmentSize);
-   end;
-
-  COM_ClearCustomizationList(C.Customization);
- end;
-
-if not KeepFrames then
- begin
-  SV_ClearClientFrames;
-  
-  MemSet(SVS.Clients^, SizeOf(TClient) * SVS.MaxClientsLimit, 0);
-  SV_AllocClientFrames;
- end;
-end;
-
-procedure Host_ClearMemory(B: Boolean);
-begin
-if not B then
- DPrint('Clearing memory.');
+DPrint('Clearing memory.');
 
 CM_FreePAS;
 SV_ClearEntities;
 Mod_ClearAll;
+SV_ClearPrecachedEvents;
 if HostHunkLevel > 0 then
+ Hunk_FreeToLowMark(HostHunkLevel);
+
+if KeepClients then
  begin
   SV_ClearClientFrames;
-  Hunk_FreeToLowMark(HostHunkLevel);
- end;
+  SV_ClearClientStates;
+ end
+else
+ SV_ClearClients;
 
-SV_ClearCaches;
 MemSet(SV, SizeOf(SV), 0);
-SV_ClearClientStates;
 end;
 
 procedure Host_Error(Msg: PLChar);
@@ -243,31 +201,31 @@ end;
 procedure Host_ShutdownServer(SkipNotify: Boolean);
 var
  I: Int;
+ C: PClient;
 begin
 if SV.Active then
  begin
-  SV_ServerDeactivate;
-  SV.Active := False;
-  NET_ClearLagData(True, True);
   for I := 0 to SVS.MaxClients - 1 do
    begin
-    HostClient := @SVS.Clients[I];
-    if HostClient.Active or HostClient.Connected then
-     SV_DropClient(HostClient^, SkipNotify, 'Server shutting down.');
+    C := @SVS.Clients[I];
+    if C.Connected then
+     SV_DropClient(C^, SkipNotify, 'Server shutting down.');
    end;
-   
+
+  SV_ServerDeactivate;
+  SV.Active := False;
+  
   SV_ClearEntities;
-  SV_ClearCaches;
   FreeAllEntPrivateData;
-  MemSet(SV, SizeOf(SV), 0);
-  SV_ClearClientStates;
 
-  Host_ClearClients(False);
-  SV_ClearClientFrames;
-
+  SV_ClearClients;
   MemSet(SVS.Clients^, SizeOf(TClient) * SVS.MaxClientsLimit, 0);
+
+  SV_ClearPrecachedEvents;
   HPAK_FlushHostQueue;
 
+  NET_ClearLagData(False, True);
+  MemSet(SV, SizeOf(SV), 0);
   LPrint('Server shutdown'#10);
   Log_Close;
  end;
@@ -279,12 +237,12 @@ Host_InitCommands;
 Host_InitCVars;
 end;
 
-procedure Host_ClientCommands(S: PLChar);
+procedure Host_ClientCommands(var C: TClient; S: PLChar);
 begin
-if not HostClient.FakeClient then
+if C.Connected and not C.FakeClient then
  begin
-  MSG_WriteByte(HostClient.Netchan.NetMessage, SVC_STUFFTEXT);
-  MSG_WriteString(HostClient.Netchan.NetMessage, S);
+  MSG_WriteByte(C.Netchan.NetMessage, SVC_STUFFTEXT);
+  MSG_WriteString(C.Netchan.NetMessage, S);
  end;
 end;
 
@@ -380,16 +338,31 @@ begin
 HostTimes.Cur := Sys_FloatTime;
 HostTimes.Frame := HostTimes.Cur - HostTimes.Prev;
 if HostTimes.Frame < 0 then
- HostTimes.Frame := 0.001;
+ begin
+  if sys_minframetime.Value <= 0 then
+   CVar_DirectSet(sys_minframetime, '0.0001');
+  HostTimes.Frame := sys_minframetime.Value;
+ end;
 HostTimes.Prev := HostTimes.Cur;
+end;
+
+procedure Host_CheckTimeCVars;
+begin
+if sys_minframetime.Value <= 0 then
+ CVar_DirectSet(sys_minframetime, '0.0001')
+else
+ if sys_maxframetime.Value > 2 then
+  CVar_DirectSet(sys_maxframetime, '2')
+ else
+  if sys_timescale.Value <= 0 then
+   CVar_DirectSet(sys_timescale, '1');
 end;
 
 function Host_FilterTime(Time: Double): Boolean;
 var
  F: Double;
 begin
-if sys_timescale.Value <= 0 then
- CVar_DirectSet(sys_timescale, '1');
+Host_CheckTimeCVars;
 
 RealTime := RealTime + Time * sys_timescale.Value;
 
@@ -410,8 +383,6 @@ else
  begin
   F := RealTime - OldRealTime;
   OldRealTime := RealTime;
-  if sys_maxframetime.Value > 1 then
-   sys_maxframetime.Value := 1;
 
   if F > sys_maxframetime.Value then
    HostFrameTime := sys_maxframetime.Value
@@ -420,6 +391,9 @@ else
     HostFrameTime := sys_minframetime.Value
    else
     HostFrameTime := F;
+
+  if HostFrameTime <= 0 then
+   HostFrameTime := sys_minframetime.Value;
 
   Result := True;
  end;
@@ -540,9 +514,9 @@ COM_Init;
 Con_Init;
 
 CVar_RegisterVariable(console_cvar);
+CVar_RegisterVariable(developer);
 if (COM_CheckParm('-console') > 0) or (COM_CheckParm('-toconsole') > 0) or (COM_CheckParm('-dev') > 0) then
  CVar_DirectSet(console_cvar, '1');
-
 if COM_CheckParm('-dev') > 0 then
  CVar_DirectSet(developer, '1');
 
@@ -566,8 +540,8 @@ CVar_DirectSet(sv_version, @Buf);
 
 DPrint(['Heap size: ', RoundTo(HostInfo.MemSize div (1024 * 1024), -3), ' MB.']);
 
-R_InitTextures;
 CVar_RegisterVariable(r_cachestudio);
+R_InitTextures;
 HPAK_CheckIntegrity('custom.hpk');
 
 CBuf_InsertText('exec valve.rc'#10);
@@ -575,7 +549,6 @@ Hunk_AllocName(0, '-HOST_HUNKLEVEL-');
 HostHunkLevel := Hunk_LowMark;
 
 HostActive := 1;
-SCRSkipUpdate := False;
 
 HostTimes.Prev := Sys_FloatTime;
 HostInit := True;

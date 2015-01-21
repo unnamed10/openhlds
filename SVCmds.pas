@@ -255,7 +255,7 @@ if CmdSource = csServer then
  if Cmd_Argc = 1 then
   begin
    Print('Server info settings:');
-   Info_Print(Info_ServerInfo);
+   Info_Print(@ServerInfo);
   end
  else
   if Cmd_Argc <> 3 then
@@ -268,12 +268,12 @@ if CmdSource = csServer then
     else
      begin
       Value := Cmd_Argv(2);
-      Info_SetValueForKey(Info_ServerInfo, Key, Value, SizeOf(Info.ServerInfo));
+      Info_SetValueForKey(@ServerInfo, Key, Value, SizeOf(ServerInfo));
       P := CVar_FindVar(Key);
       if P <> nil then
        CVar_DirectSet(P^, Value);
 
-      SV_BroadcastCommand(['fullserverinfo "', Info_ServerInfo, '"#10']);
+      SV_BroadcastCommand(['fullserverinfo "', PLChar(@ServerInfo), '"#10']);
      end;
    end;
 end;
@@ -304,62 +304,79 @@ end;
 procedure SV_ShowServerinfo_F; cdecl;
 begin
 if CmdSource = csServer then
- Info_Print(Info_ServerInfo);
+ Info_Print(@ServerInfo);
 end;
 
 procedure SV_User_F; cdecl;
+const
+ Prefix: array[Boolean] of PLChar = ('Userinfo', 'Physinfo');
 var
+ B: Boolean;
  S: PLChar;
  I: Int;
- UserID: UInt;
+ K, UserID: UInt;
  C: PClient;
 begin
 if CmdSource = csServer then
  if not SV.Active then
   Print('user: The server is not running.')
  else
-  if Cmd_Argc <> 2 then
-   Print('Usage: user <username or #userid>' + LineBreak +
-         'The userid should be prefixed with a "#".')
-  else
-   begin
-    S := Cmd_Argv(1);
-    if S^ = '#' then
-     begin
-      UserID := StrToIntDef(PLChar(UInt(S) + 1), 0);
-      if UserID = 0 then
-       begin
-        Print('user: Bad userid specified.');
-        Exit;
-       end;
-      S := EmptyString;
-     end
-    else
-     UserID := 0;
+  begin
+   K := Cmd_Argc;
+   if (K < 2) or (K > 3) then
+    Print('Usage: user <username or #userid> ["physinfo"]' + LineBreak +
+          'The userid should be prefixed with a "#".')
+   else
+    begin
+     S := Cmd_Argv(1);
+     if S^ = '#' then
+      begin
+       UserID := StrToIntDef(PLChar(UInt(S) + 1), 0);
+       if UserID = 0 then
+        begin
+         Print('user: Bad userid specified.');
+         Exit;
+        end;
+       S := EmptyString;
+      end
+     else
+      UserID := 0;
 
-    for I := 0 to SVS.MaxClients - 1 do
-     begin
-      C := @SVS.Clients[I];
-      if (C.Active or C.Spawned or C.Connected) and not C.FakeClient and
-         (((UserID > 0) and (C.UserID = UserID)) or ((S^ > #0) and (StrComp(@C.NetName, S) = 0))) then
-       begin
-        Print(['Userinfo for "', PLChar(@C.NetName), '" (#', C.UserID, '):']);
-        Info_Print(@C.UserInfo);
-        Exit;
-       end;
-     end;
+     B := (K = 3) and (StrIComp(Cmd_Argv(2), 'physinfo') = 0);
 
-    if UserID > 0 then
-     Print(['user: Couldn''t find user #', UserID, '.'])
-    else
-     Print(['user: Couldn''t find user "', S, '".'])    
-   end;
+     for I := 0 to SVS.MaxClients - 1 do
+      begin
+       C := @SVS.Clients[I];
+       if C.Connected and (((UserID > 0) and (C.UserID = UserID)) or ((S^ > #0) and (StrComp(@C.NetName, S) = 0))) then
+        begin
+         if C.FakeClient then
+          Print([Prefix[B], ' for fake player "', PLChar(@C.NetName), '" (#', C.UserID, '):'])
+         else
+          Print([Prefix[B], ' for "', PLChar(@C.NetName), '" (#', C.UserID, '):']);
+
+         if B then
+          Info_Print(@C.PhysInfo)
+         else
+          Info_Print(@C.UserInfo);
+
+         Exit;
+        end;
+      end;
+
+     if UserID > 0 then
+      Print(['user: Couldn''t find user #', UserID, '.'])
+     else
+      Print(['user: Couldn''t find user "', S, '".'])
+    end;
+  end;
 end;
 
 procedure SV_Users_F; cdecl;
 var
  I, J: Int;
  C: PClient;
+ Buf: array[1..1024] of LChar;
+ S: PLChar;
  IntBuf, ExpandBuf: array[1..32] of LChar;
 begin
 if CmdSource = csServer then
@@ -371,10 +388,30 @@ if CmdSource = csServer then
    for I := 0 to SVS.MaxClients - 1 do
     begin
      C := @SVS.Clients[I];
-     if (C.Active or C.Spawned or C.Connected) and not C.FakeClient then
+     if C.Connected then
       begin
-       Print(['#', ExpandString(IntToStr(J + 1, IntBuf, SizeOf(IntBuf)), @ExpandBuf, SizeOf(ExpandBuf), 2), ': ', PLChar(@C.NetName),
-              ' (UserID: ', C.UserID, '; UniqueID: ', SV_GetClientIDString(C^), ').']);
+       S := StrECopy(@Buf, '#');
+       S := StrECopy(S, ExpandString(IntToStr(J + 1, IntBuf, SizeOf(IntBuf)), @ExpandBuf, SizeOf(ExpandBuf), 2));
+       S := StrECopy(S, ': ');
+       S := StrECopy(S, @C.NetName);
+
+       if C.FakeClient then
+        S := StrECopy(S, ' (fake client)')
+       else
+        if C.HLTV then
+         S := StrECopy(S, ' (HLTV)');
+
+       S := StrECopy(S, ' (UserID: ');
+       S := StrECopy(S, IntToStr(C.UserID, IntBuf, SizeOf(IntBuf)));
+       S := StrECopy(S, '; UniqueID: ');
+       S := StrECopy(S, SV_GetClientIDString(C^));
+       S := StrECopy(S, '; Out: ');
+       S := StrECopy(S, PLChar(FloatToStr(RoundTo(C.Netchan.Flow[1].KBAvgRate, -2))));
+       S := StrECopy(S, ' KBps; In: ');
+       S := StrECopy(S, PLChar(FloatToStr(RoundTo(C.Netchan.Flow[2].KBAvgRate, -2))));
+       StrCopy(S, ' KBps).');
+
+       Print(@Buf);
        Inc(J);
       end;
     end;
@@ -388,7 +425,7 @@ begin
 if CmdSource = csClient then
  begin
   SV_EndRedirect;
-  SV_BroadcastPrint([PLChar(@HostClient.NetName), ' dropped.']);
+  SV_BroadcastPrint([PLChar(@HostClient.NetName), ' dropped.'#10]);
   SV_DropClient(HostClient^, False, 'Client sent ''drop''.');
  end;
 end;
@@ -406,8 +443,14 @@ var
  C: PClient;
  I: Int;
 begin
-if (CmdSource = csServer) or (not HostClient.Active and HostClient.Spawned) or (HostClient.ConnectSeq = SVS.SpawnCount) then
- Exit;
+if CmdSource = csServer then
+ Exit
+else
+ if (HostClient.ConnectSeq = SVS.SpawnCount) and (RealTime <= HostClient.NewCmdTime) then
+  begin
+   SV_DropClient(HostClient^, False, 'Reconnection blocked, not enough time passed since previous attempt.');
+   Exit;
+  end;
 
 SB.Name := 'New Connection';
 SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
@@ -418,8 +461,8 @@ SB.MaxSize := SizeOf(SBData);
 HostClient.Connected := True;
 HostClient.ConnectTime := RealTime;
 HostClient.ConnectSeq := SVS.SpawnCount;
+HostClient.NewCmdTime := RealTime + 1.5;
 
-SZ_Clear(HostClient.Netchan.NetMessage);
 SZ_Clear(HostClient.UnreliableMessage);
 Netchan_Clear(HostClient.Netchan);
 
@@ -431,10 +474,7 @@ if UserMsgs <> nil then
   SV_SendUserReg(SB);
   NewUserMsgs := OldUserMsgs;
  end;
-
 HostClient.UserMsgReady := True;
-if (HostClient.Active or HostClient.Spawned) and (HostClient.Entity <> nil) then
- DLLFunctions.ClientDisconnect(HostClient.Entity^);
 
 StrCopy(@Name, @HostClient.NetName);
 NET_AdrToString(HostClient.Netchan.Addr, Address, SizeOf(Address));
@@ -443,21 +483,18 @@ if DLLFunctions.ClientConnect(HostClient.Entity^, @Name, @Address, @RejectReason
  begin
   MSG_WriteByte(SB, SVC_STUFFTEXT);
   S := StrECopy(@Buf, 'fullserverinfo "');
-  S := StrECopy(S, Info_ServerInfo);
+  S := StrECopy(S, @ServerInfo);
   StrCopy(S, '"'#10);
   MSG_WriteString(SB, @Buf);
   for I := 0 to SVS.MaxClients - 1 do
    begin
     C := @SVS.Clients[I];
-    if (C = HostClient) or C.Active or C.Spawned or C.Connected then
+    if (C = HostClient) or C.Connected then
      SV_FullClientUpdate(C^, SB);
    end;
 
   if FSB_OVERFLOWED in SB.AllowOverflow then
-   begin
-    DPrint(['Connection buffer overflow on "', PLChar(@HostClient.NetName), '".']);
-    SV_DropClient(HostClient^, False, 'Connection buffer overflow.');
-   end
+   SV_DropClient(HostClient^, False, 'Connection buffer overflow.')
   else
    begin
     Netchan_CreateFragments(HostClient.Netchan, SB);
@@ -466,14 +503,8 @@ if DLLFunctions.ClientConnect(HostClient.Entity^, @Name, @Address, @RejectReason
  end
 else
  begin
-  RejectReason[High(RejectReason)] := #0;
-  
-  MSG_WriteByte(HostClient.Netchan.NetMessage, SVC_STUFFTEXT);
-  S := StrECopy(@Buf, 'echo ');
-  S := StrECopy(S, @RejectReason);
-  StrCopy(S, #10);
-  MSG_WriteString(HostClient.Netchan.NetMessage, @Buf);
-  SV_DropClient(HostClient^, False, ['Server refused connection because: ', PLChar(@RejectReason), '.']);
+  SV_ClientPrint(@RejectReason, True);
+  SV_DropClient(HostClient^, False, ['Server refused connection: ', PLChar(@RejectReason), '.']);
  end;
 end;
 
@@ -483,45 +514,45 @@ var
  SBData: array[1..65536] of Byte;
  CRC: PCRC;
 begin
-if CmdSource = csClient then
- if Cmd_Argc <> 3 then
-  SV_ClientPrint('Usage: spawn <seq> <crc>')
- else
-  if HostClient.SpawnSeq <> SVS.SpawnCount then
+if (CmdSource = csClient) and (Cmd_Argc = 3) then
+ begin
+  if (HostClient.ConnectSeq = SVS.SpawnCount) and (HostClient.SpawnSeq = SVS.SpawnCount) and
+     (RealTime <= HostClient.SpawnCmdTime) then
    begin
-    HostClient.SpawnSeq := SVS.SpawnCount;
+    SV_DropClient(HostClient^, False, 'Reconnection blocked, not enough time passed since previous attempt.');
+    Exit;
+   end;
 
-    CRC := @HostClient.MapCRC;
-    CRC^ := StrToInt(Cmd_Argv(2));
-    COM_UnMunge2(CRC, SizeOf(CRC^), Byte(not SVS.SpawnCount));
+  HostClient.SpawnSeq := SVS.SpawnCount;
+  HostClient.SpawnCmdTime := RealTime + 1.5;
+  
+  CRC := @HostClient.MapCRC;
+  CRC^ := StrToInt(Cmd_Argv(2));
+  COM_UnMunge2(CRC, SizeOf(TCRC), Byte(not SVS.SpawnCount));
 
-    if UInt(StrToInt(Cmd_Argv(1))) <> SVS.SpawnCount then
-     SV_New_F
+  if UInt(StrToInt(Cmd_Argv(1))) <> SVS.SpawnCount then
+   SV_New_F
+  else
+   begin
+    SB.Name := 'Spawning';
+    SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
+    SB.Data := @SBData;
+    SB.CurrentSize := 0;
+    SB.MaxSize := SizeOf(SBData);
+
+    SZ_Write(SB, SV.Signon.Data, SV.Signon.CurrentSize);
+    SV_WriteSpawn(HostClient^, SB);
+    SV_WriteVoiceCodec(SB);
+
+    if FSB_OVERFLOWED in SB.AllowOverflow then
+     SV_DropClient(HostClient^, False, 'Spawn buffer overflow.')
     else
      begin
-      SB.Name := 'Spawning';
-      SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
-      SB.Data := @SBData;
-      SB.CurrentSize := 0;
-      SB.MaxSize := SizeOf(SBData);
-
-      SZ_Write(SB, SV.Signon.Data, SV.Signon.CurrentSize);
-
-      SV_WriteSpawn(SB);
-      SV_WriteVoiceCodec(SB);
-
-      if FSB_OVERFLOWED in SB.AllowOverflow then
-       begin
-        DPrint(['Spawn buffer overflow on "', PLChar(@HostClient.NetName), '".']);
-        SV_DropClient(HostClient^, False, 'Spawn buffer overflow.');
-       end
-      else
-       begin
-        Netchan_CreateFragments(HostClient.Netchan, SB);
-        Netchan_FragSend(HostClient.Netchan);
-       end;
+      Netchan_CreateFragments(HostClient.Netchan, SB);
+      Netchan_FragSend(HostClient.Netchan);
      end;
    end;
+ end;
 end;
 
 procedure SV_SendRes_F; cdecl;
@@ -529,17 +560,22 @@ var
  SB: TSizeBuf;
  SBData: array[1..65536] of Byte;
 begin
-if (CmdSource <> csServer) and (HostClient.Active or not HostClient.Spawned) and (RealTime >= HostClient.SendResTime) then
+if (CmdSource <> csServer) and (HostClient.Active or not HostClient.Spawned) and (RealTime > HostClient.SendResTime) then
  begin
   SB.Name := 'SendResources';
-  SB.AllowOverflow := [];
+  SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
   SB.Data := @SBData;
   SB.CurrentSize := 0;
   SB.MaxSize := SizeOf(SBData);
 
   SV_SendResources(SB);
-  Netchan_CreateFragments(HostClient.Netchan, SB);
-  Netchan_FragSend(HostClient.Netchan);
+  if FSB_OVERFLOWED in SB.AllowOverflow then
+   SV_DropClient(HostClient^, False, 'Resource buffer overflow.')
+  else
+   begin
+    Netchan_CreateFragments(HostClient.Netchan, SB);
+    Netchan_FragSend(HostClient.Netchan);
+   end;
 
   if sv_sendresinterval.Value < 0 then
    CVar_DirectSet(sv_sendresinterval, '0');
@@ -550,7 +586,7 @@ end;
 procedure SV_SendEnts_F; cdecl;
 begin
 if (CmdSource <> csServer) and HostClient.Active and HostClient.Spawned and HostClient.Connected and
-   (RealTime >= HostClient.SendEntsTime) then
+   (RealTime > HostClient.SendEntsTime) then
  begin
   HostClient.SendInfo := True;
 
@@ -562,7 +598,7 @@ end;
 
 procedure SV_FullUpdate_F; cdecl;
 begin
-if (CmdSource <> csServer) and HostClient.Active and (RealTime >= HostClient.FullUpdateTime) then
+if (CmdSource <> csServer) and HostClient.Active and (RealTime > HostClient.FullUpdateTime) then
  begin
   SV_ForceFullClientsUpdate;
   DLLFunctions.ClientCommand(SVPlayer^);

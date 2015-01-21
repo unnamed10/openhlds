@@ -271,6 +271,9 @@ function StrECopy(Dest, Source: PLChar): PLChar;
 
 function ExpandString(Src, Dst: PLChar; Size: UInt; MinSize: UInt): PLChar;
 
+function StrToFloatDef(S: PLChar; Def: Double): Double;
+function StrToFloat(S: PLChar): Double;
+
 implementation
 
 uses SysUtils {$IFDEF MSWINDOWS}, Windows{$ENDIF};
@@ -1607,6 +1610,59 @@ if Size > 0 then
 
    StrLCopy(Dst, Src, Min(Size, L + 1) - 1);
   end;
+end;
+
+function StrToFloatDef(S: PLChar; Def: Double): Double;
+var
+ B: Boolean;
+ C: LChar;
+ FP: PLChar;
+begin
+B := S^ = '-';
+if B or (S^ = '+') then
+ Inc(UInt(S));
+
+Result := 0;
+FP := nil;
+repeat
+ C := S^;
+ if C = #0 then
+  Break
+ else
+  if C = '.' then
+   if FP = nil then
+    FP := PLChar(UInt(S) + 1)
+   else
+    begin
+     Result := Def;
+     Exit;
+    end
+  else
+   if (C < '0') or (C > '9') then
+    begin
+     Result := Def;
+     Exit;
+    end
+   else
+    Result := Result * 10 + (Ord(C) - Ord('0'));
+
+ Inc(UInt(S));
+until False;
+
+if FP <> nil then
+ while UInt(S) > UInt(FP) do
+  begin
+   Result := Result / 10;
+   Dec(UInt(S));
+  end;
+
+if B then
+ Result := -Result;
+end;
+
+function StrToFloat(S: PLChar): Double;
+begin
+Result := StrToFloatDef(S, 0);
 end;
 
 end.

@@ -263,14 +263,14 @@ for I := 0 to Delta.NumFields - 1 do
       MSG_WriteSBits(Trunc(SV.Time * F.Scale) - Trunc(PSingle(UInt(NS) + F.Offset)^ * F.Scale), F.Bits);
      DT_BYTE:
       if Signed then
-       MSG_WriteSBits(Trunc(PInt8(UInt(NS) + F.Offset)^ * F.Scale) and $FF, F.Bits)
+       MSG_WriteSBits(Int8(Trunc(PInt8(UInt(NS) + F.Offset)^ * F.Scale)), F.Bits)
       else
-       MSG_WriteBits(Trunc(PUInt8(UInt(NS) + F.Offset)^ * F.Scale) and $FF, F.Bits);
+       MSG_WriteBits(UInt8(Trunc(PUInt8(UInt(NS) + F.Offset)^ * F.Scale)), F.Bits);
      DT_SHORT:
       if Signed then
-       MSG_WriteSBits(Trunc(PInt16(UInt(NS) + F.Offset)^ * F.Scale) and $FFFF, F.Bits)
+       MSG_WriteSBits(Int16(Trunc(PInt16(UInt(NS) + F.Offset)^ * F.Scale)), F.Bits)
       else
-       MSG_WriteBits(Trunc(PUInt16(UInt(NS) + F.Offset)^ * F.Scale) and $FFFF, F.Bits);
+       MSG_WriteBits(UInt16(Trunc(PUInt16(UInt(NS) + F.Offset)^ * F.Scale)), F.Bits);
      DT_INTEGER:
       begin
        if Signed then
@@ -632,6 +632,9 @@ if Delta_ParseType(DF.FieldType, F) then
   F := COM_Parse(F);
   F := COM_Parse(F);
   DF.Scale := StrToFloatDef(PLChar(@COM_Token), 0);
+  if DF.Scale = 0 then
+   Sys_Error('Delta_ParseField: Scale should not equal to 0.');
+
   if Post then
    begin
     F := COM_Parse(F);

@@ -11,11 +11,10 @@ procedure SV_Frame;
 var
  sv_stats: TCVar = (Name: 'sv_stats'; Data: '1'); 
  sv_statsinterval: TCVar = (Name: 'sv_statsinterval'; Data: '30');
- sv_statsmax: TCVar = (Name: 'sv_statsmax'; Data: '60');
 
 implementation
 
-uses Host, Network, Resource, Server, SVClient, SVEdict, SVMove, SVPacket, SVPhys, SVRcon, SVSend, SysClock;
+uses Memory, Host, Network, Resource, Server, SVClient, SVEdict, SVMove, SVPacket, SVPhys, SVRcon, SVSend, SysClock;
 
 var
  VoiceCodec: array[1..128] of LChar;
@@ -26,7 +25,7 @@ var
 
 function SV_IsSimulating: Boolean;
 begin
-Result := not SV.Paused and (SVS.MaxClients > 1);
+Result := not SV.Paused;
 end;
 
 procedure SV_CheckVoiceChanges;
@@ -61,10 +60,13 @@ else
      begin
       C := @SVS.Clients[I];
       if C.Connected and not C.FakeClient then
-       begin
-        Netchan_CreateFragments(C.Netchan, SB);
-        Netchan_FragSend(C.Netchan);
-       end;
+       if SB.CurrentSize + C.Netchan.NetMessage.CurrentSize < C.Netchan.NetMessage.MaxSize then
+        SZ_Write(C.Netchan.NetMessage, SB.Data, SB.CurrentSize)
+       else
+        begin
+         Netchan_CreateFragments(C.Netchan, SB);
+         Netchan_FragSend(C.Netchan);
+        end;
      end;
   end;
 end;
@@ -76,84 +78,64 @@ var
  I, J: Int;
  C: PClient;
 begin
-if (sv_stats.Value <> 0) and (sv_statsinterval.Value > 0) then
+if (sv_stats.Value <> 0) and (sv_statsinterval.Value > 0) and (RealTime >= SVS.Stats.NextStatUpdate) then
  begin
-  if (sv_statsmax.Value <> 0) and (SVS.Stats.NextStatClear = -1) then
-   SVS.Stats.NextStatClear := 0; 
+  SVS.Stats.NextStatUpdate := RealTime + sv_statsinterval.Value;
+  Inc(SVS.Stats.NumStats);
 
-  if (RealTime >= SVS.Stats.NextStatClear) and (SVS.Stats.NextStatClear <> -1) then
-   begin
-    MemSet(SVS.Stats, SizeOf(SVS.Stats), 0);
+  Players := SV_CountPlayers;
+  if SVS.MaxClients > 0 then
+   SVS.Stats.AccumServerFull := SVS.Stats.AccumServerFull + Players / SVS.MaxClients * 100;
+  if SVS.Stats.NumStats > 0 then
+   SVS.Stats.AvgServerFull := SVS.Stats.AccumServerFull / SVS.Stats.NumStats;
 
-    if sv_statsmax.Value = 0 then
-     SVS.Stats.NextStatClear := -1
-    else
-     SVS.Stats.NextStatClear := RealTime + sv_statsinterval.Value * (Trunc(sv_statsmax.Value) + 1);
-
-    SVS.Stats.NextStatUpdate := RealTime + sv_statsinterval.Value;
-    Players := SV_CountPlayers;
-    SVS.Stats.MinClientsEver := Players;
-    SVS.Stats.MaxClientsEver := Players;
-   end
+  if Players < SVS.Stats.MinClientsEver then
+   SVS.Stats.MinClientsEver := Players
   else
-   if RealTime >= SVS.Stats.NextStatUpdate then
-    begin
-     Inc(SVS.Stats.NumStats);
-     SVS.Stats.NextStatUpdate := RealTime + sv_statsinterval.Value;
-     Players := SV_CountPlayers;
-     if SVS.MaxClients > 0 then
-      SVS.Stats.AccumServerFull := SVS.Stats.AccumServerFull + Players * 100 / SVS.MaxClients;
-     if SVS.Stats.NumStats > 0 then
-      SVS.Stats.AvgServerFull := SVS.Stats.AccumServerFull / SVS.Stats.NumStats;
+   if Players > SVS.Stats.MaxClientsEver then
+    SVS.Stats.MaxClientsEver := Players;
 
-     if Players < SVS.Stats.MinClientsEver then
-      SVS.Stats.MinClientsEver := Players
-     else
-      if Players > SVS.Stats.MaxClientsEver then
-       SVS.Stats.MaxClientsEver := Players;
+  if Players = SVS.MaxClients then
+   Inc(SVS.Stats.TimesFull)
+  else
+   if Players = 0 then
+    Inc(SVS.Stats.TimesEmpty);
 
-     if Players >= SVS.MaxClients then
-      Inc(SVS.Stats.TimesFull)
-     else
-      if Players = 0 then
-       Inc(SVS.Stats.TimesEmpty);
+  if (SVS.MaxClients > 1) and not ((SVS.MaxClients = 2) and (Players = 1)) then
+   if Players >= SVS.MaxClients - 1 then
+    Inc(SVS.Stats.TimesNearlyFull)
+   else
+    if Players <= 1 then
+     Inc(SVS.Stats.TimesNearlyEmpty);
 
-     if (SVS.MaxClients > 1) and not ((SVS.MaxClients = 2) and (Players = 1)) then
-      if Players >= SVS.MaxClients - 1 then
-       Inc(SVS.Stats.TimesNearlyFull)
-      else
-       if Players <= 1 then
-        Inc(SVS.Stats.TimesNearlyEmpty);
+  if SVS.Stats.NumStats > 0 then
+   begin
+    SVS.Stats.NearlyFullPercent := SVS.Stats.TimesNearlyFull / SVS.Stats.NumStats * 100;
+    SVS.Stats.NearlyEmptyPercent := SVS.Stats.TimesNearlyEmpty / SVS.Stats.NumStats * 100;
+   end;
 
-     if SVS.Stats.NumStats > 0 then
-      begin
-       SVS.Stats.NearlyFullPercent := SVS.Stats.TimesNearlyFull * 100 / SVS.Stats.NumStats;
-       SVS.Stats.NearlyEmptyPercent := SVS.Stats.TimesNearlyEmpty * 100 / SVS.Stats.NumStats;
-      end;
+  F := 0;
+  J := 0;
+  for I := 0 to SVS.MaxClients - 1 do
+   begin
+    C := @SVS.Clients[I];
+    if C.Active and not C.FakeClient then
+     begin
+      Inc(J);
+      F := F + C.Latency;
+     end;
+   end;
 
-     F := 0;
-     J := 0;
-     for I := 0 to SVS.MaxClients - 1 do
-      begin
-       C := @SVS.Clients[I];
-       if C.Active and not C.FakeClient then
-        begin
-         Inc(J);
-         F := F + C.Latency;
-        end;
-      end;
+  if J > 0 then
+   F := F / J;
 
-     if J > 0 then
-      F := F / J;
+  SVS.Stats.AccumLatency := SVS.Stats.AccumLatency + F;
+  if SVS.Stats.NumStats > 0 then
+   SVS.Stats.AvgLatency := SVS.Stats.AccumLatency / SVS.Stats.NumStats;
 
-     SVS.Stats.AccumLatency := SVS.Stats.AccumLatency + F;
-     if SVS.Stats.NumStats > 0 then
-      SVS.Stats.AvgLatency := SVS.Stats.AccumLatency / SVS.Stats.NumStats;
-
-     if SVS.Stats.NumDrops > 0 then
-      SVS.Stats.AvgTimePlaying := SVS.Stats.AccumTimePlaying / SVS.Stats.NumDrops;
-    end;
- end;    
+  if SVS.Stats.NumDrops > 0 then
+   SVS.Stats.AvgTimePlaying := SVS.Stats.AccumTimePlaying / SVS.Stats.NumDrops;
+ end;
 end;
 
 procedure SV_Frame;
@@ -162,7 +144,8 @@ if SV.Active then
  begin
   GlobalVars.FrameTime := HostFrameTime;
   SV.PrevTime := SV.Time;
-  AllowCheats := sv_cheats.Value <> 0;
+  if ToggleCheats then
+   AllowCheats := sv_cheats.Value <> 0;
 
   SV_CheckCmdTimes;
   SV_ReadPackets;
@@ -175,9 +158,9 @@ if SV.Active then
   SV_QueryMovevarsChanged;
   SV_RequestMissingResourcesFromClients;
   SV_CheckTimeouts;
+  SV_CheckVoiceChanges;  
   SV_SendClientMessages;
   SV_GatherStatistics;
-  SV_CheckVoiceChanges;
  end;
 end;
 

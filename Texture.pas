@@ -6,18 +6,18 @@ interface
 
 uses SysUtils, Default, SDK;
 
-procedure W_CleanupName(Source, Dest: PLChar);
+procedure W_ToUpper(Src, Dst: PLChar);
+procedure W_ToLower(Src, Dst: PLChar);
+
 function W_LoadWADFile(Name: PLChar): Int;
 function W_GetLumpInfo(Index: UInt; Name: PLChar; Error: Boolean): PWADFileLump;
-function W_GetLumpName(WADIndex: UInt; Name: PLChar): Pointer;
-function W_GetLumpNum(WADIndex, Index: UInt): Pointer;
+function W_GetLumpName(Index: UInt; Name: PLChar): Pointer;
+function W_GetLumpNum(Index, LumpIndex: UInt): Pointer;
 procedure W_Shutdown;
-procedure SwapPic(var P: TQPic);
 
 function TEX_InitFromWAD(Name: PLChar): Boolean;
 procedure TEX_CleanupWadInfo;
-function TEX_LoadLump(Name: PLChar; Buffer: Pointer): Int;
-procedure TEX_AddAnimatingTextures;
+function TEX_LoadLump(Name: PLChar; out Buffer: Pointer): Int;
 
 implementation
 
@@ -25,8 +25,6 @@ uses Console, Common, SysMain, FileSys, Memory;
 
 var
  WADList: array[0..1] of TWADListEntry = ((Loaded: False), (Loaded: False));
- NumMiptex: UInt = 0;
- Miptex: array[0..MAX_MAP_TEXTURES - 1] of TTextureRef;
 
  NumTexLumps: UInt = 0;
  TexLumps: PTextureLumpArray = nil;
@@ -34,27 +32,51 @@ var
  NumTexFiles: UInt = 0;
  TexFiles: array[0..127] of TFile;
 
-procedure W_CleanupName(Source, Dest: PLChar);
+procedure W_ToUpper(Src, Dst: PLChar);
 var
- I: Int;
- C: LChar;
+ I: UInt;
+ C: LChar; 
 begin
 for I := 0 to MAX_LUMP_NAME - 1 do
  begin
-  C := Source^;
-  if C = #0 then
+  C := Src^;
+  if Src^ = #0 then
    begin
-    MemSet(Dest^, MAX_LUMP_NAME - I, 0);
-    Exit;     
+    MemSet(Dst^, MAX_LUMP_NAME - I, 0);
+    Exit;
+   end
+  else
+   if C in ['a'..'z'] then
+    Dec(C, Ord('a') - Ord('A'));
+
+  Dst^ := C;
+
+  Inc(UInt(Src));
+  Inc(UInt(Dst));
+ end;
+end;
+
+procedure W_ToLower(Src, Dst: PLChar);
+var
+ I: UInt;
+ C: LChar; 
+begin
+for I := 0 to MAX_LUMP_NAME - 1 do
+ begin
+  C := Src^;
+  if Src^ = #0 then
+   begin
+    MemSet(Dst^, MAX_LUMP_NAME - I, 0);
+    Exit;
    end
   else
    if C in ['A'..'Z'] then
     Inc(C, Ord('a') - Ord('A'));
 
-  Dest^ := C;
+  Dst^ := C;
 
-  Inc(UInt(Source));
-  Inc(UInt(Dest));
+  Inc(UInt(Src));
+  Inc(UInt(Dst));
  end;
 end;
 
@@ -63,6 +85,7 @@ var
  I, J: Int;
  E: PWADListEntry;
  L: PWADFileLump;
+ P: PQPic;
 begin
 for I := Low(WADList) to High(WADList) do
  if not WADList[I].Loaded then
@@ -74,7 +97,7 @@ for I := Low(WADList) to High(WADList) do
      if I = Low(WADList) then
       Sys_Error(['W_LoadWADFile: Couldn''t load "', Name, '".'])
      else
-      Print(['Warning: W_LoadWADFile: couldn''t load "', Name, '".']);
+      Print(['W_LoadWADFile: Couldn''t load "', Name, '".']);
      Result := -1;
     end
    else
@@ -83,7 +106,7 @@ for I := Low(WADList) to High(WADList) do
 
      StrLCopy(@E.Name, Name, SizeOf(E.Name) - 1);
      if PUInt32(@E.Data.FileTag)^ <> WAD3_TAG then
-      Sys_Error('W_LoadWADFile: WAD file doesn''t have WAD3 ID.');
+      Sys_Error(['W_LoadWADFile: WAD file ", Name, '' doesn''t have WAD3 ID.']);
 
      E.NumEntries := LittleLong(E.Data.NumEntries);
      E.Entries := Pointer(UInt(E.Data) + UInt(LittleLong(E.Data.FileOffset)));
@@ -92,11 +115,17 @@ for I := Low(WADList) to High(WADList) do
       begin
        L := @E.Entries[J];
        L.FilePos := LittleLong(L.FilePos);
+       L.DiskSize := LittleLong(L.DiskSize);
        L.Size := LittleLong(L.Size);
-       W_CleanupName(@L.Name, @L.Name);
+       W_ToLower(@L.Name, @L.Name);
        if L.LumpType = TYP_QPIC then
-        SwapPic(PQPic(UInt(E.Data) + L.FilePos)^);
+        begin
+         P := PQPic(UInt(E.Data) + L.FilePos);
+         P.Width := LittleLong(P.Width);
+         P.Height := LittleLong(P.Height);
+        end;
       end;
+
      Result := I;
     end;
 
@@ -113,43 +142,43 @@ var
  I: Int;
  E: PWADListEntry;
 begin
-W_CleanupName(Name, @Buf);
 if Index > High(WADList) then
  Sys_Error('W_GetLumpInfo: Invalid index.');
 
+W_ToLower(Name, @Buf);
 E := @WADList[Index];
 for I := 0 to E.NumEntries - 1 do
- if StrComp(@Buf, @E.Entries[I].Name) = 0 then
+ if Compare16(@Buf, @E.Entries[I].Name) then
   begin
    Result := @E.Entries[I];
    Exit;
   end;
 
 if Error then
- Sys_Error(['W_GetLumpInfo: "', Name, '" not found.']);
+ Sys_Error(['W_GetLumpInfo: Couldn''t find "', Name, '".']);
 Result := nil;
 end;
 
-function W_GetLumpName(WADIndex: UInt; Name: PLChar): Pointer;
+function W_GetLumpName(Index: UInt; Name: PLChar): Pointer;
 var
  P: PWADFileLump;
 begin
-if WADIndex > High(WADList) then
- Sys_Error('W_GetLumpName: Invalid WAD index.');
+if Index > High(WADList) then
+ Sys_Error('W_GetLumpName: Invalid index.');
 
-P := W_GetLumpInfo(WADIndex, Name, True);
-Result := Pointer(UInt(WADList[WADIndex].Data) + P.FilePos);
+P := W_GetLumpInfo(Index, Name, True);
+Result := Pointer(UInt(WADList[Index].Data) + P.FilePos);
 end;
 
-function W_GetLumpNum(WADIndex, Index: UInt): Pointer;
+function W_GetLumpNum(Index, LumpIndex: UInt): Pointer;
 begin
-if WADIndex > High(WADList) then
+if Index > High(WADList) then
  Sys_Error('W_GetLumpNum: Invalid WAD index.')
 else
- if (Index >= WADList[WADIndex].NumEntries) then
-  Sys_Error('W_GetLumpNum: Invalid index.');
+ if (LumpIndex >= WADList[Index].NumEntries) then
+  Sys_Error('W_GetLumpNum: Invalid lump index.');
 
-Result := Pointer(UInt(WADList[WADIndex].Data) + WADList[WADIndex].Entries[Index].FilePos);
+Result := Pointer(UInt(WADList[Index].Data) + WADList[Index].Entries[LumpIndex].FilePos);
 end;
 
 procedure W_Shutdown;
@@ -165,39 +194,6 @@ for I := Low(WADList) to High(WADList) do
   else
    MemSet(E^, SizeOf(E^), 0);
  end;
-end;
-
-procedure SwapPic(var P: TQPic);
-begin
-P.Width := LittleLong(P.Width);
-P.Height := LittleLong(P.Height);
-end;
-
-
-
-procedure SafeRead(F: TFile; Buf: Pointer; BufSize: UInt);
-begin
-if FS_Read(F, Buf, BufSize) <> BufSize then
- Sys_Error('SafeRead: File read failure.');
-end;
-
-procedure CleanupName(Src, Dst: PLChar);
-var
- I: UInt;
-begin
-for I := 0 to MAX_LUMP_NAME - 1 do
- if Src^ = #0 then
-  begin
-   MemSet(Dst^, MAX_LUMP_NAME - I, 0);
-   Exit;
-  end
- else
-  begin
-   Dst^ := UpperC(Src^);
-
-   Inc(UInt(Src));
-   Inc(UInt(Dst));
-  end;
 end;
 
 function TEX_InitFromWAD(Name: PLChar): Boolean;
@@ -219,46 +215,47 @@ repeat
  else
   Break;
 
- COM_FixSlashes(P);
  P := COM_FileBase(P, @Buf2);
+ COM_FixSlashes(P);
  COM_DefaultExtension(P, '.wad');
  if (StrPos(P, 'pldecal') = nil) and (StrPos(P, 'tempdecal') = nil) then
-  begin
-   if not FS_Open(F, P, 'r') then
-    Sys_Error(['TEX_InitFromWAD: Couldn''t open "', P, '".'])
-   else
-    begin
-     TexFiles[NumTexFiles] := F;
-     ID := NumTexFiles;
-     Inc(NumTexFiles);
-     DPrint(['Using WAD file: "', P, '".']);
-     SafeRead(F, @Header, SizeOf(Header));
+  if not FS_Open(F, P, 'r') then
+   Sys_Error(['TEX_InitFromWAD: Couldn''t open "', P, '".'])
+  else
+   begin
+    TexFiles[NumTexFiles] := F;
+    ID := NumTexFiles;
+    Inc(NumTexFiles);
+    DPrint(['Using WAD file: "', P, '".']);
+    if FS_Read(F, @Header, SizeOf(Header)) < SizeOf(Header) then
+     Sys_Error(['TEX_InitFromWAD: "', P, '": File read error.'])
+    else
      if (PUInt32(@Header.FileTag)^ <> WAD2_TAG) and (PUInt32(@Header.FileTag)^ <> WAD3_TAG) then
+      Sys_Error(['TEX_InitFromWAD: "', P, '" doesn''t have WAD2/WAD3 tag.'])
+     else
       begin
-       FS_Close(F);
-       Sys_Error(['TEX_InitFromWAD: "', P, '" doesn''t have WAD2/3 tag.']);
-      end;
+       Header.NumEntries := LittleLong(Header.NumEntries);
+       Header.FileOffset := LittleLong(Header.FileOffset);
+       FS_Seek(F, Header.FileOffset, SEEK_SET);
+       TexLumps := Mem_ReAlloc(TexLumps, SizeOf(TTextureLump) * (NumTexLumps + Header.NumEntries));
 
-     Header.NumEntries := LittleLong(Header.NumEntries);
-     Header.FileOffset := LittleLong(Header.FileOffset);
-     FS_Seek(F, Header.FileOffset, SEEK_SET);
-     TexLumps := Mem_ReAlloc(TexLumps, SizeOf(TTextureLump) * (NumTexLumps + Header.NumEntries));
+       for I := NumTexLumps to NumTexLumps + Header.NumEntries - 1 do
+        begin
+         L := @TexLumps[I];
+         FS_Read(F, @L.Lump, SizeOf(L.Lump));
+         W_ToUpper(@L.Lump.Name, @L.Lump.Name);
+         L.Lump.FilePos := LittleLong(L.Lump.FilePos);
+         L.Lump.DiskSize := LittleLong(L.Lump.DiskSize);
+         L.Lump.Size := LittleLong(L.Lump.Size);
+         L.FileID := ID;
+        end;
 
-     for I := NumTexLumps to NumTexLumps + Header.NumEntries - 1 do
-      begin
-       L := @TexLumps[NumTexLumps];
-       SafeRead(F, L, SizeOf(TTextureLump) - SizeOf(UInt32)); // 32, actually.
-       CleanupName(@L.Name, @L.Name);
-       L.FilePos := LittleLong(L.FilePos);
-       L.DiskSize := LittleLong(L.DiskSize);
-       L.FileID := ID;
-       Inc(NumTexLumps);
+       Inc(NumTexLumps, Header.NumEntries);
       end;
-    end;
-  end;
- 
+   end;
+
  P := PLChar(UInt(P2) + SizeOf(P2^));
-until P2 = nil;
+until P^ = #0;
 
 Result := True;
 end;
@@ -277,81 +274,37 @@ NumTexFiles := 0;
 NumTexLumps := 0;
 end;
 
-function TEX_LoadLump(Name: PLChar; Buffer: Pointer): Int;
+function TEX_LoadLump(Name: PLChar; out Buffer: Pointer): Int;
 var
  I: Int;
  Buf: array[1..MAX_LUMP_NAME] of LChar;
  P: PTextureLump;
 begin
-CleanupName(Name, @Buf);
+Result := 0;
+W_ToUpper(Name, @Buf);
+
 for I := 0 to NumTexLumps - 1 do
  begin
   P := @TexLumps[I];
-  if StrComp(@Buf, @P.Name) = 0 then
+  if Compare16(@Buf, @P.Lump.Name) then
    begin
-    FS_Seek(TexFiles[P.FileID], P.FilePos, SEEK_SET);
-    SafeRead(TexFiles[P.FileID], Buffer, P.DiskSize);
-    Result := P.DiskSize; 
+    FS_Seek(TexFiles[P.FileID], P.Lump.FilePos, SEEK_SET);
+
+    Buffer := Mem_Alloc(P.Lump.DiskSize);
+    if Buffer = nil then
+     Sys_Error('TEX_LoadLump: Out of memory.')
+    else
+     if FS_Read(TexFiles[P.FileID], Buffer, P.Lump.DiskSize) < P.Lump.DiskSize then
+      Sys_Error('TEX_LoadLump: File read error.')
+     else
+      Result := P.Lump.DiskSize;
+
     Exit;
    end;
  end;
 
-Con_SafePrintF(['TEX_LoadLump: Warning: Texture lump "', Name, '" is not found.']);
-Result := 0;
-end;
-
-function FindMiptex(Name: PLChar): Int;
-var
- I: Int;
-begin
-for I := 0 to NumMiptex - 1 do
- if StrComp(Name, @Miptex[I].Name) = 0 then
-  begin
-   Result := I;
-   Exit;
-  end;
-
-Result := NumMiptex;
-if NumMiptex = MAX_MAP_TEXTURES then
- Sys_Error('FindMiptex: Exceeded MAX_MAP_TEXTURES.');
-
-StrLCopy(@Miptex[NumMiptex].Name, Name, MAX_TEXTUREREF_NAME - 1);
-Miptex[NumMiptex].Name[MAX_TEXTUREREF_NAME] := #0;
-Inc(NumMiptex);
-end;
-
-procedure TEX_AddAnimatingTextures;
-const
- T: array[0..19] of LChar = '0123456789ABCDEFGHIJ';
-var
- I, K: Int;
- N, J: UInt;
- P: PTextureRef;
- Buf: array[1..MAX_TEXTUREREF_NAME] of LChar;
-begin
-N := NumMiptex;
-for I := 0 to NumMiptex - 1 do
- begin
-  P := @Miptex[I];
-  if P.Name[Low(P.Name)] in ['+', '-'] then
-   begin
-    StrLCopy(@Buf, @P.Name, SizeOf(Buf) - 1);
-    Buf[High(Buf)] := #0;
-    for J := Low(T) to High(T) do
-     begin
-      Buf[Low(Buf) + 1] := T[J];
-      for K := 0 to NumTexLumps - 1 do
-       if StrComp(@Buf, @TexLumps[K].Name) = 0 then
-        begin
-         FindMiptex(@Buf);
-         Break;
-        end;
-     end;
-   end;
- end;
-
-if NumMiptex < N then
- DPrint(['Added ', NumMiptex - N, ' texture frames.']);
+Buffer := nil;
+Print(['TEX_LoadLump: Warning: Texture lump "', Name, '" was not found.']);
 end;
 
 end.

@@ -114,7 +114,7 @@ if H <> INVALID_HANDLE_VALUE then
   Sys_UnloadModule(H);
  end
 else
- Print(['LoadThisDLL: Couldn''t load "', Name, '": ', Sys_LastModuleErr, '.']);
+ Print(['LoadThisDLL: Couldn''t load "', Name, '": error ', Sys_LastModuleErr, '.']);
 end;
 
 function GetDispatch(Name: PLChar): Pointer;
@@ -138,6 +138,7 @@ var
  P, P2: Pointer;
  Key: array[1..64] of LChar;
  Value: array[1..256] of LChar;
+ ExtBuf: array[1..32] of LChar;
  S: PLChar;
  {$IFNDEF MSWINDOWS}S2: PLChar;{$ENDIF} 
  NameBuf, FullNameBuf: array[1..MAX_PATH_W] of LChar;
@@ -157,14 +158,14 @@ if FS_Open(F, 'liblist.gam', 'r') then
  begin
   FileSize := FS_Size(F);
   if FileSize = 0 then
-   Sys_Error('Game listing file size is bogus (liblist.gam: size 0).');
+   Sys_Error('LoadEntityDLLs: liblist.gam is empty.');
 
-  P := Mem_AllocN(FileSize + 1);
+  P := Mem_Alloc(FileSize + 1);
   if P = nil then
-   Sys_Error(['Couldn''t allocate space for game listing file of ', FileSize, ' bytes.']);
+   Sys_Error(['LoadEntityDLLs: liblist.gam is too big, out of memory.']);
 
-  if FS_Read(F, P, FileSize) <> FileSize then
-   Sys_Error('Error while reading game listing file.');
+  if FS_Read(F, P, FileSize) < FileSize then
+   Sys_Error('LoadEntityDLLs: File read error.');
    
   PLChar(UInt(P) + FileSize)^ := #0;
   COM_IgnoreColons := True;
@@ -188,6 +189,8 @@ if FS_Open(F, 'liblist.gam', 'r') then
       else
        S := StrLCopy(@NameBuf, S, SizeOf(NameBuf) - 1);
 
+      COM_FixSlashes(@NameBuf);
+
       {$IFNDEF MSWINDOWS}
       S2 := StrScan(S, '_');
       if S2 <> nil then
@@ -199,7 +202,8 @@ if FS_Open(F, 'liblist.gam', 'r') then
 
       {$IFDEF MSWINDOWS}
        FormatBuf(FullNameBuf, SizeOf(FullNameBuf) - 1, '%s\%s\%s%s', Length('%s\%s\%s%s'), [HostParms.BaseDir, GameDir, S, #0]);
-       if StrPos(@FullNameBuf, '.dll') <> nil then
+       COM_FileExtension(@FullNameBuf, @ExtBuf, SizeOf(ExtBuf));
+       if StrIComp(@ExtBuf, 'dll') = 0 then
         begin
          DPrint(['Adding DLL: ', GameDir, '\', S, '.']);
          LoadThisDLL(@FullNameBuf);
@@ -208,7 +212,8 @@ if FS_Open(F, 'liblist.gam', 'r') then
         DPrint(['Skipping non-dll: ', PLChar(@FullNameBuf), '.']);
       {$ELSE}
        FormatBuf(FullNameBuf, SizeOf(FullNameBuf) - 1, '%s/%s/%s%s', Length('%s/%s/%s%s'), [HostParms.BaseDir, GameDir, S, #0]);
-       if StrPos(@FullNameBuf, '.so') <> nil then
+       COM_FileExtension(@FullNameBuf, @ExtBuf, SizeOf(ExtBuf));
+       if StrIComp(@ExtBuf, 'so') = 0 then
         begin
          DPrint(['Adding shared library: ', GameDir, '/', S, '.']);
          LoadThisDLL(@FullNameBuf);
@@ -239,7 +244,7 @@ else
   Sys_FindClose;   
  end;
 
-if FullNameBuf[1] = #0 then
+if (FullNameBuf[1] = #0) or (NumExtDLL = 0) then
  begin
   Host_Error('No game DLL provided to the engine, exiting.');
   Exit;
@@ -359,12 +364,13 @@ end;
 procedure Host_InitializeGameDLL;
 begin
 CBuf_Execute;
-NET_Config(SVS.MaxClients > 1);
+NET_Config(True);
 if SVS.InitGameDLL then
  DPrint('Host_InitializeGameDLL called twice, skipping second call.')
 else
  begin
-  SkipParseLib := COM_CheckParm('-skipparselib') > 0;
+  // SkipParseLib := COM_CheckParm('-skipparselib') > 0;
+  SkipParseLib := True;
 
   SVS.InitGameDLL := True;
   LoadEntityDLLs(HostInfo);

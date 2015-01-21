@@ -424,11 +424,11 @@ procedure VectorAngles(const Fwd: TVec3; out Angles: TVec3);
 begin
 if (Fwd[0] <> 0) or (Fwd[1] <> 0) then
  begin
-  Angles[1] := ArcTan2(Fwd[1], Fwd[0]) * 180 / M_PI;
+  Angles[1] := Trunc(ArcTan2(Fwd[1], Fwd[0]) * 180 / M_PI);
   if Angles[1] < 0 then
    Angles[1] := Angles[1] + 360;
 
-  Angles[0] := ArcTan2(Fwd[2], Sqrt(Fwd[0] * Fwd[0] + Fwd[1] * Fwd[1])) * 180 / M_PI;
+  Angles[0] := Trunc(ArcTan2(Fwd[2], Sqrt(Fwd[0] * Fwd[0] + Fwd[1] * Fwd[1])) * 180 / M_PI);
   if Angles[0] < 0 then
    Angles[0] := Angles[0] + 360;
  end

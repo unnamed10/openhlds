@@ -10,7 +10,7 @@ procedure PM_Init(P: PPlayerMove);
 
 function PM_PlayerTrace(out Trace: TPMTrace; const VStart, VEnd: TVec3; TraceFlags, IgnorePE: Int32): PPMTrace;
 
-const
+var
  PlayerMinS: array[0..3] of TVec3 =
              ((-16, -16, -36),
               (-16, -16, -18),
@@ -22,13 +22,12 @@ const
               (16, 16, 18),
               (0, 0, 0),
               (32, 32, 32));
-             
-var
+
  PM: PPlayerMove;
 
 implementation
 
-uses Common, Console, Edict, Info, MathLib, Renderer, Server, SVSend, SVWorld, SysClock, SysMain;
+uses Common, Console, Edict, Info, MathLib, Renderer, Server, SVMove, SVSend, SVWorld, SysClock, SysMain;
 
 function PM_RecursiveHullCheck(const Hull: THull; Num: Int32; P1F, P2F: Single; const P1, P2: TVec3; out Trace: TPMTrace): Boolean; forward;
 
@@ -627,7 +626,6 @@ else
           begin
            Trace.Fraction := MidF;
            Trace.EndPos := Mid;
-           DPrint('Trace backed up past 0.0.');
            Result := False;
            Exit;
           end;
@@ -679,10 +677,10 @@ end;
 function __PM_Info_ValueForKey(S, Key: PLChar): PLChar; cdecl;
 begin Result := Info_ValueForKey(S, Key); end;
 
-procedure __PM_Particle(const Origin: TVec3; Color: Int32; Life: Single; ZPos, ZVel: Int32); cdecl;
+procedure __PM_Particle(var Origin: TVec3; Color: Int32; Life: Single; ZPos, ZVel: Int32); cdecl;
 begin end;
-
-function __PM_TestPlayerPosition(const Pos: TVec3; Trace: PPMTrace): Int32; cdecl;
+                                     
+function __PM_TestPlayerPosition(var Pos: TVec3; Trace: PPMTrace): Int32; cdecl;
 begin Result := PM_TestPlayerPosition(Pos, Trace); end;
 
 procedure __Con_NPrintF(ID: Int32; S: PLChar); cdecl; // for now, just print the contents
@@ -697,22 +695,22 @@ begin Print(S); end;
 function __Sys_FloatTime: Double; cdecl;
 begin Result := Sys_FloatTime; end;
 
-procedure __PM_StuckTouch(HitEnt: Int32; const TraceResult: TPMTrace); cdecl;
+procedure __PM_StuckTouch(HitEnt: Int32; var TraceResult: TPMTrace); cdecl;
 begin PM_StuckTouch(HitEnt, TraceResult); end;
 
-function __PM_PointContents(const P: TVec3; TrueContents: PInt32): Int32; cdecl;
+function __PM_PointContents(var P: TVec3; TrueContents: PInt32): Int32; cdecl;
 begin Result := PM_PointContents(P, TrueContents); end;
 
-function __PM_TruePointContents(const P: TVec3): Int32; cdecl;
+function __PM_TruePointContents(var P: TVec3): Int32; cdecl;
 begin Result := PM_TruePointContents(P); end;
 
-function __PM_HullPointContents(const Hull: THull; Num: Int32; const P: TVec3): Int32; cdecl;
+function __PM_HullPointContents(var Hull: THull; Num: Int32; var P: TVec3): Int32; cdecl;
 begin Result := PM_HullPointContents(Hull, Num, P); end;
 
-function __PM_PlayerTrace(out Trace: TPMTrace; const VStart, VEnd: TVec3; TraceFlags, IgnorePE: Int32): PPMTrace; cdecl;
+function __PM_PlayerTrace(out Trace: TPMTrace; var VStart, VEnd: TVec3; TraceFlags, IgnorePE: Int32): PPMTrace; cdecl;
 begin Result := PM_PlayerTrace(Trace, VStart, VEnd, TraceFlags, IgnorePE); end;
 
-function __PM_TraceLine(const VStart, VEnd: TVec3; Flags, UseHull, IgnorePE: Int32): PPMTrace; cdecl;
+function __PM_TraceLine(var VStart, VEnd: TVec3; Flags, UseHull, IgnorePE: Int32): PPMTrace; cdecl;
 begin Result := PM_TraceLine(VStart, VEnd, Flags, UseHull, IgnorePE); end;
 
 function __RandomLong(Low, High: Int32): Int32; cdecl;
@@ -721,16 +719,16 @@ begin Result := RandomLong(Low, High); end;
 function __RandomFloat(Low, High: Single): Single; cdecl;
 begin Result := RandomFloat(Low, High); end;
 
-function __PM_GetModelType(const Model: TModel): TModelType; cdecl;
+function __PM_GetModelType(var Model: TModel): TModelType; cdecl;
 begin Result := PM_GetModelType(Model); end;
 
-procedure __PM_GetModelBounds(const Model: TModel; out MinS, MaxS: TVec3); cdecl;
+procedure __PM_GetModelBounds(var Model: TModel; out MinS, MaxS: TVec3); cdecl;
 begin PM_GetModelBounds(Model, MinS, MaxS); end;
 
-function __PM_HullForBSP(const E: TPhysEnt; out Offset: TVec3): PHull; cdecl;
+function __PM_HullForBSP(var E: TPhysEnt; out Offset: TVec3): PHull; cdecl;
 begin Result := PM_HullForBSP(E, Offset); end;
 
-function __PM_TraceModel(const E: TPhysEnt; const VStart, VEnd: TVec3; var T: TTrace): Single; cdecl;
+function __PM_TraceModel(var E: TPhysEnt; var VStart, VEnd: TVec3; var T: TTrace): Single; cdecl;
 begin Result := PM_TraceModel(E, VStart, VEnd, T); end;
 
 function __COM_FileSize(Name: PLChar): Int32; cdecl;
@@ -746,21 +744,21 @@ function __memfgets(MemFile: Pointer; Size: Int32; var FilePos: Int32; Buffer: P
 begin Result := memfgets(MemFile, Size, FilePos, Buffer, BufferSize); end;
 
 procedure __PM_PlaySound(Channel: Int32; Sample: PLChar; Volume, Attn: Single; Flags, Pitch: Int32); cdecl;
-begin end;
+begin PM_SV_PlaySound(Channel, Sample, Volume, Attn, Flags, Pitch); end;
 
-function __PM_TraceTexture(Ground: Int32; const VStart, VEnd: TVec3): PLChar; cdecl;
-begin Result := nil; end;
+function __PM_TraceTexture(Ground: Int32; var VStart, VEnd: TVec3): PLChar; cdecl;
+begin Result := PM_SV_TraceTexture(Ground, VStart, VEnd); end;
 
-procedure __PM_PlaybackEventFull(Flags, ClientIndex: Int32; EventIndex: UInt16; Delay: Single; const Origin, Angles: TVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32); cdecl;
-begin end;
+procedure __PM_PlaybackEventFull(Flags, ClientIndex: Int32; EventIndex: UInt16; Delay: Single; var Origin, Angles: TVec3; FParam1, FParam2: Single; IParam1, IParam2, BParam1, BParam2: Int32); cdecl;
+begin PM_SV_PlaybackEventFull(Flags, ClientIndex, EventIndex, Delay, Origin, Angles, FParam1, FParam2, IParam1, IParam2, BParam1, BParam2); end;
 
-function __PM_PlayerTraceEx(out Trace: TPMTrace; const VStart, VEnd: TVec3; TraceFlags: Int32; IgnoreFunc: TPhysEntFunc): PPMTrace; cdecl;
+function __PM_PlayerTraceEx(out Trace: TPMTrace; var VStart, VEnd: TVec3; TraceFlags: Int32; IgnoreFunc: TPhysEntFunc): PPMTrace; cdecl;
 begin Result := PM_PlayerTraceEx(Trace, VStart, VEnd, TraceFlags, IgnoreFunc); end;
 
-function __PM_TestPlayerPositionEx(const Pos: TVec3; Trace: PPMTrace; IgnoreFunc: TPhysEntFunc): Int32; cdecl;
+function __PM_TestPlayerPositionEx(var Pos: TVec3; Trace: PPMTrace; IgnoreFunc: TPhysEntFunc): Int32; cdecl;
 begin Result := PM_TestPlayerPositionEx(Pos, Trace, IgnoreFunc); end;
 
-function __PM_TraceLineEx(const VStart, VEnd: TVec3; Flags, UseHull: Int32; IgnoreFunc: TPhysEntFunc): PPMTrace; cdecl;
+function __PM_TraceLineEx(var VStart, VEnd: TVec3; Flags, UseHull: Int32; IgnoreFunc: TPhysEntFunc): PPMTrace; cdecl;
 begin Result := PM_TraceLineEx(VStart, VEnd, Flags, UseHull, IgnoreFunc); end;
 
 procedure PM_Init(P: PPlayerMove);
@@ -805,7 +803,11 @@ P.COM_LoadFile := @__COM_LoadFile;
 P.COM_FreeFile := @__COM_FreeFile;
 
 P.memfgets := @__memfgets;
+P.RunFuncs := 0;
 
+P.PM_PlaySound := @__PM_PlaySound;
+P.PM_TraceTexture := @__PM_TraceTexture;
+P.PM_PlaybackEventFull := @__PM_PlaybackEventFull;
 P.PM_PlayerTraceEx := @__PM_PlayerTraceEx;
 P.PM_TestPlayerPositionEx := @__PM_TestPlayerPositionEx;
 P.PM_TraceLineEx := @__PM_TraceLineEx;

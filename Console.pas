@@ -23,7 +23,6 @@ function CVar_FindPrevVar(Name: PLChar): PCVar;
 function CVar_VariableValue(Name: PLChar): Single;
 function CVar_VariableInt(Name: PLChar): Int;
 function CVar_VariableString(Name: PLChar): PLChar;
-function CVar_CompleteVariable(Name: PLChar; NextCVar: Boolean): PLChar;
 procedure CVar_DirectSet(var C: TCVar; Value: PLChar);
 procedure CVar_Set(Name, Value: PLChar);
 procedure CVar_SetValue(Name: PLChar; Value: Single);
@@ -70,7 +69,6 @@ procedure Cmd_RemoveHUDCmds;
 procedure Cmd_RemoveGameCmds;
 procedure Cmd_RemoveWrapperCmds;
 function Cmd_Exists(Name: PLChar): Boolean;
-function Cmd_CompleteCommand(Name: PLChar; NextCmd: Boolean): PLChar;
 procedure Cmd_ExecuteString(Text: PLChar; Source: TCmdSource);
 procedure Cmd_ForwardToServer; cdecl;
 procedure Cmd_ForwardToServerUnreliable;
@@ -104,7 +102,6 @@ implementation
 uses Common, FileSys, Info, Host, Memory, Network, Server, StdUI, SVClient, SysArgs, SysMain, SVCmds, SVRcon;
 
 var
- LastPartialCVar: array[1..516] of LChar;
  FirstToken: array[1..204] of LChar;
  
  CmdArgc: UInt;
@@ -244,63 +241,6 @@ else
  Result := EmptyString;
 end;
 
-function CVar_CompleteVariable(Name: PLChar; NextCVar: Boolean): PLChar;
-var
- Buffer: array[1..256] of LChar;
- L: UInt;
- P, P2: PCVar;
-begin
-StrLCopy(@Buffer, Name, High(Buffer) - 1);
-Buffer[High(Buffer)] := #0;
-
-L := StrLen(@Buffer);
-if L = 0 then
- Result := nil
-else
- begin
-  while (L > Low(Buffer)) and (Buffer[L - 1] = ' ') do
-   begin
-    Buffer[L - 1] := #0;
-    Dec(L);
-   end;
-
-  if StrIComp(@Buffer, @LastPartialCVar) = 0 then
-   begin
-    P := CVar_FindVar(@Buffer);
-    if P <> nil then
-     begin
-      if NextCVar then
-       P2 := P.Next
-      else
-       P2 := CVar_FindPrevVar(P.Name);
-      if P2 <> nil then
-       begin
-        StrLCopy(@LastPartialCVar, P2.Name, High(LastPartialCVar) - 1);
-        LastPartialCVar[High(LastPartialCVar)] := #0;
-        Result := P2.Name;
-        Exit;
-       end;
-     end;
-   end;
-
-  P := CVarBase;
-  while True do
-   if (P = nil) or (P.Next = nil) then
-    begin
-     Result := nil;
-     Exit;
-    end
-   else
-    if StrLComp(@Buffer, P.Name, L) <> 0 then
-     P := P.Next
-    else
-     Break;
-
-  StrLCopy(@LastPartialCVar, P.Name, High(LastPartialCVar) - 1);
-  LastPartialCVar[High(LastPartialCVar)] := #0;
-  Result := P.Name;
- end;
-end;
 
 procedure CVar_DirectSet(var C: TCVar; Value: PLChar);
 var
@@ -340,20 +280,20 @@ else
 B := StrComp(C.Data, S) <> 0;
 if FCVAR_USERINFO in C.Flags then
  begin
-  Info_SetValueForKey(Info_ServerInfo, C.Name, S, SizeOf(ServerInfo));
-  SV_BroadcastCommand(['fullserverinfo "', Info_ServerInfo, '"'#10]);
+  Info_SetValueForKey(@ServerInfo, C.Name, S, SizeOf(ServerInfo));
+  SV_BroadcastCommand(['fullserverinfo "', PLChar(@ServerInfo), '"'#10]);
  end;
 
 if (FCVAR_SERVER in C.Flags) and B and not (FCVAR_UNLOGGED in C.Flags) then
  if FCVAR_PROTECTED in C.Flags then
   begin
    LPrint(['Server cvar "', C.Name, '" = "***PROTECTED***"'#10]);
-   SV_BroadcastPrint(['"', C.Name, '" changed to "***PROTECTED***"']);
+   SV_BroadcastPrint(['"', C.Name, '" changed to "***PROTECTED***"'#10]);
   end
  else
   begin
    LPrint(['Server cvar "', C.Name, '" = "', S, '"'#10]);
-   SV_BroadcastPrint(['"', C.Name, '" changed to "', S, '"']);
+   SV_BroadcastPrint(['"', C.Name, '" changed to "', S, '"'#10]);
   end;
 
 Z_Free(C.Data);
@@ -717,11 +657,10 @@ end;
 var
  CmdWait: Boolean = False;
  CmdText: TSizeBuf = ();
- LastPartialCmd: array[1..256] of LChar;
 
 procedure CBuf_Init;
 begin
-SZ_Alloc('cmd_text', CmdText, $4000);
+SZ_Alloc('cmd_text', CmdText, 16*1024);
 end;
 
 procedure CBuf_AddText(Text: PLChar);
@@ -801,9 +740,9 @@ else
    else
     P := nil;
 
-   CBuf_AddText(#$A);
+   CBuf_AddText(#10);
    CBuf_AddText(Text);
-   CBuf_AddText(#$A);
+   CBuf_AddText(#10);
    
    if Size >= 1 then
     begin
@@ -935,17 +874,25 @@ end;
 
 procedure Cmd_Exec; cdecl;
 var
+ I: UInt;
  S: PLChar;
- Extension: array[1..512] of LChar;
+ Extension: array[1..128] of LChar;
  F: TFile;
  Size: Int64;
  P: Pointer;
 begin
-if Cmd_Argc <> 2 then
+I := Cmd_Argc;
+if I < 2 then
  begin
   Print('exec <filename>: Execute a script file.');
   Exit;
- end;
+ end
+else
+ if I > 2 then
+  begin
+   Print('exec: Specified too many arguments, the correct syntax is "exec <filename>".');
+   Exit;
+  end;
 
 S := Cmd_Argv(1);
 if (StrPos(S, '\\') <> nil) or (StrScan(S, ':') <> nil) or
@@ -974,6 +921,7 @@ if FS_OpenPathID(F, S, 'r', 'GAMECONFIG') or FS_OpenPathID(F, S, 'r', 'GAME') or
      PByte(UInt(P) + Size)^ := 0;
 
      DPrint(['Execing "', S, '".']);
+
      if CmdText.CurrentSize + Size + 2 >= CmdText.MaxSize then
       while True do
        begin
@@ -990,18 +938,15 @@ if FS_OpenPathID(F, S, 'r', 'GAMECONFIG') or FS_OpenPathID(F, S, 'r', 'GAME') or
      Mem_Free(P);
     end
    else
-    Print(['exec "', S, '": The file is too big.'])
-  else
-   Print(['exec "', S, '": The file is empty.']);
+    Print(['exec "', S, '": The file is too big.']);
    
   FS_Close(F);
  end
 else // no such file
  if (StrIComp(S, 'autoexec.cfg') <> 0) and
-    (StrIComp(S, 'userconfig.cfg') <> 0) and
-    (StrIComp(S, 'hw/opengl.cfg') <> 0) and
     (StrIComp(S, 'joystick.cfg') <> 0) and
-    (StrIComp(S, 'game.cfg') <> 0) then
+    (StrIComp(S, 'userconfig.cfg') <> 0) and
+    (StrIComp(S, 'violence.cfg') <> 0) then
   Print(['exec "', S, '": The file couldn''t be opened.']);
 end;
 
@@ -1036,24 +981,23 @@ end;
 procedure Cmd_Alias; cdecl;
 var
  P: PAlias;
- S, S2: PLChar;
+ S, S2, S3: PLChar;
  I, L, Count: UInt;
- Buffer: array[1..1024] of LChar;
+ Buffer: array[1..4096] of LChar;
 begin
 Count := Cmd_Argc;
 if Count <= 1 then
  begin
   Print('Current alias commands:');
   P := AliasBase;
-  while P <> nil do
-   begin
-    if P.Command <> nil then
-     Print([PLChar(@P.Name), ': ', P.Command])
-    else
-     Print([PLChar(@P.Name), ': (null)']);
-    
-    P := P.Next;
-   end;
+  if P = nil then
+   Print('(no alias commands defined yet)')
+  else
+   while P <> nil do
+    begin
+     Print([PLChar(@P.Name), ': ', P.Command]);
+     P := P.Next;
+    end;
  end
 else
  begin
@@ -1064,50 +1008,51 @@ else
    if CVar_FindVar(S) <> nil then
     Print(['Alias name is invalid ("', S, '" is a cvar).'])
    else
-    begin
-     SetCStrikeFlags;
-     if (IsCStrike or IsCZero) and IsBadAlias(S) then
-      Print('Alias name is invalid.')
-     else
-      begin
-       Buffer[Low(Buffer)] := #0;
-       L := 0;
-       for I := 2 to Count - 1 do
-        begin
-         S2 := Cmd_Argv(I);
-         if S2 = nil then
-          Continue
-         else
-          begin
-           Inc(L, StrLen(S2) + 1);
-           if L >= High(Buffer) - 1 then
-            begin
-             Print('Alias command is too long.');
-             Exit;
-            end;
+    if Cmd_FindCmd(S) <> nil then
+     Print(['Alias name is invalid ("', S, '" is a command).'])
+    else
+     begin
+      SetCStrikeFlags;
+      if (IsCStrike or IsCZero) and IsBadAlias(S) then
+       Print('Alias name is invalid.')
+      else
+       begin
+        Buffer[Low(Buffer)] := #0;
+        S3 := @Buffer;
+        L := 0;
+        for I := 2 to Count - 1 do
+         begin
+          S2 := Cmd_Argv(I);
 
-           StrLCat(@Buffer, S2, High(Buffer) - 2);
-           if I < Count - 1 then
-            StrLCat(@Buffer, ' ', High(Buffer) - 2);
-          end;
-        end;
+          Inc(L, StrLen(S2) + UInt(I < Count - 1));
+          if L > SizeOf(Buffer) - 2 then
+           begin
+            Print('Alias command is too long.');
+            Exit;
+           end;
+
+          S3 := StrECopy(S3, S2);
+          if I < Count - 1 then
+           S3 := StrECopy(S3, ' ');
+         end;
         
-       Buffer[L] := #$A;
-       Buffer[L + 1] := #0;
-       Inc(L);
+        S3^ := #10;
+        Inc(UInt(S3));
+        S3^ := #0;        
+        Inc(L, 2);
 
-       P := AliasBase;
-       while P <> nil do
-        if StrIComp(@P.Name, S) = 0 then
-         if StrComp(P.Command, @Buffer) <> 0 then
-          begin
-           Z_Free(P.Command);
-           Break;
-          end
+        P := AliasBase;
+        while P <> nil do
+         if StrIComp(@P.Name, S) = 0 then
+          if StrComp(P.Command, @Buffer) <> 0 then
+           begin
+            Z_Free(P.Command);
+            Break;
+           end
+          else
+           Exit
          else
-          Exit
-        else
-         P := P.Next;
+          P := P.Next;
 
        if P = nil then
         begin
@@ -1116,7 +1061,7 @@ else
          AliasBase := P;
         end;
 
-       StrLCopy(@P.Name, S, MAX_ALIAS_NAME - 1);
+       StrLCopy(@P.Name, S, SizeOf(P.Name) - 1);
        P.Command := Z_MAlloc(L);
        StrLCopy(P.Command, @Buffer, L - 1);
       end;
@@ -1327,7 +1272,6 @@ Cmd_AddCommand('cmd', @Cmd_ForwardToServer);
 Cmd_AddCommand('wait', @Cmd_Wait);
 Cmd_AddCommand('cmdlist', @Cmd_CmdList);
 Cmd_AddCommand('find', @Cmd_Find);
-LastPartialCmd[Low(LastPartialCmd)] := #0;
 end;
 
 procedure Cmd_Shutdown;
@@ -1358,30 +1302,26 @@ end;
 
 procedure Cmd_TokenizeString(Data: PLChar);
 var
- I, L: UInt;
+ I: Int;
+ L: UInt;
  S: PLChar;
 begin
-if CmdArgc > 0 then
- begin
-  for I := 0 to CmdArgc - 1 do
-   if CmdArgv[I] <> nil then
-    Z_Free(CmdArgv[I]);
-  CmdArgc := 0;
- end;
+for I := 0 to CmdArgc - 1 do
+ if CmdArgv[I] <> nil then
+  Z_Free(CmdArgv[I]);
 
+CmdArgc := 0;
 CmdArgs := nil;
+
 S := Data;
 
 while True do
  begin
-  while S^ in [#1..' '] do // must use #1 here
-   if S^ = #$A then
+  while S^ <= ' ' do // must use #1 here
+   if (S^ = #0) or (S^ = #$A) then
     Exit
    else
     Inc(UInt(S));
-
-  if S^ = #0 then
-   Break;
 
   if CmdArgc = 1 then
    CmdArgs := S;
@@ -1391,14 +1331,19 @@ while True do
    Break;
 
   L := StrLen(@COM_Token) + 1;
-  if L > 515 then
+  if L > 512 + 3 then
    Break;
 
   if CmdArgc < MAX_CMD_ARGS then
    begin
     CmdArgv[CmdArgc] := Z_MAlloc(L);
-    StrCopy(CmdArgv[CmdArgc], @COM_Token); // Safe to use StrCopy here
+    StrCopy(CmdArgv[CmdArgc], @COM_Token);
     Inc(CmdArgc);
+   end
+  else
+   begin
+    DPrint('Cmd_TokenizeString: Exceeded MAX_CMD_ARGS.');
+    Break;
    end;
  end;
 end;
@@ -1571,64 +1516,6 @@ while C <> nil do
 Result := False;
 end;
 
-function Cmd_CompleteCommand(Name: PLChar; NextCmd: Boolean): PLChar;
-var
- Buffer: array[1..256] of LChar;
- L: UInt;
- P, P2: PCommand;
-begin
-StrLCopy(@Buffer, Name, High(Buffer) - 1);
-Buffer[High(Buffer)] := #0;
-
-L := StrLen(@Buffer);
-if L = 0 then
- Result := nil
-else
- begin
-  while (L > Low(Buffer)) and (Buffer[L - 1] = ' ') do
-   begin
-    Buffer[L - 1] := #0;
-    Dec(L);
-   end;
-
-  if StrIComp(@Buffer, @LastPartialCmd) = 0 then
-   begin
-    P := Cmd_FindCmd(@Buffer);
-    if P <> nil then
-     begin
-      if NextCmd then
-       P2 := P.Next
-      else
-       P2 := Cmd_FindPrevCmd(P.Name);
-      if P2 <> nil then
-       begin
-        StrLCopy(@LastPartialCmd, P2.Name, High(LastPartialCmd) - 1);
-        LastPartialCmd[High(LastPartialCmd)] := #0;
-        Result := P2.Name;
-        Exit;
-       end;
-     end;
-   end;
-
-  P := CmdBase;
-  while True do
-   if (P = nil) or (P.Next = nil) then
-    begin
-     Result := nil;
-     Exit;
-    end
-   else
-    if StrLComp(@Buffer, P.Name, L) <> 0 then
-     P := P.Next
-    else
-     Break;
-
-  StrLCopy(@LastPartialCmd, P.Name, High(LastPartialCmd) - 1);
-  LastPartialCmd[High(LastPartialCmd)] := #0;
-  Result := P.Name;
- end;
-end;
-
 // Custom function to simplify alias search
 function Cmd_FindAlias(Name: PLChar): PAlias;
 begin
@@ -1642,16 +1529,32 @@ end;
 
 procedure Cmd_ExecuteString(Text: PLChar; Source: TCmdSource);
 var
- S: PLChar;
+ S, S2: PLChar;
  P: PCommand;
  P2: PAlias;
 begin
-CmdSource := Source;
+if Source = csClient then
+ CmdSource := csClient
+else
+ CmdSource := csServer;
+
 Cmd_TokenizeString(Text);
 
 if Cmd_Argc > 0 then
  begin
   S := Cmd_Argv(0);
+
+  S2 := S;
+  if S2^ = #0 then
+   Exit
+  else
+   while S2^ = ' ' do
+    begin
+     Inc(UInt(S2));
+     if S2^ = #0 then
+      Exit;
+    end;
+
   P := Cmd_FindCmd(S);
   if (P <> nil) and (@P.Callback <> nil) then
    P.Callback
@@ -1661,7 +1564,8 @@ if Cmd_Argc > 0 then
     if (P2 <> nil) and (P2.Command <> nil) then
      CBuf_InsertText(P2.Command)
     else
-     CVar_Command;     
+     if not CVar_Command and (Source = csConsole) then
+      Print(['Unknown command: ', S, '.']);
    end;
  end;
 end;
@@ -1785,19 +1689,16 @@ if SVS.LogEnabled or SVS.LogToAddr or (FirstLog <> nil) then
 
   StrLCopy(S, Msg, SizeOf(Buf) - StrLen(@Buf) - 1); 
   
-  if SVS.LogToAddr or (FirstLog <> nil) then
+  if SVS.LogToAddr then
+   Netchan_OutOfBandPrint(NS_SERVER, SVS.LogAddr, ['log ', PLChar(@Buf)]);
+
+  P := FirstLog;
+  while P <> nil do
    begin
-    if SVS.LogToAddr then
-     Netchan_OutOfBandPrint(NS_SERVER, SVS.LogAddr, ['log ', PLChar(@Buf)]);
-
-    P := FirstLog;
-    while P <> nil do
-     begin
-      Netchan_OutOfBandPrint(NS_SERVER, P.Adr, ['log ', PLChar(@Buf)]);
-      P := P.Prev;
-     end;
+    Netchan_OutOfBandPrint(NS_SERVER, P.Adr, ['log ', PLChar(@Buf)]);
+    P := P.Prev;
    end;
-
+ 
   if SVS.LogEnabled and ((SVS.MaxClients > 1) or (sv_log_singleplayer.Value <> 0)) then
    begin
     if mp_logecho.Value <> 0 then
@@ -1877,8 +1778,16 @@ if SVS.LogEnabled and ((sv_log_onefile.Value = 0) or (SVS.LogFile = nil)) then
      S := StrECopy(S, CorrectSlash + 'L');
     end;
 
-   S := StrECopy(S, ExpandString(IntToStr(M, IntBuf, SizeOf(IntBuf)), @ExpandBuf, SizeOf(ExpandBuf), 2));
-   S := StrECopy(S, ExpandString(IntToStr(D, IntBuf, SizeOf(IntBuf)), @ExpandBuf, SizeOf(ExpandBuf), 2));
+   if sv_log_altdateformat.Value = 0 then
+    begin
+     S := StrECopy(S, ExpandString(IntToStr(M, IntBuf, SizeOf(IntBuf)), @ExpandBuf, SizeOf(ExpandBuf), 2));
+     S := StrECopy(S, ExpandString(IntToStr(D, IntBuf, SizeOf(IntBuf)), @ExpandBuf, SizeOf(ExpandBuf), 2));
+    end
+   else
+    begin
+     S := StrECopy(S, ExpandString(IntToStr(D, IntBuf, SizeOf(IntBuf)), @ExpandBuf, SizeOf(ExpandBuf), 2));
+     S := StrECopy(S, ExpandString(IntToStr(M, IntBuf, SizeOf(IntBuf)), @ExpandBuf, SizeOf(ExpandBuf), 2));
+    end;
 
    COM_CreatePath(@Buf);
    
@@ -1896,7 +1805,7 @@ if SVS.LogEnabled and ((sv_log_onefile.Value = 0) or (SVS.LogFile = nil)) then
         end;
 
        Print(['Server logging data to file "', PLChar(@Buf), '".']);
-       LPrint(['Log file started (file "', PLChar(@Buf), '") (game "', Info_ValueForKey(Info_ServerInfo, '*gamedir'), '") (version "', ProjectName, '/', BuildNumber, '")'#10]);
+       LPrint(['Log file started (file "', PLChar(@Buf), '") (game "', Info_ValueForKey(@ServerInfo, '*gamedir'), '") (version "', ProjectName, '/', BuildNumber, '")'#10]);
        Exit;
       end;
     end;

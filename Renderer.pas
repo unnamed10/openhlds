@@ -31,7 +31,7 @@ function __Cache_Check(C: PCacheUser): Pointer; cdecl;
 function __COM_LoadCacheFile(Name: PLChar; Cache: PCacheUser): Pointer; cdecl;
 function __Mod_ExtraData(var M: TModel): Pointer; cdecl;
 
-procedure SV_StudioSetupBones(var Model: TModel; Frame: Single; Sequence: Int32; const Angles, Origin: TVec3; Controller, Blending: PByte; Bone: Int32; Ent: PEdict); cdecl;
+procedure SV_StudioSetupBones(var Model: TModel; Frame: Single; Sequence: Int32; var Angles, Origin: TVec3; Controller, Blending: PByte; Bone: Int32; Ent: PEdict); cdecl;
 
 var
  r_cachestudio: TCVar = (Name: 'r_cachestudio'; Data: '1');
@@ -60,20 +60,18 @@ var
  VisFrameCount: Int = 0;
 
  StudioCache: array[0..MAXSTUDIOCACHE - 1] of TStudioCache;
- CacheCurrent: UInt = 0;
+ CacheCurrent: Int = 0;
  CurrentHull: Int32;
  CurrentPlane: Int32;
+ CacheHull: array[0..MAXSTUDIOHULL - 1] of THull;
+ CacheHullHitgroup: array[0..MAXSTUDIOHULL - 1] of Int32;
+ CachePlanes: array[0..MAXSTUDIOHULL * 6 - 1] of TMPlane;
 
  StudioHull: array[0..MAXSTUDIOHULL - 1] of THull;
  StudioHullHitgroup: array[0..MAXSTUDIOHULL - 1] of Int32;
  StudioClipNodes: array[0..5] of TDClipNode;
  StudioPlanes: array[0..MAXSTUDIOHULL * 6 - 1] of TMPlane;
-
- CacheHull: array[0..MAXSTUDIOHULL - 1] of THull;
- CacheHullHitgroup: array[0..MAXSTUDIOHULL - 1] of Int32;
- CachePlanes: array[0..MAXSTUDIOHULL * 6 - 1] of TMPlane;
-
-
+ 
 function __Mem_CAlloc(Count, Size: UInt32): Pointer; cdecl;
 begin
 Result := Mem_CAlloc(Count, Size);
@@ -128,7 +126,7 @@ end;
 
 function R_CheckStudioCache(const M: TModel; Frame: Single; Sequence: Int32; const Angles, Origin, Offset: TVec3; Controller, Blending: Pointer): PStudioCache;
 var
- I: UInt;
+ I: Int;
  C: PStudioCache;
 begin
 for I := 0 to MAXSTUDIOCACHE - 1 do
@@ -167,7 +165,7 @@ C.HullIndex := CurrentHull;
 C.PlaneIndex := CurrentPlane;
 C.HullCount := HullCount;
 
-Move(Hull^, CacheHull[CurrentHull], SizeOf(Hull^) * HullCount);
+Move(Hull^, CacheHull[CurrentHull], SizeOf(THull) * HullCount);
 Move(StudioPlanes, CachePlanes[CurrentPlane], SizeOf(TMPlane) * 6 * HullCount);
 Move(StudioHullHitgroup, CacheHullHitgroup[CurrentHull], SizeOf(Int32) * HullCount);
 
@@ -196,7 +194,7 @@ for I := 0 to StudioHdr.NumBoneControllers - 1 do
     if Abs(PController1[C.Index] - PController2[C.Index]) > 128 then
      begin
       A := (PController1[I] + 128) mod 256;
-      B := (PController1[I] + 128) mod 256;
+      B := (PController2[I] + 128) mod 256;
       F := (A * DAdt + B * (1 - DAdt) - 128) * (360 / 256) + C.FStart;
      end
     else
@@ -407,7 +405,7 @@ type
  TBBoxArray = array[0..0] of TMStudioBBox;
 var
  C: PStudioCache;
- V: TVec3;
+ V, V2: TVec3;
  I, J, K: Int;
  BBox: PBBoxArray;
 begin
@@ -430,7 +428,8 @@ StudioHdr := Mod_ExtraData(Model);
 V[0] := -Angles[0];
 V[1] := Angles[1];
 V[2] := Angles[2];
-SVBlendingAPI.SV_StudioSetupBones(Model, Frame, Sequence, V, Origin, Controller, Blending, -1, Ent);
+V2 := Origin;
+SVBlendingAPI.SV_StudioSetupBones(Model, Frame, Sequence, V, V2, Controller, Blending, -1, Ent);
 
 BBox := Pointer(UInt(StudioHdr) + StudioHdr.HitBoxIndex);
 
@@ -450,12 +449,12 @@ for I := 0 to StudioHdr.NumHitBoxes - 1 do
     for K := 0 to 5 do
      if (K and 1) = 0 then
       StudioPlanes[J + K].Distance := StudioPlanes[J + K].Distance +
-                                      Abs(StudioPlanes[J + K].Normal[0] * Offset[0]) + Abs(StudioPlanes[J + K].Normal[1] * Offset[1]) +
-                                      Abs(StudioPlanes[J + K].Normal[2] * Offset[2])
+                                      (Abs(StudioPlanes[J + K].Normal[0] * Offset[0]) + Abs(StudioPlanes[J + K].Normal[1] * Offset[1]) +
+                                       Abs(StudioPlanes[J + K].Normal[2] * Offset[2]))
      else
       StudioPlanes[J + K].Distance := StudioPlanes[J + K].Distance -
-                                      Abs(StudioPlanes[J + K].Normal[0] * Offset[0]) + Abs(StudioPlanes[J + K].Normal[1] * Offset[1]) +
-                                      Abs(StudioPlanes[J + K].Normal[2] * Offset[2]);
+                                      (Abs(StudioPlanes[J + K].Normal[0] * Offset[0]) + Abs(StudioPlanes[J + K].Normal[1] * Offset[1]) +
+                                       Abs(StudioPlanes[J + K].Normal[2] * Offset[2]));
    end;
  end;
 
@@ -708,7 +707,7 @@ var
  I: Int;
  P, P2, P3: PEdict;
 begin
-VectorAdd(E.V.ViewOfs, E.V.Origin, V);
+VectorAdd(E.V.Origin, E.V.ViewOfs, V);
 PVS := Mod_LeafPVS(Mod_PointInLeaf(V, SV.WorldModel^), SV.WorldModel);
 PVSMark(SV.WorldModel^, PVS);
 P3 := @SV.Edicts[0];
@@ -739,7 +738,7 @@ begin
 SVBlendingAPI := @SVBlendingDefault;
 end;
 
-procedure SV_StudioSetupBones(var Model: TModel; Frame: Single; Sequence: Int32; const Angles, Origin: TVec3; Controller, Blending: PByte; Bone: Int32; Ent: PEdict); cdecl;
+procedure SV_StudioSetupBones(var Model: TModel; Frame: Single; Sequence: Int32; var Angles, Origin: TVec3; Controller, Blending: PByte; Bone: Int32; Ent: PEdict); cdecl;
 var
  PSeqDesc: PMStudioSeqDesc;
  PBone: PMStudioBone;
@@ -851,9 +850,9 @@ begin
 if NumBound > 0 then
  for I := 0 to 2 do
   begin
-   if Mid[I] < MinS[I] then
+   if MinS[I] > Mid[I] then
     MinS[I] := Mid[I];
-   if Mid[I] > MaxS[I] then
+   if MaxS[I] < Mid[I] then
     MaxS[I] := Mid[I];
   end
 else
@@ -872,9 +871,9 @@ begin
 if NumBound > 0 then
  for I := 0 to 2 do
   begin
-   if Mid[I] < MinS[I] then
+   if MinS[I] > Mid[I] then
     MinS[I] := Mid[I];
-   if Mid[I] > MaxS[I] then
+   if MaxS[I] < Mid[I] then
     MaxS[I] := Mid[I];
   end
 else
@@ -888,14 +887,14 @@ end;
 
 procedure R_StudioAccumulateBoneVerts(var VertMinS, VertMaxS: TVec3; var VertBound: UInt; var BoneMinS, BoneMaxS: TVec3; var BoneBound: UInt);
 var
- V, Mid: TVec3;
+ Mid: TVec3;
 begin
 if BoneBound > 0 then
  begin
-  VectorSubtract(BoneMaxS, BoneMinS, V);
-  VectorScale(V, 0.5, Mid);
+  VectorSubtract(BoneMaxS, BoneMinS, Mid);
+  VectorScale(Mid, 0.5, Mid);
   R_StudioBoundVertex(VertMinS, VertMaxS, VertBound, Mid);
-  VectorScale(V, -0.5, Mid);
+  VectorScale(Mid, -1, Mid);
   R_StudioBoundVertex(VertMinS, VertMaxS, VertBound, Mid);
 
   VectorSet(BoneMinS, 0);
@@ -908,7 +907,7 @@ function R_StudioComputeBounds(Header: PStudioHeader; out MinS, MaxS: TVec3): Bo
 var
  I, J, K: Int;
  BodyParts: PMStudioBodyParts;
- StudioModels: PMStudioModel;
+ StudioModel: PMStudioModel;
  Vertexes: PVec3;
  Seq: PMStudioSeqDesc;
  Bone, Bone2: PMStudioBone;
@@ -917,8 +916,6 @@ var
  VertMinS, VertMaxS, BoneMinS, BoneMaxS, Pos: TVec3;
  TotalModels, VertNumBound, BoneNumBound: UInt;
 begin
-TotalModels := 0;
-
 VectorSet(VertMinS, 0);
 VectorSet(VertMaxS, 0);
 VertNumBound := 0;
@@ -926,6 +923,7 @@ VectorSet(BoneMinS, 0);
 VectorSet(BoneMaxS, 0);
 BoneNumBound := 0;
 
+TotalModels := 0;
 BodyParts := Pointer(UInt(Header) + Header.BodyPartIndex);
 for I := 0 to Header.NumBodyParts - 1 do
  begin
@@ -933,17 +931,17 @@ for I := 0 to Header.NumBodyParts - 1 do
   Inc(UInt(BodyParts), SizeOf(BodyParts^));
  end;
 
-StudioModels := Pointer(BodyParts);
+StudioModel := Pointer(BodyParts);
 for I := 0 to TotalModels - 1 do
  begin
-  Vertexes := Pointer(UInt(Header) + StudioModels.VertIndex);
-  for J := 0 to StudioModels.NumVerts - 1 do
+  Vertexes := Pointer(UInt(Header) + StudioModel.VertIndex);
+  for J := 0 to StudioModel.NumVerts - 1 do
    begin
     R_StudioBoundVertex(VertMinS, VertMaxS, VertNumBound, Vertexes^);
     Inc(UInt(Vertexes), SizeOf(Vertexes^));
    end;
 
-  Inc(UInt(StudioModels), SizeOf(StudioModels^));
+  Inc(UInt(StudioModel), SizeOf(StudioModel^));
  end;
 
 Seq := Pointer(UInt(Header) + Header.SeqIndex);
@@ -952,9 +950,9 @@ Bone := Pointer(UInt(Header) + Header.BoneIndex);
 for I := 0 to Header.NumSeq - 1 do
  begin
   Anim := Pointer(UInt(Header) + Seq.AnimIndex);
+  Bone2 := Bone;
   for J := 0 to Header.NumBones - 1 do
    begin
-    Bone2 := Bone;
     for K := 0 to Seq.NumFrames - 1 do
      begin
       R_StudioCalcBonePosition(K, 0, Bone2^, Anim^, nil, Pos);

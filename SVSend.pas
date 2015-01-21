@@ -11,15 +11,10 @@ procedure SV_LinkNewUserMsgs;
 procedure SV_StartParticle(const Origin, Direction: TVec3; Color, Count: UInt);
 procedure SV_StartSound(SkipSelf: Boolean; const E: TEdict; Channel: Int; Sample: PLChar; Volume: Int; Attn: Single; Flags: UInt; Pitch: Int);
 function SV_BuildSoundMsg(const E: TEdict; Channel: Int; Sample: PLChar; Volume: Int; Attn: Single; Flags: UInt; Pitch: Int; const Origin: TVec3; var SB: TSizeBuf): Boolean;
-function SV_HashString(S: PLChar; Entries: UInt): UInt32;
 function SV_LookupSoundIndex(Name: PLChar): UInt;
-procedure SV_BuildHashedSoundLookupTable;
-procedure SV_AddSampleToHashedLookupTable(S: PLChar; Data: UInt);
 
 function SV_ValidClientMulticast(const C: TClient; Leaf, Flags: UInt): Boolean;
 procedure SV_Multicast(const E: TEdict; const Origin: TVec3; Flags: UInt; Reliable: Boolean);
-
-procedure SV_SendBan;
 
 var
  UserMsgs, NewUserMsgs: PUserMsg;
@@ -28,10 +23,6 @@ var
 implementation
 
 uses Common, Console, Edict, Host, Memory, Model, MsgBuf, Network, Server, SysMain, SVMove, SVWorld;
-
-var
- HashStringCollisions: UInt = 0;
- PacketSuppressed: UInt = 0;
 
 procedure SV_LinkNewUserMsgs;
 var
@@ -53,8 +44,11 @@ var
  I: UInt;
  J: Int;
 begin
-if SV.Datagram.CurrentSize > MAX_DATAGRAM - 16 then
- Exit;
+if SV.Datagram.CurrentSize > SV.Datagram.MaxSize - 16 then
+ begin
+  DPrint('SV_StartParticle call ignored, would overflow.');
+  Exit;
+ end;
 
 MSG_WriteByte(SV.Datagram, SVC_PARTICLE);
 for I := 0 to 2 do
@@ -87,7 +81,7 @@ for I := 0 to 2 do
 if SV_BuildSoundMsg(E, Channel, Sample, Volume, Attn, Flags, Pitch, V, SV.Multicast) then
  begin
   if SkipSelf then
-   MFlags := MULTICAST_SKIP_SENDER
+   MFlags := MULTICAST_SKIP_SELF
   else
    MFlags := 0;
 
@@ -145,6 +139,7 @@ else
     end; 
   end;
 
+Flags := Flags and not (SND_VOLUME or SND_ATTN or SND_PITCH or SND_LONG_INDEX);
 if Volume <> 255 then
  Flags := Flags or SND_VOLUME;
 if Attn <> 1 then
@@ -164,10 +159,10 @@ if (Flags and SND_ATTN) > 0 then
 
 MSG_WriteBits(Channel, 3);
 MSG_WriteBits(NUM_FOR_EDICT(E), 11);
-if Index <= 255 then
- MSG_WriteBits(Index, 8)
+if (Flags and SND_LONG_INDEX) > 0 then
+ MSG_WriteBits(Index, 16)
 else
- MSG_WriteBits(Index, 16);
+ MSG_WriteBits(Index, 8);
 MSG_WriteBitVec3Coord(Origin);
 if (Flags and SND_PITCH) > 0 then
  MSG_WriteBits(Pitch, 8);
@@ -175,65 +170,53 @@ MSG_EndBitWriting;
 Result := True;
 end;
 
-function SV_HashString(S: PLChar; Entries: UInt): UInt32;
+procedure SV_AddToSoundTable(S: PLChar; Index: UInt);
+var
+ I, I2: UInt;
 begin
-Result := 0;
-while S^ > #0 do
+I := HashString(S, MAX_SOUNDHASH);
+I2 := I;
+
+while SV.SoundHashTable[I] > 0 do
  begin
-  Result := (Result shl 1) + Ord(LowerC(S^));
-  Inc(UInt(S));
+  Inc(I);
+  if I = MAX_SOUNDHASH then
+   I := 0;
+  if I = I2 then
+   Sys_Error('SV_AddToSoundTable: No free slots in sound lookup table.');
+
+  Inc(SV.SoundHashCollisions);
  end;
 
-Result := Result mod Entries;
+SV.SoundHashTable[I] := Index;
 end;
 
-{function SV_LookupSoundIndex(Name: PLChar): UInt;
+procedure SV_BuildSoundTable;
 var
- Hash, Entry: UInt32;
- I: UInt;
+ I, J: UInt;
  S: PLChar;
 begin
-Hash := SV_HashString(Name, MAX_SOUNDHASH);
-Entry := Hash;
-Result := 0;
+MemSet(SV.SoundHashTable, SizeOf(SV.SoundHashTable), 0);
+SV.SoundHashCollisions := 0;
 
-if not SV.SoundTableReady then
- if SV.State = SS_LOADING then
-  begin
-   for I := 1 to MAX_SOUNDS - 1 do
-    begin
-     S := SV.PrecachedSoundNames[I];
-     if S = nil then
-      Break
-     else
-      if StrIComp(Name, S) = 0 then
-       begin
-        Result := I;
-        Exit;
-       end;
-    end;
-   Exit;
-  end
- else
-  SV_BuildHashedSoundLookupTable;
-
-while SV.SoundHashTable[Entry] > 0 do
+J := MAX_SOUNDS;
+for I := 0 to MAX_SOUNDS - 1 do
  begin
-  if StrIComp(Name, SV.PrecachedSoundNames[SV.SoundHashTable[Entry]]) = 0 then
+  S := SV.PrecachedSoundNames[I];
+  if S = nil then
    begin
-    Result := SV.SoundHashTable[Entry];
-    Exit;
-   end;
-  
-  Inc(Entry);
-  if Entry >= MAX_SOUNDHASH then
-   Entry := 0;
-  if Entry = Hash then
-   Break;
+    J := I;
+    Break;
+   end
+  else
+   SV_AddToSoundTable(S, I);
  end;
-end;       }
 
-function SV_LookupSoundIndex(Name: PLChar): UInt;
+DPrint(['Sound hash table: ', SV.SoundHashCollisions, ' collisions, ', J, ' total sounds.']);
+SV.SoundTableReady := True;
+end;
+
+function SV_LookupSoundIndexOld(Name: PLChar): UInt;
 var
  I: UInt;
  S: PLChar;
@@ -254,43 +237,38 @@ for I := 1 to MAX_SOUNDS - 1 do
 Result := 0;
 end;
 
-procedure SV_BuildHashedSoundLookupTable;
+function SV_LookupSoundIndex(Name: PLChar): UInt;
 var
- I: UInt;
- S: PLChar;
+ I, I2: UInt;
 begin
-MemSet(SV.SoundHashTable, SizeOf(SV.SoundHashTable), 0);
-for I := 0 to MAX_SOUNDS - 1 do
+I := HashString(Name, MAX_SOUNDHASH);
+I2 := I;
+
+if not SV.SoundTableReady then
+ if SV.State = SS_LOADING then
+  begin
+   Result := SV_LookupSoundIndexOld(Name);
+   Exit;
+  end
+ else
+  SV_BuildSoundTable;
+
+while SV.SoundHashTable[I] > 0 do
  begin
-  S := SV.PrecachedSoundNames[I];
-  if S = nil then
-   Break
-  else
-   SV_AddSampleToHashedLookupTable(S, I);
+  if StrIComp(Name, SV.PrecachedSoundNames[SV.SoundHashTable[I]]) = 0 then
+   begin
+    Result := SV.SoundHashTable[I];
+    Exit;
+   end;
+
+  Inc(I);
+  if I = MAX_SOUNDHASH then
+   I := 0;
+  if I = I2 then
+   Break;
  end;
 
-SV.SoundTableReady := True;
-end;
-
-procedure SV_AddSampleToHashedLookupTable(S: PLChar; Data: UInt);
-var
- Hash, Entry: UInt32;
-begin
-Hash := SV_HashString(S, MAX_SOUNDHASH);
-Entry := Hash;
-
-while SV.SoundHashTable[Entry] > 0 do
- begin
-  Inc(Entry);
-  Inc(HashStringCollisions);
-  if Entry >= MAX_SOUNDHASH then
-   Entry := 0;
-
-  if Entry = Hash then
-   Sys_Error('SV_AddSampleToHashedLookupTable: No free slots in sound lookup table.');
- end;
-
-SV.SoundHashTable[Entry] := Data;
+Result := 0;
 end;
 
 function SV_ValidClientMulticast(const C: TClient; Leaf, Flags: UInt): Boolean;
@@ -298,17 +276,17 @@ var
  P: Pointer;
  I: UInt;
 begin
-Flags := Flags and not MULTICAST_SKIP_SENDER;
+Flags := Flags and not MULTICAST_SKIP_SELF;
 
 if Host_IsSinglePlayerGame or C.HLTV or ((Flags and MULTICAST_ALL) > 0) then
  Result := True
 else
  begin
-  if (Flags and MULTICAST_PVS) > 0 then
-   P := CM_LeafPVS(Leaf)
+  if (Flags and MULTICAST_PAS) > 0 then
+   P := CM_LeafPAS(Leaf)
   else
-   if (Flags and MULTICAST_PAS) > 0 then
-    P := CM_LeafPAS(Leaf)
+   if (Flags and MULTICAST_PVS) > 0 then
+    P := CM_LeafPVS(Leaf)
    else
     begin
      Print(['SV_ValidClientMulticast: Invalid multicast flags: ', Flags, '.']);
@@ -324,63 +302,61 @@ else
     if I = 0 then
      Result := True
     else
-     Result := ((1 shl ((I - 1) and 7)) and PByte(UInt(P) + ((I - 1) shr 3))^) > 0;
+     begin
+      Dec(I);
+      Result := ((1 shl (I and 7)) and PByte(UInt(P) + (I shr 3))^) > 0;
+     end;
    end;
- end;
+ end;                         
 end;
 
 procedure SV_Multicast(const E: TEdict; const Origin: TVec3; Flags: UInt; Reliable: Boolean);
 var
- OrigClient, P: PClient;
+ Src, Dst: PClient;
  LeafNum: UInt;
  I: Int;
  SB: PSizeBuf;
 begin
-OrigClient := HostClient;
+Src := HostClient;
 LeafNum := SV_PointLeafnum(Origin);
-if (@E <> nil) and ((HostClient = nil) or (HostClient.Entity <> @E)) then
+
+if (@E <> nil) and ((Src = nil) or (Src.Entity <> @E)) then
  for I := 0 to SVS.MaxClients - 1 do
   if SVS.Clients[I].Entity = @E then
    begin
-    HostClient := @SVS.Clients[I];
+    Src := @SVS.Clients[I];
     Break;
    end;
 
 for I := 0 to SVS.MaxClients - 1 do
  begin
-  P := @SVS.Clients[I];
-  if P.Active and (((Flags and MULTICAST_SKIP_SENDER) = 0) or (P <> HostClient)) then
+  Dst := @SVS.Clients[I];
+  if not Dst.Active then
+   Continue;
+
+  if ((Flags and MULTICAST_SKIP_SELF) <> 0) and (Src = Dst) then
+   Continue;
+
+  if (@E <> nil) and (Dst.Entity <> nil) and FilterGroup(E, Dst.Entity^) then
+   Continue;
+
+  if SV_ValidClientMulticast(Dst^, LeafNum, Flags) then
    begin
-    if (@E <> nil) and (P.Entity <> nil) and FilterGroup(E, P.Entity^) then
-     Continue;
-
-    if SV_ValidClientMulticast(P^, LeafNum, Flags) then
-     begin
-      if Reliable then
-       SB := @P.Netchan.NetMessage
-      else
-       SB := @P.UnreliableMessage;
-
-      if SB.MaxSize - SB.CurrentSize > SV.Multicast.CurrentSize then
-       SZ_Write(SB^, SV.Multicast.Data, SV.Multicast.CurrentSize);
-     end
+    if Reliable then
+     SB := @Dst.Netchan.NetMessage
     else
-     Inc(PacketSuppressed, SV.Multicast.CurrentSize);
-   end;
+     SB := @Dst.UnreliableMessage;
+
+    if SB.MaxSize - SB.CurrentSize >= SV.Multicast.CurrentSize then
+     SZ_Write(SB^, SV.Multicast.Data, SV.Multicast.CurrentSize)
+    else
+     Inc(SV.MulticastOverflowed, SV.Multicast.CurrentSize);
+   end
+  else
+   Inc(SV.MulticastSuppressed, SV.Multicast.CurrentSize);
  end;
 
 SZ_Clear(SV.Multicast);
-HostClient := OrigClient;
-end;
-
-procedure SV_SendBan;
-begin
-SZ_Clear(NetMessage);
-MSG_WriteLong(NetMessage, OUTOFBAND_TAG);
-MSG_WriteChar(NetMessage, S2C_PRINT);
-MSG_WriteString(NetMessage, 'You have been banned from this server.'#10);
-NET_SendPacket(NS_SERVER, NetMessage.CurrentSize, NetMessage.Data, NetFrom);
-SZ_Clear(NetMessage);
 end;
 
 end.
