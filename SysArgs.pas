@@ -19,11 +19,7 @@ function COM_ParmInBounds(Index: UInt): Boolean;
 
 implementation
 
-uses Host, SysMain, Memory;
-
-const
- SafeArgs: array[1..7] of PLChar =
-           ('-stdvid', '-nolan', '-nosound', '-nocdaudio', '-nojoy', '-nomouse', '-dibonly');
+uses Memory, SysMain;
 
 var
  ArgList: array of PLChar = nil;
@@ -32,16 +28,6 @@ var
  ArgBuffer, ArgString: PLChar;
 
  InitDone: Boolean = False;
- 
-procedure WriteSafeArgs;
-var
- I: UInt;
-begin
-SetLength(ArgList, Length(SafeArgs));
-
-for I := Low(SafeArgs) to High(SafeArgs) do
- ArgList[I - 1] := SafeArgs[I];
-end;
 
 function GetArgCount(S: PLChar): UInt;
 var
@@ -185,18 +171,6 @@ ArgList[ArgCount - 1] := ' ';
 end;
 {$ENDIF}
 
-procedure Sys_WriteArgsToHostInfo;
-begin
-HostInfo.ArgCount := ArgCount;
-HostInfo.ArgData := Pointer(ArgList); // Safe
-end;
-
-procedure Sys_RemoveArgsFromHostInfo;
-begin
-HostInfo.ArgCount := 0;
-HostInfo.ArgData := nil;
-end;
-
 procedure Sys_InitArgs;
 begin
 if InitDone then
@@ -227,7 +201,6 @@ SetLength(ArgList, ArgCount);
 WriteArgsFromShell;
 {$ENDIF}
 
-Sys_WriteArgsToHostInfo;
 InitDone := True;
 end;
 
@@ -253,7 +226,6 @@ for I := 0 to ArgCount - 2 do
 {$ENDIF}
 
 ArgList := nil;
-Sys_RemoveArgsFromHostInfo;
 InitDone := False;
 end;
 

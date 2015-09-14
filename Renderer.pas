@@ -21,7 +21,7 @@ procedure PVSMark(const M: TModel; PVS: Pointer);
 function PVSFindEntities(const E: TEdict): PEdict;
 
 procedure R_ResetSVBlending;
-procedure R_InitTextures;
+procedure R_Init;
 
 function R_StudioComputeBounds(Header: PStudioHeader; out MinS, MaxS: TVec3): Boolean;
 function R_GetStudioBounds(Name: PLChar; out MinS, MaxS: TVec3): Boolean;
@@ -54,7 +54,7 @@ var
 
 implementation
 
-uses Common, Console, FileSys, Host, MathLib, Memory, Model, Server, SVWorld;
+uses Common, Console, FileSys, Host, MathLib, Memory, Model, SVMain, SVWorld;
 
 var
  VisFrameCount: Int = 0;
@@ -827,10 +827,12 @@ for I := NB - 1 downto 0 do
  end;
 end;
 
-procedure R_InitTextures;
+procedure R_Init;
 var
  P: PTexture;
 begin
+CVar_RegisterVariable(r_cachestudio);
+
 P := Hunk_AllocName(SizeOf(TTexture) + 256 + 64 + 16 + 4, 'notexture');
 StrCopy(@P.Name, 'notexture');
 P.Width := 16;

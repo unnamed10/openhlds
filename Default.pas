@@ -271,8 +271,7 @@ function StrECopy(Dest, Source: PLChar): PLChar;
 
 function ExpandString(Src, Dst: PLChar; Size: UInt; MinSize: UInt): PLChar;
 
-function StrToFloatDef(S: PLChar; Def: Double): Double;
-function StrToFloat(S: PLChar): Double;
+function VarArgsToString(S: PLChar; SP: Pointer; out Buf; BufSize: UInt): PLChar;
 
 implementation
 
@@ -460,7 +459,7 @@ const
  LookupTable: array[Boolean] of LStr = ('False', 'True');
 var
  I: Int;
- Buf: array[1..64] of LChar;
+ Buf: array[1..128] of LChar;
 begin
 S := '';
 for I := Low(Data) to High(Data) do
@@ -469,7 +468,7 @@ for I := Low(Data) to High(Data) do
    vtInteger: S := S + IntToStr(VInteger, Buf, SizeOf(Buf));
    vtBoolean: S := S + LookupTable[VBoolean];
    vtChar: S := S + VChar;
-   vtExtended: S := S + FloatToStr(VExtended^);
+   vtExtended: S := S + SysUtils.FloatToStr(VExtended^);
    vtString: S := S + VString^;
    vtPointer: S := S + IntToHex(VPointer);
    vtPChar: S := S + VPChar;
@@ -1660,9 +1659,81 @@ if B then
  Result := -Result;
 end;
 
-function StrToFloat(S: PLChar): Double;
+function VarArgsToString(S: PLChar; SP: Pointer; out Buf; BufSize: UInt): PLChar;
+var
+ S2, Dst: PLChar;
+ RemBuf: UInt;
+ TmpBuf: array[1..4] of LChar;
+
+ function Extract: Pointer;
+ begin
+  Result := SP;
+  Inc(UInt(SP), SizeOf(UInt));
+ end;
+
+ procedure Append(S: PLChar; OptLen: Int = -1);
+ begin
+  if (RemBuf > 1) and (OptLen <> 0) then
+   begin
+    if OptLen <> -1 then
+     S := StrLECopy(Dst, S, Min(RemBuf - 1, OptLen))
+    else
+     S := StrLECopy(Dst, S, RemBuf - 1);
+    Dec(RemBuf, UInt(S) - UInt(Dst));
+    Dst := S;
+   end;
+ end;
+
 begin
-Result := StrToFloatDef(S, 0);
+if (S = nil) or (BufSize = 0) then
+ Result := nil
+else
+ begin
+  Inc(UInt(SP), SizeOf(UInt));
+  Dst := @Buf;
+  RemBuf := BufSize;
+  TmpBuf[2] := #0;
+
+  S2 := StrScan(S, '%');
+  while S2 <> nil do
+   begin
+    Append(S, UInt(S2) - UInt(S));
+
+    Inc(UInt(S2));
+    case S2^ of
+     #0: Break;
+     'd', 'i': Append(IntToStr(PInt32(Extract)^, Dst^, RemBuf));
+     'u': Append(UIntToStr(PUInt32(Extract)^, Dst^, RemBuf));
+     'f', 'F', 'e', 'E', 'g', 'G', 'a', 'A': Append(PLChar(FloatToStr(PSingle(Extract)^)));
+     'x', 'X': Append(PLChar(IntToHex(PUInt32(Extract)^)));
+     'c':
+      begin
+       TmpBuf[1] := PLChar(Extract)^;
+       Append(@TmpBuf);
+      end;
+     '%':
+      begin
+       TmpBuf[1] := '%';
+       Append(@TmpBuf);
+      end;
+     's':
+      begin
+       S := PLChar(Extract);
+       if S <> nil then
+        begin
+         S := PLChar(Pointer(S)^);
+         Append(S);
+        end;
+      end;
+    end;
+
+    S := PLChar(UInt(S2) + 1);
+    S2 := StrScan(S, '%');
+   end;
+
+  Append(S);
+  Result := @Buf;
+ end;
 end;
 
 end.

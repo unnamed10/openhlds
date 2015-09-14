@@ -173,7 +173,9 @@ if Result then
     else
      I := FS_Read(F, @Buf, Size);
 
-    if I > 0 then
+    if I = 0 then
+     Break
+    else
      begin
       Dec(Size, I);
       CRC32_ProcessBuffer(CRC, @Buf, I);
@@ -235,85 +237,6 @@ if FS_Open(F, Name, 'r') then
 
   FS_Close(F);
  end;
-end;
-
-procedure MD5Init(out C: TMD5Context);
-begin
-with C do
- begin
-  MemSet(Input, SizeOf(Input), 0);
-  Buffer[1] := $67452301;
-  Buffer[2] := $EFCDAB89;
-  Buffer[3] := $98BADCFE;
-  Buffer[4] := $10325476;
-  Bits[1] := 0;
-  Bits[2] := 0;
- end;
-end;
-
-procedure MD5Update(var C: TMD5Context; Input: Pointer; Length: UInt);
-var
- X: UInt32;
-begin
-X := C.Bits[1];
-Inc(C.Bits[1], Length * 8);
-if C.Bits[1] < X then
- Inc(C.Bits[2]);
-
-X := (X shr 3) and 63;
-Inc(C.Bits[2], Length shr 29);
-
-if X > 0 then
- if Length < 64 - X then
-  begin
-   Move(Input^, Pointer(UInt(@C.Input) + X)^, Length);
-   Exit;
-  end
- else
-  begin
-   Move(Input^, Pointer(UInt(@C.Input) + X)^, 64 - X);
-   MD5Transform(@C.Buffer, @C.Input);
-   Inc(UInt(Input), 64 - X);
-   Dec(Length, 64 - X);
-  end;
-
-while Length >= 64 do
- begin
-  Move(Input^, C.Input, 64);
-  MD5Transform(@C.Buffer, @C.Input);
-  Inc(UInt(Input), 64);
-  Dec(Length, 64);
- end;
-
-Move(Input^, C.Input, Length);
-end;
-
-procedure MD5Final(out Hash: TMD5Hash; var C: TMD5Context);
-var
- N: UInt32;
- P: PLChar;
-begin
-N := (C.Bits[1] shr 3) and 63;
-P := PLChar(UInt(@C.Input) + N);
-P^ := #$80;
-Inc(UInt(P));
-
-N := 63 - N;
-if N >= 8 then
- MemSet(P^, N - 8, 0)
-else
- begin
-  MemSet(P^, N, 0);
-  MD5Transform(@C.Buffer, @C.Input);
-  MemSet(C.Input, 64 - 8, 0);
- end;
-
-C.Input[15] := C.Bits[1];
-C.Input[16] := C.Bits[2];
-
-MD5Transform(@C.Buffer, @C.Input);
-Move(C.Buffer, Hash, SizeOf(Hash));
-MemSet(C, SizeOf(C), 0);
 end;
 
 procedure MD5Step1(var W: UInt32; X, Y, Z, Data, S: UInt32); {$IFDEF SUPPORTS_INLINE} inline; {$ENDIF}
@@ -423,9 +346,88 @@ Inc(Buffer[3], C);
 Inc(Buffer[4], D);
 end;
 
+procedure MD5Init(out C: TMD5Context);
+begin
+with C do
+ begin
+  MemSet(Input, SizeOf(Input), 0);
+  Buffer[1] := $67452301;
+  Buffer[2] := $EFCDAB89;
+  Buffer[3] := $98BADCFE;
+  Buffer[4] := $10325476;
+  Bits[1] := 0;
+  Bits[2] := 0;
+ end;
+end;
+
+procedure MD5Update(var C: TMD5Context; Input: Pointer; Length: UInt);
+var
+ X: UInt32;
+begin
+X := C.Bits[1];
+Inc(C.Bits[1], Length * 8);
+if C.Bits[1] < X then
+ Inc(C.Bits[2]);
+
+X := (X shr 3) and 63;
+Inc(C.Bits[2], Length shr 29);
+
+if X > 0 then
+ if Length < 64 - X then
+  begin
+   Move(Input^, Pointer(UInt(@C.Input) + X)^, Length);
+   Exit;
+  end
+ else
+  begin
+   Move(Input^, Pointer(UInt(@C.Input) + X)^, 64 - X);
+   MD5Transform(@C.Buffer, @C.Input);
+   Inc(UInt(Input), 64 - X);
+   Dec(Length, 64 - X);
+  end;
+
+while Length >= 64 do
+ begin
+  Move(Input^, C.Input, 64);
+  MD5Transform(@C.Buffer, @C.Input);
+  Inc(UInt(Input), 64);
+  Dec(Length, 64);
+ end;
+
+Move(Input^, C.Input, Length);
+end;
+
+procedure MD5Final(out Hash: TMD5Hash; var C: TMD5Context);
+var
+ N: UInt32;
+ P: PLChar;
+begin
+N := (C.Bits[1] shr 3) and 63;
+P := PLChar(UInt(@C.Input) + N);
+P^ := #$80;
+Inc(UInt(P));
+
+N := 63 - N;
+if N >= 8 then
+ MemSet(P^, N - 8, 0)
+else
+ begin
+  MemSet(P^, N, 0);
+  MD5Transform(@C.Buffer, @C.Input);
+  MemSet(C.Input, 64 - 8, 0);
+ end;
+
+C.Input[15] := C.Bits[1];
+C.Input[16] := C.Bits[2];
+
+MD5Transform(@C.Buffer, @C.Input);
+Move(C.Buffer, Hash, SizeOf(Hash));
+MemSet(C, SizeOf(C), 0);
+end;
+
 function MD5_Hash_File(out Hash: TMD5Hash; Name: PLChar; UseFOpen, UseSeed: Boolean; Seed: PMD5Hash): Boolean;
 const
- BufSize = 1024;
+ BufSize = 2048;
 var
  F: TFile;
  Size, BSize: Int;

@@ -11,7 +11,7 @@ procedure Host_InitCVars;
 
 implementation
 
-uses Common, Console, FileSys, GameLib, Host, Info, MathLib, MsgBuf, Network, Server, SVAuth, SVClient, SVEdict, SVExport, SVWorld;
+uses Common, Console, FileSys, GameLib, Host, Info, MathLib, MsgBuf, Network, SVAuth, SVClient, SVEdict, SVExport, SVMain, SVWorld;
 
 procedure Host_KillServer_F; cdecl;
 begin
@@ -29,7 +29,7 @@ procedure Host_Restart_F; cdecl;
 var
  Map: array[1..MAX_MAP_NAME] of LChar;
 begin
-if SV.Active and (CmdSource = csServer) then
+if (CmdSource = csServer) and SV.Active then
  begin
   Host_ClearGameState;
   SV_InactivateClients;
@@ -65,37 +65,6 @@ var
    FS_FPrintF(F, Msg, True);
  end;
 
- procedure PrintExtStats;
- var
-  Buf: array[1..64] of LChar;
-  S: PLChar;
-  Time, Hour, Min, Sec: UInt;
- begin
-  Host_Status_PrintF(['Extended stats:']);
-  Host_Status_PrintF([' ', RoundTo(SVS.Stats.NearlyFullPercent, -2), '% of the time the server was nearly full;']);
-  Host_Status_PrintF([' ', RoundTo(SVS.Stats.NearlyEmptyPercent, -2), '% of the time the server was nearly empty.']);
-  Host_Status_PrintF([' At least, there were ', SVS.Stats.MinClientsEver, ' clients ever; at most, ',
-                      SVS.Stats.MaxClientsEver, ' clients ever.']);
-  Host_Status_PrintF([' The server was full for ', RoundTo(SVS.Stats.AvgServerFull, -2), '% on average.']);
-
-  Time := Trunc(SVS.Stats.AvgTimePlaying);
-  Sec := Time mod 60;
-  Time := Time div 60;
-  Min := Time mod 60;
-  Time := Time div 60;
-  Hour := Time;
-
-  S := StrECopy(@Buf, ExpandString(IntToStr(Hour, IntBuf, SizeOf(IntBuf)), @ExpandBuf, SizeOf(ExpandBuf), 2));
-  S := StrECopy(S, ':');
-  S := StrECopy(S, ExpandString(IntToStr(Min, IntBuf, SizeOf(IntBuf)), @ExpandBuf, SizeOf(ExpandBuf), 2));
-  S := StrECopy(S, ':');
-  StrCopy(S, ExpandString(IntToStr(Sec, IntBuf, SizeOf(IntBuf)), @ExpandBuf, SizeOf(ExpandBuf), 2));
-
-  Host_Status_PrintF([' Clients have dropped ', SVS.Stats.NumDrops, ' number of times, and played ', PLChar(@Buf),
-                      ' on average.']);
-  Host_Status_PrintF([' Average client latency is ', RoundTo(SVS.Stats.AvgLatency * 1000, -2), 'ms.']);
- end;
-
 begin
 ExtInfo := False;
 F := nil;
@@ -103,15 +72,12 @@ ToConsole := CmdSource = csServer;
 for I := 1 to Cmd_Argc - 1 do
  begin
   S := Cmd_Argv(I);
-  if StrIComp(S, 'ext') = 0 then
+  if (StrIComp(S, 'ext') = 0) or (StrIComp(S, '-ext') = 0) then
    ExtInfo := True
   else
-   if (StrIComp(S, 'log') = 0) and (F = nil) and (CmdSource = csServer) then
-    begin
-     FS_RemoveFile('status.log');
-     if not FS_Open(F, 'status.log', 'wo') then
-      F := nil;
-    end;
+   if ((StrIComp(S, 'log') = 0) or (StrIComp(S, '-log') = 0)) and (F = nil) and ToConsole then
+    if not FS_Open(F, 'status.log', 'wo') then
+     F := nil;
  end;
 
 Players := SV_CountPlayers;
@@ -129,26 +95,23 @@ if not SV.Active then
 else
  begin
   Host_Status_PrintF(['Map:      ', PLChar(@SV.Map)]);
-  Host_Status_PrintF(['Players:  ', Players, ' active (', SVS.MaxClients, ' max)']);
+  Host_Status_PrintF(['Players:  ', Players, ' connected (', SVS.MaxClients, ' max)']);
 
   AvgTx := 0;
   AvgRx := 0;
   for I := 0 to SVS.MaxClients - 1 do
    begin
     C := @SVS.Clients[I];
-    if C.Active then
+    if C.Active then                              
      begin
-      AvgTx := AvgTx + C.Netchan.Flow[1].KBAvgRate;
-      AvgRx := AvgRx + C.Netchan.Flow[2].KBAvgRate;
+      AvgTx := AvgTx + C.Netchan.Flow[FS_TX].KBAvgRate;
+      AvgRx := AvgRx + C.Netchan.Flow[FS_RX].KBAvgRate;
      end;
    end;
   Host_Status_PrintF(['Network:  Out = ', RoundTo(AvgTx, -2), ' KBps; In = ', RoundTo(AvgRx, -2), ' KBps']);
 
   if ExtInfo then
-   begin
-    Host_Status_PrintF(['Sequence: ', SVS.SpawnCount]);
-    PrintExtStats;
-   end;
+   Host_Status_PrintF(['Sequence: ', SVS.SpawnCount]);
 
   for I := 0 to SVS.MaxClients - 1 do
    begin
@@ -485,8 +448,8 @@ end;
 procedure Host_Kick_F; cdecl;
 var
  C, C2: PClient;
- I, K, K2, UserID: UInt;
- S, S2: PLChar;
+ I, J, K, UserID: UInt;
+ S: PLChar;
  Buf: array[1..1024] of LChar;
 begin
 K := Cmd_Argc;
@@ -500,12 +463,12 @@ else
    SV_CmdPrint('kick: The server is not running.')
   else
    begin
-    K2 := 1;
-    S := Cmd_Argv(K2);
+    J := 1;
+    S := Cmd_Argv(J);
     if StrComp(S, '#') = 0 then
      begin
-      Inc(K2);
-      UserID := StrToIntDef(Cmd_Argv(K2), 0);
+      Inc(J);
+      UserID := StrToIntDef(Cmd_Argv(J), 0);
       S := nil;
      end
     else
@@ -523,16 +486,13 @@ else
       Exit;
      end;
 
-    S2 := StrECopy(@Buf, ' Reason: ');
-    for I := K2 + 1 to K - 1 do
+    Buf[Low(Buf)] := #0;
+    for I := J + 1 to K - 1 do
      begin
-      StrLCat(S2, Cmd_Argv(I), SizeOf(Buf) - 10);
+      StrLCat(@Buf, Cmd_Argv(I), SizeOf(Buf) - 1);
       if I < K - 1 then
-       StrLCat(S2, ' ', SizeOf(Buf) - 10);
+       StrLCat(@Buf, ' ', SizeOf(Buf) - 1);
      end;
-
-    if S2^ = #0 then
-     Buf[Low(Buf)] := #0;
 
     for I := 0 to SVS.MaxClients - 1 do
      begin
@@ -547,14 +507,26 @@ else
         C2 := HostClient;
         HostClient := C;
 
-        SV_CmdPrint(['Kicked ', PLChar(@C.NetName), '.', PLChar(@Buf)]);
-        SV_ClientPrint(['Kicked by ', S, '.', PLChar(@Buf)]);
-        SV_DropClient(C^, False, ['Kicked by ', S, '.', PLChar(@Buf)]);
-
-        if CmdSource = csClient then
-         LPrint([S, ' kicked ', PLChar(@C.NetName), '.', PLChar(@Buf)])
+        if Buf[Low(Buf)] = #0 then
+         begin
+          SV_CmdPrint(['Kicked ', PLChar(@C.NetName), '.']);
+          SV_ClientPrint(['Kicked by ', S, '.']);
+          SV_DropClient(C^, False, 'Kicked by server operator.');
+          if CmdSource = csClient then
+           LPrint([S, ' kicked ', PLChar(@C.NetName), '.'#10])
+          else
+           LPrint(['Kicked ', PLChar(@C.NetName), '.'#10]);
+         end
         else
-         LPrint(['Kicked ', PLChar(@C.NetName), '.', PLChar(@Buf)]);
+         begin
+          SV_CmdPrint(['Kicked ', PLChar(@C.NetName), '. Reason: ', PLChar(@Buf)]);
+          SV_ClientPrint(['Kicked by ', S, '. Reason: ', PLChar(@Buf)]);
+          SV_DropClient(C^, False, PLChar(@Buf));
+          if CmdSource = csClient then
+           LPrint([S, ' kicked ', PLChar(@C.NetName), ', reason: ', PLChar(@Buf), #10])
+          else
+           LPrint(['Kicked ', PLChar(@C.NetName), ', reason: ', PLChar(@Buf), #10]);
+         end;
 
         HostClient := C2;
         Exit;
@@ -732,6 +704,7 @@ Cmd_AddCommand('quit', Host_Quit_F);
 Cmd_AddCommand('exit', Host_Quit_F);
 Cmd_AddCommand('_restart', Host_Quit_Restart_F);
 Cmd_AddCommand('map', Host_Map_F);
+Cmd_AddCommand('maps', Host_Maps_F);
 Cmd_AddCommand('restart', Host_Restart_F);
 Cmd_AddCommand('reload', Host_Reload_F);
 Cmd_AddCommand('changelevel', Host_Changelevel_F);
@@ -756,6 +729,8 @@ end;
 
 procedure Host_InitCVars;
 begin
+CVar_RegisterVariable(developer);
+CVar_RegisterVariable(console_cvar);
 CVar_RegisterVariable(hostmap);
 CVar_RegisterVariable(host_killtime);
 CVar_RegisterVariable(sys_ticrate);
@@ -765,11 +740,6 @@ CVar_RegisterVariable(host_limitlocal);
 CVar_RegisterVariable(host_framerate);
 CVar_RegisterVariable(host_speeds);
 CVar_RegisterVariable(host_profile);
-CVar_RegisterVariable(mp_logfile);
-CVar_RegisterVariable(mp_logecho);
-CVar_RegisterVariable(sv_log_onefile);
-CVar_RegisterVariable(sv_log_singleplayer);
-CVar_RegisterVariable(sv_log_altdateformat);
 CVar_RegisterVariable(deathmatch);
 CVar_RegisterVariable(coop);
 CVar_RegisterVariable(pausable);
@@ -778,8 +748,6 @@ CVar_RegisterVariable(skill);
 // Custom
 CVar_RegisterVariable(sys_maxframetime);
 CVar_RegisterVariable(sys_minframetime);
-
-SV_SetMaxClients;
 end;
 
 end.

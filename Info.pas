@@ -58,6 +58,7 @@ S2 := Key;
 while S^ <> '\' do
  if (S = SEnd) or (S^ = #0) then
   begin
+   S := nil;
    Key^ := #0;
    Exit;
   end
@@ -76,7 +77,8 @@ S2 := Value;
 while S^ <> '\' do
  if S = SEnd then
   begin
-   Value^ := #0;
+   S2^ := #0;
+   Result := True;
    Exit;
   end
  else

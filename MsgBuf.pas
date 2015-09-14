@@ -18,7 +18,6 @@ procedure MSG_WriteString(var Buffer: TSizeBuf; S: PLChar);
 procedure MSG_WriteBuffer(var Buffer: TSizeBuf; Size: UInt; Data: Pointer);
 procedure MSG_WriteAngle(var Buffer: TSizeBuf; F: Single);
 procedure MSG_WriteHiResAngle(var Buffer: TSizeBuf; F: Single);
-procedure MSG_WriteUserCmd(var Buffer: TSizeBuf; const Dest, Source: TUserCmd);
 
 procedure MSG_WriteOneBit(B: Byte);
 procedure MSG_StartBitWriting(var Buffer: TSizeBuf);
@@ -178,13 +177,6 @@ end;
 procedure MSG_WriteHiResAngle(var Buffer: TSizeBuf; F: Single);
 begin
 MSG_WriteShort(Buffer, Trunc(F * 65536 / 360));
-end;
-
-procedure MSG_WriteUserCmd(var Buffer: TSizeBuf; const Dest, Source: TUserCmd);
-begin
-MSG_StartBitWriting(Buffer);
-Delta_WriteDelta(@Source, @Dest, True, Delta_LookupRegistration('usercmd_t')^, nil);
-MSG_EndBitWriting;
 end;
 
 procedure MSG_WriteOneBit(B: Byte);
@@ -495,7 +487,7 @@ BitReadBuffer[Low(BitReadBuffer)] := #0;
 for I := Low(BitReadBuffer) to High(BitReadBuffer) - 1 do
  begin
   B := MSG_ReadBits(8);
-  if B = 0 then
+  if (B = 0) or MSG_BadRead then
    begin
     BitReadBuffer[I] := #0;
     Result := @BitReadBuffer;
@@ -806,5 +798,11 @@ Delta_ParseDelta(Source, Dest, UserCmdDelta^);
 MSG_EndBitReading(NetMessage);
 COM_NormalizeAngles(Dest.ViewAngles);
 end;
+
+initialization
+ MemSet(BFWrite, SizeOf(BFWrite), 0);
+ MemSet(BFRead, SizeOf(BFRead), 0);
+
+finalization
 
 end.

@@ -6,15 +6,15 @@ interface
 
 uses SysUtils, Default, SDK;
 
-procedure Con_PrintF(Msg: PLChar);
+procedure Con_PrintF(Msg: PLChar; LB: Boolean = True);
 
-procedure Print(Msg: PLChar); overload;
-procedure Print(const Msg: array of const); overload;
+procedure Print(Msg: PLChar; LB: Boolean = True); overload;
+procedure Print(const Msg: array of const; LB: Boolean = True); overload;
 
-procedure Con_DPrintF(Msg: PLChar);
+procedure Con_DPrintF(Msg: PLChar; LB: Boolean = True);
 
-procedure DPrint(Msg: PLChar); overload;
-procedure DPrint(const Msg: array of const); overload;
+procedure DPrint(Msg: PLChar; LB: Boolean = True); overload;
+procedure DPrint(const Msg: array of const; LB: Boolean = True); overload;
 
 procedure CVar_Init;
 procedure CVar_Shutdown;
@@ -34,7 +34,6 @@ procedure CVar_WriteVariables(F: TFile);
 procedure Cmd_CVarList; cdecl;
 function CVar_CountServerVariables: UInt;
 procedure CVar_UnlinkExternals;
-procedure CVar_CmdInit;
 
 procedure CBuf_Init;
 procedure CBuf_AddText(Text: PLChar); overload;
@@ -60,18 +59,15 @@ procedure Cmd_TokenizeString(Data: PLChar);
 function Cmd_FindCmd(Name: PLChar): PCommand;
 function Cmd_FindPrevCmd(Name: PLChar): PCommand;
 procedure Cmd_AddCommand(Name: PLChar; Func: TCmdFunction);
-procedure Cmd_AddMAllocCommand(Name: PLChar; Func: TCmdFunction; Flags: UInt);
+procedure Cmd_AddMAllocCommand(Name: PLChar; Func: TCmdFunction; Flags: TCmdFlags);
 procedure Cmd_AddHUDCommand(Name: PLChar; Func: TCmdFunction);
 procedure Cmd_AddGameCommand(Name: PLChar; Func: TCmdFunction);
 procedure Cmd_AddWrapperCommand(Name: PLChar; Func: TCmdFunction);
-procedure Cmd_RemoveMAllocedCmds(Flags: UInt);
 procedure Cmd_RemoveHUDCmds;
 procedure Cmd_RemoveGameCmds;
 procedure Cmd_RemoveWrapperCmds;
 function Cmd_Exists(Name: PLChar): Boolean;
 procedure Cmd_ExecuteString(Text: PLChar; Source: TCmdSource);
-procedure Cmd_ForwardToServer; cdecl;
-procedure Cmd_ForwardToServerUnreliable;
 function Cmd_CheckParm(Name: PLChar): UInt;
 
 procedure Cmd_Debug_F; cdecl;
@@ -99,8 +95,8 @@ var
 
 implementation
 
-uses Common, FileSys, Info, Host, Memory, Network, Server, StdUI, SVClient, SysArgs, SysMain, SVCmds, SVRcon;
-
+uses Common, CoreUI, FileSys, Info, Host, Memory, Network, SVClient, SVCmds, SVMain, SVRcon, SysArgs, SysMain;
+ 
 var
  FirstToken: array[1..204] of LChar;
  
@@ -110,58 +106,69 @@ var
 
  DebugLog: Boolean = False;
 
-procedure Con_PrintF(Msg: PLChar);
+procedure Con_PrintF(Msg: PLChar; LB: Boolean = True);
+var
+ S: PLChar;
+ Buf: array[1..2048] of LChar;
 begin
-UI_OnPrint(Msg);
-
-if RedirectType <> srNone then
+if Msg <> nil then
  begin
-  if StrLen(Msg) + StrLen(@RedirectBuf) >= SizeOf(RedirectBuf) - 1 then
-   SV_FlushRedirect;
-  StrLCat(@RedirectBuf, Msg, SizeOf(RedirectBuf) - 1);
- end;
+  if LB then
+   S := AppendLineBreak(Msg, Buf, SizeOf(Buf))
+  else
+   S := Msg;
 
-if DebugLog then
- Con_DebugLog('qconsole.log', Msg);
-end;
-
-procedure Con_DPrintF(Msg: PLChar);
-begin
-if developer.Value <> 0 then
- begin
-  UI_OnPrint(Msg);
+  UI_Print(S);
+  SV_RedirectPrint(S);
   if DebugLog then
-   Con_DebugLog('qconsole.log', Msg);
+   Con_DebugLog('qconsole.log', S);
  end;
 end;
 
-procedure Print(Msg: PLChar);
+procedure Con_DPrintF(Msg: PLChar; LB: Boolean = True);
+var
+ S: PLChar;
+ Buf: array[1..2048] of LChar;
 begin
-Con_PrintF(Msg);
+if (Msg <> nil) and (developer.Value <> 0) then
+ begin
+  if LB then
+   S := AppendLineBreak(Msg, Buf, SizeOf(Buf))
+  else
+   S := Msg;
+
+  UI_Print(S);
+  if DebugLog then
+   Con_DebugLog('qconsole.log', S);
+ end;
 end;
 
-procedure Print(const Msg: array of const);
+procedure Print(Msg: PLChar; LB: Boolean = True);
 begin
-Con_PrintF(PLChar(StringFromVarRec(Msg)));
+Con_PrintF(Msg, LB);
 end;
 
-procedure DPrint(Msg: PLChar);
+procedure Print(const Msg: array of const; LB: Boolean = True);
 begin
-Con_DPrintF(Msg);
+Con_PrintF(PLChar(StringFromVarRec(Msg)), LB);
 end;
 
-procedure DPrint(const Msg: array of const);
+procedure DPrint(Msg: PLChar; LB: Boolean = True);
+begin
+Con_DPrintF(Msg, LB);
+end;
+
+procedure DPrint(const Msg: array of const; LB: Boolean = True);
 begin
 if developer.Value <> 0 then
- Con_DPrintF(PLChar(StringFromVarRec(Msg)));
+ Con_DPrintF(PLChar(StringFromVarRec(Msg)), LB);
 end;
-
 
 // CVars
 
 procedure CVar_Init;
 begin
-
+Cmd_AddCommand('cvarlist', @Cmd_CVarList);
 end;
 
 procedure CVar_Shutdown;
@@ -647,11 +654,6 @@ while P^ <> nil do
  end;
 end;
 
-procedure CVar_CmdInit;
-begin
-Cmd_AddCommand('cvarlist', @Cmd_CVarList);
-end;
-
 // Commands
 
 var
@@ -914,7 +916,7 @@ if FS_OpenPathID(F, S, 'r', 'GAMECONFIG') or FS_OpenPathID(F, S, 'r', 'GAME') or
  begin
   Size := FS_Size(F);
   if Size > 0 then
-   if Size <= MAX_CONFIG_SIZE then
+   if Size <= 512 * 1024 then
     begin
      P := Mem_Alloc(Size + 1);
      FS_Read(F, P, Size);
@@ -1002,7 +1004,7 @@ if Count <= 1 then
 else
  begin
   S := Cmd_Argv(1);
-  if StrLen(S) >= MAX_ALIAS_NAME then
+  if StrLen(S) >= SizeOf(P.Name) then
    Print('Alias name is too long.')
   else
    if CVar_FindVar(S) <> nil then
@@ -1314,7 +1316,6 @@ CmdArgc := 0;
 CmdArgs := nil;
 
 S := Data;
-
 while True do
  begin
   while S^ <= ' ' do // must use #1 here
@@ -1328,11 +1329,11 @@ while True do
 
   S := COM_Parse(S);
   if S = nil then
-   Break;
+   Exit;
 
   L := StrLen(@COM_Token) + 1;
   if L > 512 + 3 then
-   Break;
+   Exit;
 
   if CmdArgc < MAX_CMD_ARGS then
    begin
@@ -1343,7 +1344,7 @@ while True do
   else
    begin
     DPrint('Cmd_TokenizeString: Exceeded MAX_CMD_ARGS.');
-    Break;
+    Exit;
    end;
  end;
 end;
@@ -1404,7 +1405,7 @@ else
     C.Callback := @Func
    else
     C.Callback := @Cmd_ForwardToServer;
-   C.Flags := 0;
+   C.Flags := [];
 
    if (CmdBase = nil) or (StrIComp(C.Name, CmdBase.Name) <= 0) then
     begin
@@ -1423,7 +1424,7 @@ else
   end;
 end;
 
-procedure Cmd_AddMAllocCommand(Name: PLChar; Func: TCmdFunction; Flags: UInt);
+procedure Cmd_AddMAllocCommand(Name: PLChar; Func: TCmdFunction; Flags: TCmdFlags);
 var
  C: PCommand;
 begin
@@ -1448,20 +1449,20 @@ end;
 
 procedure Cmd_AddHUDCommand(Name: PLChar; Func: TCmdFunction);
 begin
-Cmd_AddMAllocCommand(Name, Func, FCMD_CLIENT);
+Cmd_AddMAllocCommand(Name, Func, [FCMD_CLIENT]);
 end;
 
 procedure Cmd_AddGameCommand(Name: PLChar; Func: TCmdFunction);
 begin
-Cmd_AddMAllocCommand(Name, Func, FCMD_GAME);
+Cmd_AddMAllocCommand(Name, Func, [FCMD_GAME]);
 end;
 
 procedure Cmd_AddWrapperCommand(Name: PLChar; Func: TCmdFunction);
 begin
-Cmd_AddMAllocCommand(Name, Func, FCMD_WRAPPER);
+Cmd_AddMAllocCommand(Name, Func, [FCMD_WRAPPER]);
 end;
 
-procedure Cmd_RemoveMAllocedCmds(Flags: UInt);
+procedure Cmd_RemoveMAllocedCmds(Flags: TCmdFlags);
 var
  C, C2, C3: PCommand;
 begin
@@ -1470,7 +1471,7 @@ C := CmdBase;
 while C <> nil do
  begin
   C2 := C.Next;
-  if (Flags and C.Flags) > 0 then
+  if (Flags * C.Flags) <> [] then
    Mem_Free(C)
   else
    begin
@@ -1486,17 +1487,17 @@ end;
 
 procedure Cmd_RemoveHUDCmds;
 begin
-Cmd_RemoveMAllocedCmds(FCMD_CLIENT);
+Cmd_RemoveMAllocedCmds([FCMD_CLIENT]);
 end;
 
 procedure Cmd_RemoveGameCmds;
 begin
-Cmd_RemoveMAllocedCmds(FCMD_GAME);
+Cmd_RemoveMAllocedCmds([FCMD_GAME]);
 end;
 
 procedure Cmd_RemoveWrapperCmds;
 begin
-Cmd_RemoveMAllocedCmds(FCMD_WRAPPER);
+Cmd_RemoveMAllocedCmds([FCMD_WRAPPER]);
 end;
 
 function Cmd_Exists(Name: PLChar): Boolean;
@@ -1570,16 +1571,6 @@ if Cmd_Argc > 0 then
  end;
 end;
 
-function Cmd_ForwardToServerInternal(Buffer: PSizeBuf): Boolean;
-begin
-Result := False;
-end;
-
-procedure Cmd_ForwardToServerUnreliable;
-begin
-
-end;
-
 function Cmd_CheckParm(Name: PLChar): UInt;
 var
  I, L: UInt;
@@ -1621,7 +1612,7 @@ var
 begin
 if FS_Open(F, FileName, 'a') then
  begin
-  FS_FPrintF(F, Msg);
+  FS_FPrintF(F, Msg, False);
   FS_Close(F);
  end;
 end;
@@ -1644,8 +1635,10 @@ end;
 procedure Con_Init;
 begin
 DebugLog := COM_CheckParm('-condebug') > 0;
-DPrint('Console initialized.');
+if (COM_CheckParm('-console') > 0) or (COM_CheckParm('-toconsole') > 0) or (COM_CheckParm('-dev') > 0) then
+ CVar_DirectSet(console_cvar, '1');
 Cmd_AddCommand('condebug', @Cmd_Debug_F);
+DPrint('Console initialized.');
 end;
 
 procedure Con_Shutdown;
@@ -1702,7 +1695,7 @@ if SVS.LogEnabled or SVS.LogToAddr or (FirstLog <> nil) then
   if SVS.LogEnabled and ((SVS.MaxClients > 1) or (sv_log_singleplayer.Value <> 0)) then
    begin
     if mp_logecho.Value <> 0 then
-     Con_PrintF(PLChar(@Buf));
+     Con_PrintF(PLChar(@Buf), False);
 
     if (SVS.LogFile <> nil) and (mp_logfile.Value <> 0) then
      FS_FPrintF(SVS.LogFile, PLChar(@Buf), False);
@@ -1751,6 +1744,8 @@ if SVS.LogFile <> nil then
 end;
 
 procedure Log_Open;
+const
+ MAX_LOG_FILES = 5000;
 var
  ExpandBuf, IntBuf: array[1..32] of LChar;
  Buf: array[1..MAX_PATH_W] of LChar;

@@ -6,28 +6,90 @@ interface
 
 uses SysUtils, Default, SDK;
 
+function PvAllocEntPrivateData(var E: TEdict; Size: Int): Pointer;
+function PvEntPrivateData(const E: TEdict): Pointer;
+procedure FreeEntPrivateData(var E: TEdict);
+procedure FreeAllEntPrivateData;
+procedure InitEntityDLLFields(var E: TEdict);
+procedure ReleaseEntityDLLFields(var E: TEdict);
+
 function EDICT_NUM(I: UInt): PEdict;
 function NUM_FOR_EDICT(const E: TEdict): UInt;
 
 function ED_Alloc: PEdict;
 procedure ED_Free(var E: TEdict);
-procedure ED_Count; cdecl;
+procedure ED_Count_F; cdecl;
 function ED_NewString(S: PLChar): PLChar;
 procedure ED_LoadFromFile(P: Pointer);
 
 procedure ExtractClassname(P: Pointer; var E: TEdict);
 
-procedure ReleaseEntityDLLFields(var E: TEdict);
-procedure InitEntityDLLFields(var E: TEdict);
-
-function PvAllocEntPrivateData(var E: TEdict; Size: Int): Pointer;
-function PvEntPrivateData(const E: TEdict): Pointer;
-procedure FreeEntPrivateData(var E: TEdict);
-procedure FreeAllEntPrivateData;
-
 implementation
 
-uses Common, Console, GameLib, Host, MathLib, Memory, Server, SysMain, SVWorld;
+uses Common, Console, GameLib, Host, MathLib, Memory, SVMain, SysMain, SVWorld;
+
+function PvAllocEntPrivateData(var E: TEdict; Size: Int): Pointer;
+begin
+FreeEntPrivateData(E);
+if Size <= 0 then
+ Result := nil
+else
+ begin
+  E.PrivateData := Mem_ZeroAlloc(Size);
+  Result := E.PrivateData;
+ end;
+end;
+
+function PvEntPrivateData(const E: TEdict): Pointer;
+begin
+if @E <> nil then
+ Result := E.PrivateData
+else
+ Result := nil;
+end;
+
+procedure FreeEntPrivateData(var E: TEdict);
+begin
+if E.PrivateData <> nil then
+ begin
+  if @NewDLLFunctions.OnFreeEntPrivateData <> nil then
+   NewDLLFunctions.OnFreeEntPrivateData(E);
+  Mem_FreeAndNil(E.PrivateData);
+ end;
+end;
+
+procedure FreeAllEntPrivateData;
+var
+ I: Int;
+begin
+for I := 0 to SV.NumEdicts - 1 do
+ FreeEntPrivateData(SV.Edicts[I]);
+end;
+
+procedure InitEntityDLLFields(var E: TEdict);
+begin
+E.V.ContainingEntity := @E;
+end;
+
+procedure ReleaseEntityDLLFields(var E: TEdict);
+begin
+FreeEntPrivateData(E);
+end;
+
+function EDICT_NUM(I: UInt): PEdict;
+begin
+if I >= SV.MaxEdicts then
+ Sys_Error(['EDICT_NUM: Bad edict number #', I, '.']);
+
+Result := @SV.Edicts[I];
+end;
+
+function NUM_FOR_EDICT(const E: TEdict): UInt;
+begin
+Result := (UInt(@E) - UInt(SV.Edicts)) div SizeOf(TEdict);
+if Result >= SV.NumEdicts then
+ Sys_Error(['NUM_FOR_EDICT: Bad edict pointer.']);
+end;
 
 procedure ED_ClearEdict(var E: TEdict);
 begin
@@ -82,52 +144,13 @@ if E.Free = 0 then
   E.V.Gravity := 0;
   E.V.Origin := Vec3Origin;
   E.V.Angles := Vec3Origin;
-  E.V.NextThink := -1;
   E.V.Solid := 0;
-
+  E.V.NextThink := -1;
+  
   E.Free := 1;
   E.FreeTime := SV.Time;
   Inc(E.SerialNumber);  
  end;
-end;
-
-procedure ED_Count; cdecl;
-var
- I: Int;
- E: PEdict;
- Active, View, Touch, Step: UInt;
- Ext: Boolean;
-begin
-Active := 0;
-View := 0;
-Touch := 0;
-Step := 0;
-Ext := (Cmd_Argc = 2) and (StrIComp(Cmd_Argv(1), 'ext') = 0);
-
-for I := 0 to SV.NumEdicts - 1 do
- begin
-  E := @SV.Edicts[I];
-  if E.Free = 0 then
-   begin
-    Inc(Active);
-    if E.V.Model <> 0 then
-     Inc(View);
-    if E.V.Solid <> 0 then
-     Inc(Touch);
-    if E.V.MoveType = MOVETYPE_STEP then
-     Inc(Step);
-    if Ext then
-     Print(['#', I + 1, ': ', PLChar(PRStrings + E.V.Classname)]);
-   end;
- end;
-
-Print(['Edicts:' + LineBreak +
-       '- Total: ', SV.NumEdicts, ';' + LineBreak +
-       '- Active: ', Active, ';' + LineBreak +
-       '- View: ', View, ';' + LineBreak +
-       '- Touch: ', Touch, ';' + LineBreak +
-       '- Step: ', Step, ';' + LineBreak +
-       '- Free: ', SV.MaxEdicts - SV.NumEdicts, '.']);
 end;
 
 function ED_NewString(S: PLChar): PLChar;
@@ -135,11 +158,11 @@ var
  I, L: UInt;
  Dst: PLChar;
 begin
-L := StrLen(S);
-Dst := Hunk_Alloc(L + 1);
+L := StrLen(S) + 1;
+Dst := Hunk_Alloc(L);
 Result := Dst;
 
-for I := 0 to L do
+for I := 0 to L - 1 do
  begin
   if S^ = '\' then
    begin
@@ -157,10 +180,40 @@ for I := 0 to L do
  end;
 end;
 
+procedure ExtractClassname(P: Pointer; var E: TEdict);
+var
+ ClassName: array[1..1024] of LChar;
+ KVD: TKeyValueData;
+begin
+while P <> nil do
+ begin
+  P := COM_Parse(P);
+  if (P = nil) or (COM_Token[Low(COM_Token)] = '}') then
+   Break;
+
+  if StrIComp(@COM_Token, 'classname') = 0 then
+   begin
+    StrLCopy(@ClassName, @COM_Token, SizeOf(ClassName) - 1);
+    COM_Parse(P);
+    KVD.Classname := nil;
+    KVD.Key := @ClassName;
+    KVD.Value := @COM_Token;
+    KVD.Handled := 0;
+    DLLFunctions.KeyValue(E, @KVD);
+    if KVD.Handled = 0 then
+     Sys_Error('ExtractClassname: Parsing error.' + LineBreak +
+               'The game DLL seems to be incorrectly handling the KeyValue calls.');
+    Exit;
+   end
+  else
+   P := COM_Parse(P);
+ end;
+end;
+
 function ED_ParseEdict(P: Pointer; var E: TEdict): Pointer;
 var
- F: TEntityInitFunc;
  ClassName: PLChar;
+ F: TEntityInitFunc;
  KVD: TKeyValueData;
  Key: array[1..256] of LChar;
  I: UInt;
@@ -215,21 +268,21 @@ while True do
    if COM_Token[Low(COM_Token)] = '}' then
     Sys_Error('ED_ParseEdict: Closing brace without data.');
 
-  if (ClassName = nil) or (StrComp(ClassName, @COM_Token) <> 0) then
+  if StrIComp(@Key, 'angle') = 0 then
    begin
-    if StrComp(@Key, 'angle') = 0 then
-     begin
-      J := StrToFloatDef(PLChar(@COM_Token), 0);
-      if J = -1 then
-       StrLCopy(@COM_Token, '-90 0 0', SizeOf(COM_Token) - 1)
-      else
-       if J < 0 then
-        StrLCopy(@COM_Token, '90 0 0', SizeOf(COM_Token) - 1)
-       else
-        FormatBuf(COM_Token, SizeOf(COM_Token), '%f %f %f%s', StrLen('%f %f %f%s'), [E.V.Angles[0], J, E.V.Angles[2], #0]);
-      StrCopy(@Key, 'angles');
-     end;
+    J := StrToFloatDef(PLChar(@COM_Token), 0);
+    if J = -1 then
+     StrCopy(@COM_Token, '-90 0 0')
+    else
+     if J < 0 then
+      StrCopy(@COM_Token, '90 0 0')
+     else
+      FormatBuf(COM_Token, SizeOf(COM_Token), '%f %f %f%s', StrLen('%f %f %f%s'), [E.V.Angles[0], J, E.V.Angles[2], #0]);
+    StrCopy(@Key, 'angles');
+   end;
 
+  if StrIComp(@Key, ClassName) <> 0 then
+   begin
     KVD.Classname := ClassName;
     KVD.Key := @Key;
     KVD.Value := @COM_Token;
@@ -296,97 +349,52 @@ if I > 0 then
  DPrint([I, ' entities inhibited.']); 
 end;
 
-function EDICT_NUM(I: UInt): PEdict;
-begin
-if I >= SV.MaxEdicts then
- Sys_Error(['EDICT_NUM: Bad edict number ', I, '.']);
-
-Result := @SV.Edicts[I];
-end;
-
-function NUM_FOR_EDICT(const E: TEdict): UInt;
-begin
-Result := (UInt(@E) - UInt(SV.Edicts)) div SizeOf(E);
-if (UInt(@E) < UInt(SV.Edicts)) or (Result >= SV.NumEdicts) then
- Sys_Error(['NUM_FOR_EDICT: Bad edict pointer $', Pointer(@E), '.']);
-end;
-
-procedure ExtractClassname(P: Pointer; var E: TEdict);
-var
- ClassName: array[1..1024] of LChar;
- KVD: TKeyValueData;
-begin
-while P <> nil do
- begin
-  P := COM_Parse(P);
-  if (P = nil) or (COM_Token[Low(COM_Token)] = '}') then
-   Break;
-
-  if StrIComp(@COM_Token, 'classname') = 0 then
-   begin
-    StrLCopy(@ClassName, @COM_Token, SizeOf(ClassName) - 1);
-    COM_Parse(P);
-    KVD.Classname := nil;
-    KVD.Key := @ClassName;
-    KVD.Value := @COM_Token;
-    KVD.Handled := 0;
-    DLLFunctions.KeyValue(E, @KVD);
-    if KVD.Handled = 0 then
-     Host_Error('ExtractClassname: Parsing error.' + LineBreak +
-                'The game DLL seems to be incorrectly handling the KeyValue calls.');
-    Exit;
-   end
-  else
-   P := COM_Parse(P);
- end;
-end;
-
-procedure ReleaseEntityDLLFields(var E: TEdict);
-begin
-FreeEntPrivateData(E);
-end;
-
-procedure InitEntityDLLFields(var E: TEdict);
-begin
-E.V.ContainingEntity := @E;
-end;
-
-function PvAllocEntPrivateData(var E: TEdict; Size: Int): Pointer;
-begin
-FreeEntPrivateData(E);
-if Size <= 0 then
- Result := nil
-else
- begin
-  E.PrivateData := Mem_ZeroAlloc(Size);
-  Result := E.PrivateData;
- end;
-end; 
-
-function PvEntPrivateData(const E: TEdict): Pointer;
-begin
-if @E <> nil then
- Result := E.PrivateData
-else
- Result := nil;
-end;
-
-procedure FreeEntPrivateData(var E: TEdict);
-begin
-if E.PrivateData <> nil then
- begin
-  if @NewDLLFunctions.OnFreeEntPrivateData <> nil then
-   NewDLLFunctions.OnFreeEntPrivateData(E);
-  Mem_FreeAndNil(E.PrivateData);
- end;
-end;
-
-procedure FreeAllEntPrivateData;
+procedure ED_Count_F; cdecl;
 var
  I: Int;
+ E: PEdict;
+ Active, Free, View, Touch, Step, Push: UInt;
+ Ext: Boolean;
 begin
+Active := 0;
+Free := 0;
+View := 0;
+Touch := 0;
+Step := 0;
+Push := 0;
+Ext := (Cmd_Argc = 2) and (StrIComp(Cmd_Argv(1), 'ext') = 0);
+
 for I := 0 to SV.NumEdicts - 1 do
- FreeEntPrivateData(SV.Edicts[I]);
+ begin
+  E := @SV.Edicts[I];
+  if E.Free = 0 then
+   begin
+    Inc(Active);
+    if E.V.Model <> 0 then
+     Inc(View);
+    if E.V.Solid <> 0 then
+     Inc(Touch);
+    if E.V.MoveType = MOVETYPE_STEP then
+     Inc(Step)
+    else
+     if E.V.MoveType = MOVETYPE_PUSH then
+      Inc(Push);
+
+    if Ext then
+     Print(['#', I + 1, ': ', PLChar(PRStrings + E.V.Classname)]);
+   end
+  else
+   Inc(Free);
+ end;
+
+Print(['Edicts:' + LineBreak +
+       '- Total: ', SV.NumEdicts, ';' + LineBreak +
+       '- Alloc: ', Active, ';' + LineBreak +
+       '- Free: ', Free, ';' + LineBreak +
+       '- View: ', View, ';' + LineBreak +
+       '- Touch: ', Touch, ';' + LineBreak +
+       '- Step: ', Step, ';' + LineBreak +
+       '- Push: ', Push, '.']);
 end;
 
 end.

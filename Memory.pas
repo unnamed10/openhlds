@@ -17,6 +17,7 @@ procedure Hunk_Check;
 procedure Hunk_Print(All: Boolean);
 function Hunk_AllocName(Size: UInt; Name: PLChar): Pointer;
 function Hunk_Alloc(Size: UInt): Pointer;
+function Hunk_StrDup(S: PLChar): PLChar;
 function Hunk_LowMark: UInt;
 procedure Hunk_FreeToLowMark(Mark: UInt);
 function Hunk_HighMark: UInt;
@@ -49,7 +50,6 @@ procedure SZ_Write(var Buffer: TSizeBuf; Data: Pointer; Length: UInt);
 procedure SZ_Print(var Buffer: TSizeBuf; Data: PLChar);
 
 function Mem_Alloc(Size: UInt): Pointer;
-function Mem_AllocN(Size: UInt): Pointer;
 function Mem_ZeroAlloc(Size: UInt): Pointer;
 function Mem_ReAlloc(Data: Pointer; Size: UInt): Pointer;
 function Mem_CAlloc(Count, Size: UInt): Pointer;
@@ -62,7 +62,8 @@ procedure Cmd_Flush; cdecl;
 procedure Cache_Print_Models_And_Totals; cdecl;
 procedure Cache_Print_Sounds_And_Totals; cdecl;
 
-procedure Memory_Init(Buffer: Pointer; Size: UInt);
+procedure Memory_Init;
+procedure Memory_Shutdown;
 
 var
  mem_dbgfile: TCVar = (Name: 'mem_dbgfile'; Data: 'mem.txt');
@@ -70,7 +71,7 @@ var
 
 implementation
 
-uses Console, FileSys, Server, SysArgs, SysMain;
+uses Console, FileSys, SVMain, SysArgs, SysMain;
 
 const
  ZONE_ID = $1D4A11;
@@ -78,36 +79,44 @@ const
 
  HUNK_ID = $1DF001ED;
 
+ MB = 1024*1024;
+
+type
+ PHunk = ^THunk;
+ THunk = record
+  ID: Int32;
+  Size: UInt;
+  Name: array[1..64] of LChar;
+ end;
+
 var
- MainZone: PMemoryZone = nil;
+ MainZone: PMemoryZone;
 
  HunkBase: Pointer;
  HunkSize, HunkLowUsed, HunkHighUsed: UInt;
-
- HunkTempActive: Boolean = False;
+ HunkTempActive: Boolean;
  HunkTempMark: UInt;
 
- CacheHead: TCacheSystem = ();
+ CacheHead: TCacheSystem;
 
 procedure Z_ClearZone(var Zone: TMemoryZone; Size: UInt);
 var
- Block, BlockList: PMemoryBlock;
+ Block: PMemoryBlock;
 begin
 if Size < SizeOf(Zone) then
  Sys_Error(['Z_ClearZone: Invalid block size (', Size, ').']);
 
 Block := Pointer(UInt(@Zone) + SizeOf(Zone));
 
-BlockList := @Zone.BlockList;
-BlockList.Prev := Block;
-BlockList.Next := Block;
-BlockList.Tag := 1;
-BlockList.ID := 0;
-BlockList.Size := 0;
+Zone.BlockList.Prev := Block;
+Zone.BlockList.Next := Block;
+Zone.BlockList.Tag := 1;
+Zone.BlockList.ID := 0;
+Zone.BlockList.Size := 0;
 Zone.Rover := Block;
 
-Block.Prev := BlockList;
-Block.Next := BlockList;
+Block.Prev := @Zone.BlockList;
+Block.Next := @Zone.BlockList;
 Block.Tag := 0;
 Block.ID := ZONE_ID;
 Block.Size := Size - SizeOf(Zone);
@@ -162,7 +171,7 @@ begin
 if Size = 0 then
  Sys_Error('Z_MAlloc: Invalid block size.');
 
-if mem_checkheap.Value >= 1 then
+if mem_checkheap.Value <> 0 then
  Z_CheckHeap;
 
 Result := Z_TagMAlloc(Size, 1);
@@ -329,7 +338,7 @@ while True do
    FS_FPrintF(F, [Hunk, ': Size = ', Hunk.Size, '; Name = ', PLChar(@Hunk.Name)]);
 
   if (Next = EndLow) or (Next = EndHigh) or
-     (StrLComp(@Hunk.Name, @Next.Name, HUNK_NAME_SIZE) <> 0) then
+     (StrLComp(@Hunk.Name, @Next.Name, SizeOf(Hunk.Name)) <> 0) then
    begin
     if not All then
      FS_FPrintF(F, ['Sum = ', Sum, '; Name = ', PLChar(@Hunk.Name)]);
@@ -361,7 +370,7 @@ MemSet(Hunk^, Size, 0);
 
 Hunk.Size := Size;
 Hunk.ID := HUNK_ID;
-StrLCopy(@Hunk.Name, Name, HUNK_NAME_SIZE - 1);
+StrLCopy(@Hunk.Name, Name, SizeOf(Hunk.Name) - 1);
 
 Result := Pointer(UInt(Hunk) + SizeOf(THunk));
 end;
@@ -369,6 +378,12 @@ end;
 function Hunk_Alloc(Size: UInt): Pointer;
 begin
 Result := Hunk_AllocName(Size, 'unknown');
+end;
+
+function Hunk_StrDup(S: PLChar): PLChar;
+begin
+Result := Hunk_Alloc(StrLen(S) + 1);
+StrCopy(Result, S);
 end;
 
 function Hunk_LowMark: UInt;
@@ -440,7 +455,7 @@ else
 
   Hunk.Size := Size;
   Hunk.ID := HUNK_ID;
-  StrLCopy(@Hunk.Name, Name, HUNK_NAME_SIZE - 1);
+  StrLCopy(@Hunk.Name, Name, SizeOf(Hunk.Name) - 1);
 
   Result := Pointer(UInt(Hunk) + SizeOf(THunk));
  end;
@@ -752,7 +767,7 @@ repeat
  Cache_Free(CacheHead.LRUPrev.User^);
 until False;
 
-StrLCopy(@C2.Name, Name, CACHE_NAME_SIZE - 1);
+StrLCopy(@C2.Name, Name, SizeOf(C2.Name) - 1);
 C.Data := Pointer(UInt(C2) + SizeOf(C2^));
 C2.User := @C;
 
@@ -859,7 +874,7 @@ if Buffer.CurrentSize + Length > Buffer.MaxSize then
    else
     Sys_Error(['SZ_GetSpace: ', Length ,' is > full buffer size on "', P, '".']);
 
-  Print(['SZ_GetSpace: overflow on "', P , '".']);
+  DPrint(['SZ_GetSpace: overflow on "', P , '".']);
   Buffer.CurrentSize := 0;
   Include(Buffer.AllowOverflow, FSB_OVERFLOWED);
  end;
@@ -899,18 +914,6 @@ end;
 function Mem_Alloc(Size: UInt): Pointer;
 begin
 if Size > 0 then
- begin
-  GetMem(Result, Size);
-  if Result = nil then
-   Sys_Error(['Mem_Alloc: Cannot allocate ', Size, ' bytes.']);
- end
-else
- Result := nil;
-end;
-
-function Mem_AllocN(Size: UInt): Pointer;
-begin
-if Size > 0 then
  GetMem(Result, Size)
 else
  Result := nil;
@@ -922,9 +925,7 @@ if Size > 0 then
  begin
   GetMem(Result, Size);
   if Result <> nil then
-   MemSet(Result^, Size, 0)
-  else
-   Sys_Error(['Mem_ZeroAlloc: Cannot allocate ', Size, ' bytes.']);
+   MemSet(Result^, Size, 0);
  end
 else
  Result := nil;
@@ -949,8 +950,11 @@ if S <> nil then
  begin
   L := StrLen(S);
   Result := Mem_Alloc(L + SizeOf(S^));
-  Result^ := #0;
-  StrLCopy(Result, S, L);
+  if Result <> nil then
+   begin
+    Result^ := #0;
+    StrLCopy(Result, S, L);
+   end;
  end
 else
  Result := nil;
@@ -964,10 +968,13 @@ if S <> nil then
  begin
   L := StrLen(S);
   Result := Mem_Alloc(L + ExtraLen + SizeOf(S^));
-  Result^ := #0;
-  StrLCopy(Result, S, L);
-  if ExtraLen > 0 then
-   MemSet(Pointer(UInt(Result) + L + SizeOf(S^))^, ExtraLen, 0);
+  if Result <> nil then
+   begin
+    Result^ := #0;
+    StrLCopy(Result, S, L);
+    if ExtraLen > 0 then
+     MemSet(Pointer(UInt(Result) + L + SizeOf(S^))^, ExtraLen, 0);
+   end;
  end
 else
  Result := nil;
@@ -980,49 +987,118 @@ if Data <> nil then
 end;
 
 procedure Mem_FreeAndNil(var Data);
+var
+ P: Pointer;
 begin
-if Pointer(Data) <> nil then
+P := Pointer(Data);
+if P <> nil then
  begin
-  FreeMem(Pointer(Data));
+  FreeMem(P);
   Pointer(Data) := nil;
  end;
 end;
 
-procedure Memory_Init(Buffer: Pointer; Size: UInt);
+function Memory_GetDesiredHeapSize(out Custom: Boolean): UInt;
 var
- I: UInt;
  S: PLChar;
 begin
-HunkBase := Buffer;
-HunkSize := Size;
+Custom := False;
+
+if COM_CheckParm('-minmemory') > 0 then
+ Result := 14*MB
+else
+ begin
+  S := COM_ParmValueByName('-heapsize');
+  if S^ = #0 then
+   Result := 32*MB
+  else
+   begin
+    Result := StrToIntDef(S, 0) * 1024;
+    if Result = 0 then
+     begin
+      Print('Bad heap size specified. Falling back to 32 MB.');
+      Result := 32*MB;
+     end
+    else
+     if Result < 4*MB then
+      begin
+       Print('The avaliable heap size should be no lesser than 4 MB. Clamping to 4 MB.');
+       Result := 4*MB;
+      end
+     else
+      Custom := True;
+   end;
+ end;
+end;
+
+function Memory_GetDesiredZoneSize: UInt;
+var
+ S: PLChar;
+begin
+S := COM_ParmValueByName('-zone');
+if S^ = #0 then
+ Result := 2*MB
+else
+ begin
+  Result := StrToIntDef(S, 0) * 1024;
+  if Result = 0 then
+   begin
+    Print('Bad zone size specified. Falling back to 2 MB.');
+    Result := 2*MB;
+   end
+  else
+   if Result >= HunkSize then
+    begin
+     Print('Custom zone size is too big. Falling back to 2 MB.');
+     Result := 2*MB;
+    end;
+ end;
+end;
+
+procedure Memory_AllocHeap;
+var
+ Custom: Boolean;
+begin
+HunkSize := Memory_GetDesiredHeapSize(Custom);
+GetMem(HunkBase, HunkSize);
+
+if (HunkBase = nil) and Custom then
+ begin
+  Print(['Unable to allocate ', RoundTo(HunkSize div MB, -3), ' MB (defined by -heapsize). ',
+         'Falling back to 32 MB.']);
+  HunkSize := 32*MB;
+  GetMem(HunkBase, HunkSize);
+ end;
+
+if HunkBase = nil then
+ Sys_Error(['Memory_AllocHeap: Unable to allocate ', RoundTo(HunkSize div MB, -3), ' MB.']);
+end;
+
+procedure Memory_Init;
+var
+ Size: UInt;
+begin
+Memory_AllocHeap;
+
 HunkLowUsed := 0;
 HunkHighUsed := 0;
-
 HunkTempActive := False;
 HunkTempMark := 0;
 
 Cache_Init;
 
-S := COM_ParmValueByName('-zone');
-if S^ > #0 then
- begin
-  I := StrToInt(S);
-  if I = 0 then
-   Sys_Error('Memory_Init: You must specify a size in KB after "-zone".')
-  else
-   if I >= Size + 1024*1024 then
-    Sys_Error('Custom "-zone" size is too big (can''t be higher than the avaliable hunk).')
-   else
-    I := I * 1024;
- end
-else
- I := 2*1024*1024;
-
-MainZone := Hunk_AllocName(I, 'zone');
-Z_ClearZone(MainZone^, I);
+Size := Memory_GetDesiredZoneSize;
+MainZone := Hunk_AllocName(Size, 'zone');
+Z_ClearZone(MainZone^, Size);
 
 CVar_RegisterVariable(mem_dbgfile);
 CVar_RegisterVariable(mem_checkheap);
+end;
+
+procedure Memory_Shutdown;
+begin
+if HunkBase <> nil then
+ FreeMem(HunkBase);
 end;
 
 end.

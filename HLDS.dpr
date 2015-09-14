@@ -5,8 +5,8 @@ program HLDS;
 {$I *.inc}
 
 uses
-  // Platform-dependent units
-  {$IFDEF MSWINDOWS} Windows, Winsock, UCWinAPI,{$ENDIF}
+  FastMM4,
+  {$IFDEF WINDOWS} Windows, Winsock, UCWinAPI,{$ENDIF}
   {$IFDEF LINUX}KernelDefs in 'unix/kerneldefs.pas', KernelIoctl in 'unix/kernelioctl.pas', Libc in 'unix/libc.pas',{$ENDIF}
 
   // RTL
@@ -16,9 +16,9 @@ uses
   Default, SDK,
   Main,
 
-  BZip2, Common, Console, Decal, Delta, Edict, Encode, FileSys, FilterIP,
+  BZip2, Common, Console, CoreUI, Decal, Delta, Edict, Encode, FileSys, FilterIP,
   GameLib, Host, HostCmds, HostSave, HPAK, Info, MathLib, Memory, Model,
-  MsgBuf, Network, ParseLib, PMove, Renderer, Resource, Server, StdUI,
+  MsgBuf, Network, ParseLib, PMove, Renderer, Resource, StdUI,
   SVAuth, SVClient, SVCmds, SVDelta, SVEdict, SVEvent, SVExport, SVMain,
   SVMove, SVPacket, SVPhys, SVRcon, SVSend, SVWorld, SysArgs, SysClock,
   SysMain, Texture;
@@ -26,46 +26,41 @@ uses
 // stuff to do
 
 // shutdown stuff ET in GameLib!!! (win/linux, check for non-nil, mem_free it) (NOT DONE)
-// precached events should be shut down (NOT DONE)
-
-// allow rcon and queries (NOT DONE)
 
 // decompressing file err (check?)
 // Draw_FreeWAD: check all occurences (don't remember)
-
-// after round time, game dll calls PF_VGUI2_IsCareerMatch (info)
-
-// node is 52, leaf is 60. (info)
-
-// clientprintf in ALL commands and server check (sure) (NEEDS WORK)
-
-// SV_ClientPrint: #10
-
-// SV_WriteClientDataToMessage: weapon delta field size is 5 on some outdated clients
 
 // Sys_Error: shutdown host, disconnect clients if necessary
 //  - gamedll
 
 // Host_Error: shutdown server
 
-// search for "FSB_ALLOWOVERFLOW in". replace to "FSB_OVERFLOWED in".
+// Host_Error: disconnect all clients and shutdown
+// Sys_Error: shutdown immediately without disconnecting
+
+// mp.dll+8d091 FP OP
+
+// a better voice relay, maybe 50% of chan max, 75% of chan max and such
+// optimize parsemove
+// fix createpacketentities, origin[z], demo recording
+// add banlist!
+
+// also find out why players have random viewangles after respawn
+
+// demo recorder!
+
+// FIX:   if SendFrag[I] and (FB <> nil) and (Size + C.ReliableLength <= MAX_FRAGDATA) then
+// was   if SendFrag[I] and (FB <> nil) and (Size + C.ReliableLength < MAX_FRAGDATA) then
+
+// Netchan_CreateFileFragments check
 
 begin
 DecimalSeparator := '.';
-Writeln;
-Writeln('   -- OpenHLDS 1.02 --');
-Writeln;
 
 Start;
-while Frame do             
- Sys_Sleep(1);
+while Frame do
+ Sys_Sleep(0);
 Shutdown;
-
-(*{$IFDEF FPC}
- Writeln('Compiled with FPC');
-{$ELSE}
- Writeln('Compiled with Delphi');
-{$ENDIF}*)
 
 Writeln('Press any key to close the program...');
 Readln;

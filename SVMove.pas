@@ -55,7 +55,7 @@ var
 
 implementation
 
-uses Common, Console, Edict, Encode, Host, GameLib, MathLib, Model, MsgBuf, Network, PMove, Server, SVClient, SVEdict, SVEvent, SVPhys, SVSend, SVWorld;
+uses Common, Console, Edict, Encode, Host, GameLib, MathLib, Model, MsgBuf, Network, PMove, SVClient, SVEdict, SVEvent, SVMain, SVPhys, SVSend, SVWorld;
 
 var
  TruePositions: array[0..MAX_PLAYERS - 1] of TCachedMove;
@@ -146,8 +146,9 @@ var
 begin
 OldOrg := E.V.Origin;
 VectorAdd(OldOrg, Move, NewOrg);
-VEnd := NewOrg;
 NewOrg[2] := NewOrg[2] + sv_stepsize.Value;
+VEnd[0] := NewOrg[0];
+VEnd[1] := NewOrg[1];
 VEnd[2] := NewOrg[2] - (sv_stepsize.Value * 2);
 
 SV_MoveNoEnts(Trace, NewOrg, E.V.MinS, E.V.MaxS, VEnd, MOVE_NORMAL, @E);
@@ -256,8 +257,9 @@ if (E.V.Flags and (FL_FLY or FL_SWIM)) > 0 then
   Exit;
  end;
 
-VEnd := NewOrg;
 NewOrg[2] := NewOrg[2] + sv_stepsize.Value;
+VEnd[0] := NewOrg[0];
+VEnd[1] := NewOrg[1];
 VEnd[2] := NewOrg[2] - (sv_stepsize.Value * 2);
 
 SV_Move(Trace, NewOrg, E.V.MinS, E.V.MaxS, VEnd, MOVE_NORMAL, @E, MonsterClip);
@@ -549,7 +551,6 @@ PE.Frame := E.V.Frame;
 PE.Solid := E.V.Solid;
 PE.Sequence := E.V.Sequence;
 PE.Team := E.V.Team;
-PE.ClassNumber := E.V.PlayerClass;
 PUInt32(@PE.Controller)^ := PUInt32(@E.V.Controller)^;
 PUInt16(@PE.Blending)^ := PUInt16(@E.V.Blending)^;
 PE.MoveType := E.V.MoveType;
@@ -585,7 +586,10 @@ while UInt(L) <> UInt(@Node.SolidEdicts) do
   E := EdictFromArea(L^);
   L := L.Next;
 
-  if FilterGroup(E^, SVPlayer^) or (E.V.Owner = SVPlayer) or (E.V.Solid = SOLID_TRIGGER) then
+  if FilterGroup(E^, SVPlayer^) or (E.V.Owner = SVPlayer) then
+   Continue;
+
+  if (E.V.Solid <> SOLID_NOT) and (E.V.Solid <> SOLID_BBOX) and (E.V.Solid <> SOLID_SLIDEBOX) and (E.V.Solid <> SOLID_BSP) then
    Continue;
 
   Index := NUM_FOR_EDICT(E^);
@@ -810,7 +814,7 @@ else
 
     SV_PlayerRunPreThink(SVPlayer^, HostClient.ClientTime);
     SV_PlayerRunThink(SVPlayer^, Sec, HostClient.ClientTime);
-    if Length(SVPlayer.V.BaseVelocity) > 0 then
+    if (SVPlayer.V.BaseVelocity[0] <> 0) or (SVPlayer.V.BaseVelocity[1] <> 0) or (SVPlayer.V.BaseVelocity[2] <> 0) then
      SVPlayer.V.CLBaseVelocity := SVPlayer.V.BaseVelocity;
 
     PM.RunFuncs := 1;
@@ -863,7 +867,7 @@ else
     PM.VUser3 := SVPlayer.V.VUser3;
     PM.VUser4 := SVPlayer.V.VUser4;
 
-    StrLCopy(@PM.PhysInfo, @HostClient.PhysInfo, SizeOf(PM.PhysInfo) - 1);
+    StrCopy(@PM.PhysInfo, @HostClient.PhysInfo);
     Move(OrigCmd, PM.Cmd, SizeOf(PM.Cmd));
     SV_AddLinksToPM(SVAreaNodes[0], PM.Origin);
 
@@ -1113,23 +1117,26 @@ for I := 0 to SVUpdateBackup - 1 do
   for J := 0 to Frame.Pack.NumEnts - 1 do
    begin
     ES := @Frame.Pack.Ents[J];
-    if (ES.Number >= 1) and (ES.Number <= SVS.MaxClients) then
-     begin
-      TP := @TruePositions[ES.Number - 1];
-      if not TP.NoInterp then
-       begin
-        if (ES.Health <= 0) or ((ES.Effects and EF_NOINTERP) > 0) then
-         TP.NoInterp := True;
-
-        if not TP.FirstFrame then
-         TP.FirstFrame := True
-        else
-         if SV_UnlagCheckTeleport(ES.Origin, TP.ClientOrigin) then
+    if ES.Number > SVS.MaxClients then
+     Break
+    else
+     if ES.Number >= 1 then
+      begin
+       TP := @TruePositions[ES.Number - 1];
+       if not TP.NoInterp then
+        begin
+         if (ES.Health <= 0) or ((ES.Effects and EF_NOINTERP) > 0) then
           TP.NoInterp := True;
 
-        TP.ClientOrigin := ES.Origin;
-       end;
-     end;
+         if not TP.FirstFrame then
+          TP.FirstFrame := True
+         else
+          if SV_UnlagCheckTeleport(ES.Origin, TP.ClientOrigin) then
+           TP.NoInterp := True;
+
+         TP.ClientOrigin := ES.Origin;
+        end;
+      end;
    end;
 
   if UnlagTime > Frame.SentTime then
@@ -1172,38 +1179,41 @@ else
 for I := 0 to Frame.Pack.NumEnts - 1 do
  begin
   ES := @Frame.Pack.Ents[I];
-  if (ES.Number >= 1) and (ES.Number <= SVS.MaxClients) then
-   begin
-    P := @SVS.Clients[ES.Number - 1];
-    if P.Active and (P <> @C) then
-     begin
-      TP := @TruePositions[ES.Number - 1];
-      if not TP.NoInterp then
-       if TP.Active then
-        begin
-         P2 := SV_FindEntInPack(ES.Number, NewFrame.Pack);
-         if P2 <> nil then
-          begin
-           VectorSubtract(P2.Origin, ES.Origin, V);
-           VectorMA(ES.Origin, Scale, V, VOut);
-          end
-         else
-          VOut := ES.Origin;
+  if ES.Number > SVS.MaxClients then
+   Break
+  else
+   if ES.Number >= 1 then
+    begin
+     P := @SVS.Clients[ES.Number - 1];
+     if P.Active and (P <> @C) then
+      begin
+       TP := @TruePositions[ES.Number - 1];
+       if not TP.NoInterp then
+        if TP.Active then
+         begin
+          P2 := SV_FindEntInPack(ES.Number, NewFrame.Pack);
+          if P2 <> nil then
+           begin
+            VectorSubtract(P2.Origin, ES.Origin, V);
+            VectorMA(ES.Origin, Scale, V, VOut);
+           end
+          else
+           VOut := ES.Origin;
 
-         TP.OldOrigin := VOut;
-         TP.CurrentOrigin := VOut;
+          TP.OldOrigin := VOut;
+          TP.CurrentOrigin := VOut;
 
-         if not VectorCompare(VOut, P.Entity.V.Origin) then
-          begin
-           P.Entity.V.Origin := VOut;
-           SV_LinkEdict(P.Entity^, False);
-           TP.UpdatePos := True;
-          end;
-        end
-       else
-        DPrint(['SV_SetupMove: Tried to store position offset of invalid player #', I, ' ("', PLChar(@P.NetName), '").']);
-     end;
-   end;
+          if not VectorCompare(VOut, P.Entity.V.Origin) then
+           begin
+            P.Entity.V.Origin := VOut;
+            SV_LinkEdict(P.Entity^, False);
+            TP.UpdatePos := True;
+           end;
+         end
+        else
+         DPrint(['SV_SetupMove: Tried to store position offset of invalid player #', I, ' ("', PLChar(@P.NetName), '").']);
+      end;
+    end;
  end;
 end;
 
@@ -1424,7 +1434,7 @@ var
  C: PClient;
  F: Double;
 begin
-if sv_cmdcheckinterval.Value <= 0.05 then
+if sv_cmdcheckinterval.Value < 0.05 then
  CVar_DirectSet(sv_cmdcheckinterval, '0.05');
 
 if RealTime >= LastTimeReset then
@@ -1494,13 +1504,12 @@ if AlreadyMoved then
 else
  begin
   AlreadyMoved := True;
-  Frame := @HostClient.Frames[SVUpdateMask and HostClient.Netchan.IncomingAcknowledged];
-  MemSet(UserCmdNil, SizeOf(UserCmdNil), 0);
-
+  Frame := @C.Frames[SVUpdateMask and C.Netchan.IncomingAcknowledged];
+  
   Size := MSG_ReadByte;
   Checksum := MSG_ReadByte;
   RC := MSG_ReadCount;
-  COM_UnMunge(Pointer(UInt(NetMessage.Data) + RC), Size, HostClient.Netchan.IncomingSequence);
+  COM_UnMunge(Pointer(UInt(NetMessage.Data) + RC), Size, C.Netchan.IncomingSequence);
 
   Flags := MSG_ReadByte;
   Loss := Flags and $7F;
@@ -1510,20 +1519,20 @@ else
   Cmds := MSG_ReadByte;
   Total := Backup + Cmds;
 
-  if Cmds > 1 then
-   if NetDrop > Cmds then
-    NetDrop := NetDrop - Cmds - 1
-   else
-    NetDrop := 0;
+  if (Cmds > 1) and (NetDrop > Cmds) then
+   NetDrop := NetDrop - Cmds - 1
+  else
+   NetDrop := 0;
 
   if Total > CMD_MAXBACKUP then
    begin
-    Print(['SV_ParseMove: Too many commands (', Total, ') sent for user "', PLChar(@HostClient.NetName), '" (', NET_AdrToString(HostClient.Netchan.Addr, AdrBuf, SizeOf(AdrBuf)), ').']);
-    SV_DropClient(HostClient^, False, ['Sent ', Total, ' user commands, expected no more than CMD_MAXBACKUP (', CMD_MAXBACKUP - 1, ').']);
+    Print(['SV_ParseMove: Too many commands (', Total, ') sent for user "', PLChar(@C.NetName), '" (', NET_AdrToString(C.Netchan.Addr, AdrBuf, SizeOf(AdrBuf)), ').']);
+    SV_DropClient(C, False, ['Sent ', Total, ' user commands, expected no more than CMD_MAXBACKUP (', CMD_MAXBACKUP, ').']);
     MSG_BadRead := True;
    end
   else
    begin
+    MemSet(UserCmdNil, SizeOf(UserCmdNil), 0);
     P := @UserCmdNil;
     for I := Total - 1 downto 0 do
      begin
@@ -1532,18 +1541,18 @@ else
       P := P2;
      end;
 
-    if SV.Active and (HostClient.Active or HostClient.Spawned) then
+    if SV.Active and (C.Active or C.Spawned) then
      if MSG_BadRead then
-      Print(['SV_ParseMove: Client "', PLChar(@HostClient.NetName), '" (', NET_AdrToString(HostClient.Netchan.Addr, AdrBuf, SizeOf(AdrBuf)), ') sent a bogus command packet.'])
+      Print(['SV_ParseMove: Client "', PLChar(@C.NetName), '" (', NET_AdrToString(C.Netchan.Addr, AdrBuf, SizeOf(AdrBuf)), ') sent a bogus command packet.'])
      else
-      if Byte(COM_BlockSequenceCRCByte(Pointer(UInt(NetMessage.Data) + RC), MSG_ReadCount - RC, HostClient.Netchan.IncomingSequence)) <> Checksum then
+      if Byte(COM_BlockSequenceCRCByte(Pointer(UInt(NetMessage.Data) + RC), MSG_ReadCount - RC, C.Netchan.IncomingSequence)) <> Checksum then
        begin
-        Print(['SV_ParseMove: Failed command checksum for client "', PLChar(@HostClient.NetName), '" (', NET_AdrToString(HostClient.Netchan.Addr, AdrBuf, SizeOf(AdrBuf)), ').']);
+        Print(['SV_ParseMove: Failed command checksum for client "', PLChar(@C.NetName), '" (', NET_AdrToString(C.Netchan.Addr, AdrBuf, SizeOf(AdrBuf)), ').']);
         MSG_BadRead := True;
        end
       else     
        begin
-        HostClient.PacketLoss := Loss;
+        C.PacketLoss := Loss;
         if SV.Paused or ((SVPlayer.V.Flags and FL_FROZEN) > 0) then
          begin
           for I := 0 to Cmds - 1 do
@@ -1565,10 +1574,10 @@ else
          
         SVPlayer.V.Button := UserCmds[0].Buttons;
         SVPlayer.V.LightLevel := UserCmds[0].LightLevel;
-        SV_EstablishTimeBase(HostClient^, @UserCmds, NetDrop, Backup, Cmds);
+        SV_EstablishTimeBase(C, @UserCmds, NetDrop, Backup, Cmds);
         SV_PreRunCmd;
 
-        if NetDrop > 24 then
+        if NetDrop < 24 then
          begin
           while NetDrop > Backup do
            begin
@@ -1579,16 +1588,16 @@ else
           while NetDrop > 0 do
            begin
             I := Cmds + NetDrop - 1;
-            SV_RunCmd(UserCmds[I], HostClient.Netchan.IncomingSequence - I);
+            SV_RunCmd(UserCmds[I], C.Netchan.IncomingSequence - I);
             Dec(NetDrop);           
            end;
          end;
 
         for I := Cmds - 1 downto 0 do
-         SV_RunCmd(UserCmds[I], HostClient.Netchan.IncomingSequence - I);
+         SV_RunCmd(UserCmds[I], C.Netchan.IncomingSequence - I);
 
-        HostClient.UserCmd := UserCmds[0];
-        F := Frame.PingTime - HostClient.UserCmd.MSec * 0.5 / 1000;
+        C.UserCmd := UserCmds[0];
+        F := Frame.PingTime - C.UserCmd.MSec * 0.5 / 1000;
         if F < 0 then
          Frame.PingTime := 0
         else

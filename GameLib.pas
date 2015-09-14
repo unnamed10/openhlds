@@ -21,9 +21,12 @@ var
  DLLFunctions: TDLLFunctions;
  NewDLLFunctions: TNewDLLFunctions;
 
+ FakeSwdsFuncs: PEngineFuncs;
+ FakeSwdsHandle: THandle = INVALID_HANDLE_VALUE;
+
 implementation
 
-uses Common, Console, Edict, FileSys, Host, HostSave, Memory, Network, ParseLib, Renderer, Server, SVEdict, SVDelta, SVMove, SysArgs, SysMain;
+uses Common, Console, Delta, Edict, FileSys, Host, HostSave, Memory, Network, ParseLib, Renderer, SVEdict, SVExport, SVDelta, SVMain, SVMove, SysArgs, SysMain;
 
 var
  SkipParseLib: Boolean;
@@ -95,7 +98,11 @@ if H <> INVALID_HANDLE_VALUE then
    Print(['LoadThisDLL: Couldn''t get GiveFnptrsToDll in "', Name, '".']) 
   else
    begin
-    F(@EngFuncs, @GlobalVars);
+    if FakeSwdsFuncs <> nil then               
+     F(FakeSwdsFuncs, @GlobalVars)
+    else
+     F(@EngFuncs, @GlobalVars);
+
     if NumExtDLL = MAX_EXTDLL then
      Print('LoadThisDLL: Too many DLLs, ignoring remainder.')
     else
@@ -131,7 +138,7 @@ for I := 0 to NumExtDLL - 1 do
 Result := nil;
 end;
 
-procedure LoadEntityDLLs(const HostParms: THostParms);
+procedure LoadEntityDLLs;
 var
  F: TFile;
  FileSize: Int64;
@@ -201,7 +208,7 @@ if FS_Open(F, 'liblist.gam', 'r') then
       {$ENDIF}
 
       {$IFDEF MSWINDOWS}
-       FormatBuf(FullNameBuf, SizeOf(FullNameBuf) - 1, '%s\%s\%s%s', Length('%s\%s\%s%s'), [HostParms.BaseDir, GameDir, S, #0]);
+       FormatBuf(FullNameBuf, SizeOf(FullNameBuf) - 1, '%s\%s\%s%s', Length('%s\%s\%s%s'), [BaseDir, GameDir, S, #0]);
        COM_FileExtension(@FullNameBuf, @ExtBuf, SizeOf(ExtBuf));
        if StrIComp(@ExtBuf, 'dll') = 0 then
         begin
@@ -211,7 +218,7 @@ if FS_Open(F, 'liblist.gam', 'r') then
        else
         DPrint(['Skipping non-dll: ', PLChar(@FullNameBuf), '.']);
       {$ELSE}
-       FormatBuf(FullNameBuf, SizeOf(FullNameBuf) - 1, '%s/%s/%s%s', Length('%s/%s/%s%s'), [HostParms.BaseDir, GameDir, S, #0]);
+       FormatBuf(FullNameBuf, SizeOf(FullNameBuf) - 1, '%s/%s/%s%s', Length('%s/%s/%s%s'), [BaseDir, GameDir, S, #0]);
        COM_FileExtension(@FullNameBuf, @ExtBuf, SizeOf(ExtBuf));
        if StrIComp(@ExtBuf, 'so') = 0 then
         begin
@@ -234,9 +241,9 @@ else
   while (S <> nil) and (S^ > #0) do
    begin
     {$IFDEF MSWINDOWS}
-     FormatBuf(FullNameBuf, SizeOf(FullNameBuf) - 1, '%s\%s\%s%s', Length('%s\%s\%s%s'), [HostParms.BaseDir, DEFAULT_GAME + '\dlls', S, #0]);
+     FormatBuf(FullNameBuf, SizeOf(FullNameBuf) - 1, '%s\%s\%s%s', Length('%s\%s\%s%s'), [BaseDir, DEFAULT_GAME + '\dlls', S, #0]);
     {$ELSE}
-     FormatBuf(FullNameBuf, SizeOf(FullNameBuf) - 1, '%s/%s/%s%s', Length('%s/%s/%s%s'), [HostParms.BaseDir, DEFAULT_GAME + '/dlls', S, #0]);
+     FormatBuf(FullNameBuf, SizeOf(FullNameBuf) - 1, '%s/%s/%s%s', Length('%s/%s/%s%s'), [BaseDir, DEFAULT_GAME + '/dlls', S, #0]);
     {$ENDIF}
     LoadThisDLL(@FullNameBuf);
     S := Sys_FindNext(nil);
@@ -300,28 +307,48 @@ else
  DPrint(['DLL loaded for game ', DLLFunctions.GetGameDescription, '.']);
 end;
 
-procedure ReleaseEntityDLLs;
+function LoadFakeSwds(Name: PLChar): Boolean;
 var
- I: Int;
- P: PExtLibData;
+ H: THandle;
+ F: function(const E: TEngineFuncs; Size: UInt): PEngineFuncs;
 begin
-if SVS.InitGameDLL then
- begin
-  FreeAllEntPrivateData;
-  if @NewDLLFunctions.GameShutdown <> nil then
-   NewDLLFunctions.GameShutdown;
+Result := False;
 
-  CVar_UnlinkExternals;
-  for I := 0 to NumExtDLL - 1 do
+FS_GetLocalCopy(Name);
+H := Sys_LoadModule(Name);
+if H <> INVALID_HANDLE_VALUE then
+ begin
+  F := Sys_GetProcAddress(H, 'SwitchEngineToFakeSwds');
+  if @F <> nil then
    begin
-    P := @ExtDLL[I];
-    Sys_UnloadModule(P.Handle);
-    if P.ExportTable <> nil then
-     Mem_Free(P.ExportTable);
-    MemSet(P^, SizeOf(P^), 0);
+    FakeSwdsFuncs := F(EngFuncs, SizeOf(EngFuncs));
+    if FakeSwdsFuncs <> nil then
+     begin
+      DPrint('Fake SWDS module loaded.');
+      FakeSwdsHandle := H;
+      Result := True;
+      Exit;
+     end;
    end;
 
-  SVS.InitGameDLL := False;
+  Sys_UnloadModule(H);
+ end;
+end;
+
+procedure ReleaseFakeSwds;
+var
+ F: procedure;
+begin
+if (FakeSwdsHandle <> INVALID_HANDLE_VALUE) and (FakeSwdsFuncs <> nil) then
+ begin
+  F := Sys_GetProcAddress(FakeSwdsHandle, 'DestroyFakeSwds');
+  if @F <> nil then
+   begin
+    F;
+    Sys_UnloadModule(FakeSwdsHandle);
+    FakeSwdsFuncs := nil;
+    FakeSwdsHandle := INVALID_HANDLE_VALUE;
+   end;
  end;
 end;
 
@@ -364,24 +391,52 @@ end;
 procedure Host_InitializeGameDLL;
 begin
 CBuf_Execute;
-NET_Config(True);
-if SVS.InitGameDLL then
- DPrint('Host_InitializeGameDLL called twice, skipping second call.')
-else
+
+if not SVS.InitGameDLL then
  begin
   // SkipParseLib := COM_CheckParm('-skipparselib') > 0;
   SkipParseLib := True;
-
   SVS.InitGameDLL := True;
-  LoadEntityDLLs(HostInfo);
+
+  if not LoadFakeSwds({$IFDEF MSWINDOWS}'swds.dll'{$ELSE}'swds.so'{$ENDIF}) then
+   LoadFakeSwds({$IFDEF MSWINDOWS}'fake_swds\swds.dll'{$ELSE}'fake_swds\swds.so'{$ENDIF});
+
+  LoadEntityDLLs;
   DLLFunctions.GameInit;
   DLLFunctions.PM_Init(ServerMove);
   DLLFunctions.RegisterEncoders;
-  SV_InitEncoders;
+  Delta_InitEncoders;
   SV_GetPlayerHulls;
   SV_CheckBlendingInterface;
   SV_CheckSaveGameCommentInterface;
   CBuf_Execute;
+ end;
+end;
+
+procedure ReleaseEntityDLLs;
+var
+ I: Int;
+ P: PExtLibData;
+begin
+if SVS.InitGameDLL then
+ begin
+  FreeAllEntPrivateData;
+  if @NewDLLFunctions.GameShutdown <> nil then
+   NewDLLFunctions.GameShutdown;
+
+  CVar_UnlinkExternals;
+  for I := 0 to NumExtDLL - 1 do
+   begin
+    P := @ExtDLL[I];
+    Sys_UnloadModule(P.Handle);
+    if P.ExportTable <> nil then
+     Mem_Free(P.ExportTable);
+    MemSet(P^, SizeOf(P^), 0);
+   end;
+
+  ReleaseFakeSwds;
+
+  SVS.InitGameDLL := False;
  end;
 end;
 

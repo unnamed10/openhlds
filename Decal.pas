@@ -35,7 +35,7 @@ function Draw_CacheFindIndex(P: PCacheWAD; Name: PLChar): Int;
 
 implementation
 
-uses Common, Console, FileSys, Memory, Model, Server, SysMain, Texture;
+uses Common, Console, FileSys, Memory, Model, SVMain, SysMain, Texture;
 
 var
  DrawInitialized: Boolean = False;
@@ -218,7 +218,6 @@ var
  I: Int;
  Size: UInt;
  Palette: PWADPalette;
- PaletteCount: UInt16;
 begin
 if P.ExtraOffset <> DECAL_EXTRAOFFSET then
  Sys_Error(['Draw_MiptexTexture: Invalid cached WAD file "', P.Name, '".']);
@@ -246,7 +245,6 @@ Size := Data.Width * Data.Height +
 
 Data.PaletteOffset := Size + Data.Offsets[Low(Data.Offsets)] + SizeOf(UInt16);
 Palette := Pointer(UInt(Data) + Data.PaletteOffset);
-PaletteCount := PUInt16(UInt(Data) + P.ExtraOffset + SizeOf(TMiptex) + Size)^;
 
 if CustomBuild then
  begin
@@ -259,14 +257,6 @@ with Palette[High(Palette^)] do
   Data.Name[Low(Data.Name)] := '}'
  else
   Data.Name[Low(Data.Name)] := '{';
-
-for I := 0 to PaletteCount - 1 do
- with Palette[I] do
-  begin
-   R := TexGammaTable[R];
-   G := TexGammaTable[G];
-   B := TexGammaTable[B];
-  end;
 end;
 
 procedure Draw_CacheWADHandler(P: PCacheWAD; Func: Pointer; ExtraOffset: UInt);
@@ -280,7 +270,7 @@ var
  P: PWADDecal;
 begin
 P := Decal;
-
+                          
 while P <> nil do
  if StrIComp(@Lump.Name, @P.Lump.Name) = 0 then
   begin

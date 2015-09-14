@@ -10,7 +10,7 @@ function BuildNumber: UInt;
 function GetGameAppID: UInt;
 procedure SetCStrikeFlags;
 
-procedure SeedRandomNumberGenerator;
+procedure Rand_Init;
 function RandomFloat(Low, High: Single): Single;
 function RandomLong(Low, High: Int32): Int32;
 
@@ -53,8 +53,7 @@ procedure COM_AddAppDirectory(Name: PLChar);
 function COM_AddDefaultDir(Name: PLChar): Boolean;
 procedure COM_GetGameDir(Buf: PLChar);
 
-procedure COM_ListMaps(S: PLChar);
-procedure COM_PrintBSPVersion(Buffer: Pointer; Name: PLChar; WriteOutdated: Boolean);
+procedure COM_ListMaps(SubStr: PLChar);
 function FilterMapName(Src, Dst: PLChar): Boolean;
 function HashString(S: PLChar; MaxEntries: UInt): UInt;
 
@@ -76,15 +75,12 @@ function FilterGroup(I1, I2: Int): Boolean; overload;
 function COM_EntsForPlayerSlots(Count: UInt): UInt;
 procedure COM_NormalizeAngles(var Angles: TVec3);
 function COM_GetApproxWavePlayLength(Name: PLChar): UInt;
-function PR_IsEmptyString(S: PLChar): Boolean;
 procedure TrimSpace(Src, Dst: PLChar);
 
 function Compare16(P1, P2: Pointer): Boolean;
 
 function IsSafeFile(S: PLChar): Boolean;
-
-procedure COM_Init;
-procedure COM_Shutdown;
+function AppendLineBreak(S: PLChar; out Buf; BufSize: UInt): PLChar;
 
 {$IFDEF BIG_ENDIAN}
  function LittleShort(L: Int16): Int16;
@@ -115,13 +111,7 @@ implementation
 uses Console, Encode, FileSys, Host, Memory, MsgBuf, SysArgs, SysMain, SVWorld;
 
 type
- PPacketEncodeTable = ^TPacketEncodeTable;
  TPacketEncodeTable = packed array[0..15] of Byte;
-
-const
- EncodeTable1: TPacketEncodeTable = ($7A, $64, $05, $F1, $1B, $9B, $A0, $B5, $CA, $ED, $61, $0D, $4A, $DF, $8E, $C7);
- EncodeTable2: TPacketEncodeTable = ($05, $61, $7A, $ED, $1B, $CA, $0D, $9B, $4A, $F1, $64, $C7, $B5, $8E, $DF, $A0);
- EncodeTable3: TPacketEncodeTable = ($20, $07, $13, $61, $03, $45, $17, $72, $0A, $2D, $48, $0C, $4A, $12, $A9, $B5);
 
 var
  IR: Int32 = 0;
@@ -154,7 +144,7 @@ begin
 Result := ProjectBuild;
 end;
 
-procedure SeedRandomNumberGenerator;
+procedure Rand_Init;
 var
  I: Int32;
 begin
@@ -361,9 +351,6 @@ function COM_FileExtension(Name: PLChar; Buffer: PLChar; BufLen: UInt): UInt;
 var
  I, L: UInt;
 begin
-if (Name = nil) or (Buffer = nil) or (BufLen = 0) then
- Sys_Error('COM_FileExtension: Invalid parameters.');
-
 Buffer^ := #0;
 Result := 0;
 
@@ -836,20 +823,55 @@ if S <> nil then
  end;
 end;
 
-procedure COM_ListMaps(S: PLChar);
+procedure COM_PrintBSPVersion(var Buffer: TDHeader; Name: PLChar; WriteOutdated: Boolean);
 begin
-Sys_Error('COM_ListMaps: Not implemented.');
-end;
-
-procedure COM_PrintBSPVersion(Buffer: Pointer; Name: PLChar; WriteOutdated: Boolean);
-begin
-if PUInt32(Buffer)^ = BSPVERSION30 then
+if Buffer.Version = BSPVERSION30 then
  if not WriteOutdated then
   Print(Name)
  else
 else
  if WriteOutdated then
   Print(['Outdated: ', Name]);
+end;
+
+procedure COM_ListMaps(SubStr: PLChar);
+var
+ I, L: UInt;
+ S, S2: PChar;
+ F: TFile;
+ DH: TDHeader;
+ Buf: array[1..MAX_PATH_W] of LChar;
+begin
+if SubStr <> nil then
+ L := StrLen(SubStr)
+else
+ L := 0;
+
+Print('-------------');
+for I := 1 to 2 do
+ begin
+  S := Sys_FindFirst('maps' + CorrectSlash + '*.bsp', nil);
+  while S <> nil do
+   begin
+    if (L = 0) or (StrLComp(S, SubStr, L) = 0) then
+     begin
+      S2 := StrECopy(@Buf, 'maps' + CorrectSlash);
+      StrLCopy(S2, S, SizeOf(Buf) - 6);
+
+      if FS_Open(F, @Buf, 'r') then
+       begin
+        FS_Read(F, @DH, SizeOf(DH));
+        FS_Close(F);
+
+        COM_PrintBSPVersion(DH, @Buf, (I = 2));
+       end;
+     end;
+
+    S := Sys_FindNext(nil);
+   end;
+  Sys_FindClose;
+ end;
+Print('-------------');
 end;
 
 procedure COM_Log(FileName, Data: PLChar);
@@ -933,11 +955,11 @@ for I := 0 to 2 do
    Angles[I] := Angles[I] + 360;
 end;
 
-procedure COM_Munge_Internal(Data: Pointer; Length: UInt; Sequence: Int32; EncodeTable: PPacketEncodeTable);
+procedure COM_Munge_Internal(Data: Pointer; Length: UInt; Sequence: Int32; const ET: TPacketEncodeTable);
 type
  T = array[0..3] of Byte;
 var
- I, K: UInt;
+ I: UInt;
  P: PInt32;
  C: Int32;
 begin
@@ -949,19 +971,21 @@ if Length > 0 then
    P := Pointer(UInt(Data) + (I shl 2));
    C := Swap32(P^ xor not Sequence);
 
-   for K := Low(T) to High(T) do
-    T(C)[K] := T(C)[K] xor ($A5 or (K shl K) or K or EncodeTable[(I + K) and High(EncodeTable^)]);
+   T(C)[0] := T(C)[0] xor ($A5 or ET[I and High(ET)]);
+   T(C)[1] := T(C)[1] xor ($A7 or ET[(I + 1) and High(ET)]);
+   T(C)[2] := T(C)[2] xor ($AF or ET[(I + 2) and High(ET)]);
+   T(C)[3] := T(C)[3] xor ($BF or ET[(I + 3) and High(ET)]);
 
    C := C xor Sequence;
    P^ := C;
   end;
 end;
 
-procedure COM_UnMunge_Internal(Data: Pointer; Length: UInt; Sequence: Int32; DecodeTable: PPacketEncodeTable);
+procedure COM_UnMunge_Internal(Data: Pointer; Length: UInt; Sequence: Int32; const DT: TPacketEncodeTable);
 type
  T = array[0..3] of Byte;
 var
- I, K: UInt;
+ I: UInt;
  P: PInt32;
  C: Int32;
 begin
@@ -972,43 +996,50 @@ if Length > 0 then
   begin
    P := Pointer(UInt(Data) + (I shl 2));
    C := P^ xor Sequence;
- 
-   for K := 0 to High(T) do
-    T(C)[K] := T(C)[K] xor ($A5 or (K shl K) or K or DecodeTable[(I + K) and High(DecodeTable^)]);
+
+   T(C)[0] := T(C)[0] xor ($A5 or DT[I and High(DT)]);
+   T(C)[1] := T(C)[1] xor ($A7 or DT[(I + 1) and High(DT)]);
+   T(C)[2] := T(C)[2] xor ($AF or DT[(I + 2) and High(DT)]);
+   T(C)[3] := T(C)[3] xor ($BF or DT[(I + 3) and High(DT)]);
 
    C := Swap32(C) xor not Sequence;
    P^ := C;
   end;
 end;
 
+const
+ EncodeTable1: TPacketEncodeTable = ($7A, $64, $05, $F1, $1B, $9B, $A0, $B5, $CA, $ED, $61, $0D, $4A, $DF, $8E, $C7);
+ EncodeTable2: TPacketEncodeTable = ($05, $61, $7A, $ED, $1B, $CA, $0D, $9B, $4A, $F1, $64, $C7, $B5, $8E, $DF, $A0);
+ EncodeTable3: TPacketEncodeTable = ($20, $07, $13, $61, $03, $45, $17, $72, $0A, $2D, $48, $0C, $4A, $12, $A9, $B5);
+
 procedure COM_Munge(Data: Pointer; Length: UInt; Sequence: Int32);
 begin
-COM_Munge_Internal(Data, Length, Sequence, @EncodeTable1);
+COM_Munge_Internal(Data, Length, Sequence, EncodeTable1);
 end;
 
 procedure COM_UnMunge(Data: Pointer; Length: UInt; Sequence: Int32);
 begin
-COM_UnMunge_Internal(Data, Length, Sequence, @EncodeTable1);
+COM_UnMunge_Internal(Data, Length, Sequence, EncodeTable1);
 end;
 
 procedure COM_Munge2(Data: Pointer; Length: UInt; Sequence: Int32);
 begin
-COM_Munge_Internal(Data, Length, Sequence, @EncodeTable2);
+COM_Munge_Internal(Data, Length, Sequence, EncodeTable2);
 end;
 
 procedure COM_UnMunge2(Data: Pointer; Length: UInt; Sequence: Int32);
 begin
-COM_UnMunge_Internal(Data, Length, Sequence, @EncodeTable2);
+COM_UnMunge_Internal(Data, Length, Sequence, EncodeTable2);
 end;
 
 procedure COM_Munge3(Data: Pointer; Length: UInt; Sequence: Int32);
 begin
-COM_Munge_Internal(Data, Length, Sequence, @EncodeTable3);
+COM_Munge_Internal(Data, Length, Sequence, EncodeTable3);
 end;
 
 procedure COM_UnMunge3(Data: Pointer; Length: UInt; Sequence: Int32);
 begin
-COM_UnMunge_Internal(Data, Length, Sequence, @EncodeTable3);
+COM_UnMunge_Internal(Data, Length, Sequence, EncodeTable3);
 end;
 
 function COM_GetApproxWavePlayLength(Name: PLChar): UInt;
@@ -1076,17 +1107,6 @@ Result := (PInt64(P1)^ = PInt64(P2)^) and
           (PInt64(UInt(P1) + SizeOf(Int64))^ = PInt64(UInt(P2) + SizeOf(Int64))^);
 end;
 
-procedure COM_Init;
-begin
-MemSet(BFWrite, SizeOf(BFWrite), 0);
-MemSet(BFRead, SizeOf(BFRead), 0);
-end;
-
-procedure COM_Shutdown;
-begin
-
-end;
-
 procedure ClearLink(var L: TLink);
 begin
 L.Prev := @L;
@@ -1113,11 +1133,6 @@ L.Next := L2.Next;
 L.Prev := @L2;
 L.Prev.Next := @L;
 L.Next.Prev := @L;
-end;
-
-function PR_IsEmptyString(S: PLChar): Boolean;
-begin
-Result := S^ <= ' ';
 end;
 
 function EdictFromArea(const L: TLink): PEdict;
@@ -1252,6 +1267,25 @@ else
       Result := False;
      end;
    end;
+end;
+
+function AppendLineBreak(S: PLChar; out Buf; BufSize: UInt): PLChar;
+begin
+{$IFDEF MSWINDOWS}
+S := StrLECopy(@Buf, S, BufSize - 3);
+S^ := #13;
+Inc(UInt(S));
+S^ := #10;
+Inc(UInt(S));
+S^ := #0;
+Result := @Buf;
+{$ELSE}
+S := StrLECopy(@Buf, S, BufSize - 2);
+S^ := #10;
+Inc(UInt(S));
+S^ := #0;
+Result := @Buf;
+{$ENDIF}
 end;
 
 end.

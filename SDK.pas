@@ -10,35 +10,41 @@ uses Default;
 
 const
  ProjectName = 'OpenHLDS';
- ProjectBuild = 10001;
- ProjectVersion = '1.01';
+ ProjectBuild = 3;
+ ProjectVersion = '1.03';
 
 const
  MAX_PLAYERS = 32;
 
- INVALID_HANDLE_VALUE = {$IFDEF MSWINDOWS}THandle(-1){$ELSE}Pointer(nil){$ENDIF};
+ MAX_MODELS = 512;
+ MAX_SOUNDS = 512;
+ MAX_LIGHTSTYLES = 64;
+ MAX_CONSISTENCY = 512;
+ MAX_GENERICS = 512;
+ MAX_PACKET_ENTITIES = 256;
+ MAX_USER_MESSAGES = 256;
+ MAX_INFO_STRING = 256;
+ MAX_RESOURCES = 1280;
 
- MAX_CMD_ARGS = 80;
- MAX_ARGS = 80;
-
- MAX_CONFIG_SIZE = 1024*512; // in KB
-
+ CMD_MAXBACKUP = 30;
+ 
  MAX_MAP_NAME = 64;
+ MAX_MODEL_NAME = 64;
+ MAX_DECAL_NAMES = 512;
+
+ MAX_MAP_LEAFS = 8192;
 
  DEFAULT_GAME = 'valve';
+ INVALID_HANDLE_VALUE = {$IFDEF MSWINDOWS}THandle(-1){$ELSE}Pointer(nil){$ENDIF};
 
- HUNK_NAME_SIZE = 64;
- CACHE_NAME_SIZE = 64;
+{ Can be safely changed }
+{-----------------}
+ MAX_CMD_ARGS = 80;
+{-----------------}
 
- MAX_ALIAS_NAME = 32;
-
- FCMD_CLIENT = 1;
- FCMD_GAME = 2;
- FCMD_WRAPPER = 4;
- 
- // FS
+ // to FS
  INVALID_FILE_HANDLE = 0;
- INVALID_FIND_HANDLE = Pointer(-1);
+ INVALID_FIND_HANDLE = nil;
   
  MAX_PATH = 260 deprecated;
 
@@ -51,20 +57,13 @@ const
  {$ENDIF}
 
  {$IFDEF MSWINDOWS}
-  CorrectSlash = '\';
-  IncorrectSlash = '/';
+ CorrectSlash = '\';
+ IncorrectSlash = '/';
  {$ELSE}
-  CorrectSlash = '/';
-  IncorrectSlash = '\';
+ CorrectSlash = '/';
+ IncorrectSlash = '\';
  {$ENDIF}
 
- // Models
-
- MAX_MODEL_NAME = 64;
- 
- MAX_MAP_LEAFS = 8192;
-
- // contents are confirmed
  CONTENTS_EMPTY = -1;
  CONTENTS_SOLID = -2;
  CONTENTS_WATER = -3;
@@ -82,41 +81,10 @@ const
  CONTENTS_TRANSLUCENT = -15;
  CONTENTS_LADDER = -16;
 
- RT_SOUND = 0;
- RT_SKIN = 1;
- RT_MODEL = 2;
- RT_DECAL = 3;
- RT_GENERIC = 4;
- RT_EVENTSCRIPT = 5;
- RT_WORLD = 6;
-
- // Resources
-
- MAX_RESOURCE_NAME = 64;
-
  // WAD
 
  MAX_LUMP_NAME = 16;
  MIPLEVELS = 4;
-
- MAX_DECAL_NAMES = 512;
-
- TYP_NONE = 0;
- TYP_LABEL = 1;
- TYP_LUMPY = 64;
- TYP_PALETTE = 64;
- TYP_QTEX = 65;
- TYP_QPIC = 66;
- TYP_SOUND = 67;
- TYP_MIPTEX = 68;
-
-
- // --------
- MAX_CONSISTENCY = 512;
-
- MAX_LIGHTSTYLES = 64; // cf
-
- // msgs
 
  MSG_BROADCAST = 0;
  MSG_ONE = 1;
@@ -129,31 +97,17 @@ const
  MSG_ONE_UNRELIABLE = 8;
  MSG_SPEC = 9;
 
- MSG_END_OF_LIST = MSG_SPEC;
-
  MAX_USERMSG_SIZE = 192; // up until 255
 
- //
- MAX_LOG_FILES = 5000;
-
-
- MAX_MODELS = 512;
- MAX_SOUNDS = 512;
- MAX_MODELHASH = MAX_MODELS * 2 - 1; // 1023 
  MAX_SOUNDHASH = MAX_SOUNDS * 2 - 1; // 1023
 
- MAX_GENERIC_ITEMS = 512;
-
  CVOXFILESENTENCEMAX = 1536;
- 
- MAX_PACKET_ENTITIES = 256;
 
  SND_VOLUME = 1;
  SND_ATTN = 2;
  SND_LONG_INDEX = 4;
  SND_PITCH = 8;
  SND_SENTENCE = 16;
-
  SND_STOP = 32;
  SND_CHANGE_VOL = 64;
  SND_CHANGE_PITCH = 128;
@@ -183,16 +137,8 @@ const
  PITCH_LOW = 95;
  PITCH_HIGH = 120;
 
- MAX_USER_MESSAGE = 256;
-
  ENTITY_NORMAL = 1 shl 0;
  ENTITY_BEAM = 1 shl 1;
-
- MAX_INFO_STRING = 256;
-
- MAX_RESOURCES = 1280;
-
- CMD_MAXBACKUP = 30;
 
  IN_ATTACK = 1 shl 0;
  IN_JUMP = 1 shl 1;
@@ -223,23 +169,19 @@ type
  TStringOfs = UInt32; // 4, compatibility reasons
  {$IF SizeOf(TStringOfs) <> 4} {$MESSAGE WARN 'Structure size mismatch @ TStringOfs.'} {$DEFINE MSME} {$IFEND}
 
- PModInfo = ^TModInfo;    
- TModInfo = record
-  CustomGame: Boolean;
-  URLInfo, URLDownload: array[1..256] of LChar; // 4, 260
-  HLVersion: array[1..32] of LChar; // 516
-  Version, Size: UInt;
-  SVOnly, ClientDLL, Secure: Boolean; // 548
-  GameType: (gtUnknown = 0, gtSingleplayer, gtMultiplayer);
+ PCacheUser = ^TCacheUser;
+ TCacheUser = packed record
+  Data: Pointer;
  end;
+ {$IF SizeOf(TCacheUser) <> 4} {$MESSAGE WARN 'Structure size mismatch @ TCacheUser.'} {$DEFINE MSME} {$IFEND}
 
  PMemoryBlock = ^TMemoryBlock;
  TMemoryBlock = record
   Size: UInt;
-  Tag: Int32; // 32 bits
-  ID: UInt32; // 32 bits
+  Tag: Int32;
+  ID: UInt32;
   Next, Prev: PMemoryBlock;
-  Padding: Int32; // 32 bits
+  Padding: Int32;
  end;
 
  PMemoryZone = ^TMemoryZone;
@@ -249,46 +191,41 @@ type
   Rover: PMemoryBlock; // +28
  end;
 
- PHunk = ^THunk;
- THunk = record
-  ID: Int32;
-  Size: UInt;
-  Name: array[1..HUNK_NAME_SIZE] of LChar;
- end;
-
- PCacheUser = ^TCacheUser;
- TCacheUser = record
-  Data: Pointer;
- end;
-
  PCacheSystem = ^TCacheSystem;
  TCacheSystem = record
   Size: UInt;
   User: PCacheUser;
-  Name: array[1..CACHE_NAME_SIZE] of LChar;
+  Name: array[1..64] of LChar;
   Prev, Next, LRUPrev, LRUNext: PCacheSystem;
+ end;
+ 
+ PModInfo = ^TModInfo;    
+ TModInfo = record
+  CustomGame: Boolean;
+  URLInfo, URLDownload: array[1..256] of LChar; // 4, 260
+  HLVersion: array[1..32] of LChar; // 516
+  Version, Size: UInt;
+  SVOnly, ClientDLL, Secure: Boolean; // 548
+  GameType: (gtUnknown, gtSingleplayer, gtMultiplayer);
  end;
 
  TCmdFunction = procedure cdecl;
- TCmdSource = (csClient = 0, csServer, csConsole);
-
+ TCmdSource = (csClient, csServer, csConsole);
+ TCmdFlags = set of (FCMD_CLIENT = 0, FCMD_GAME, FCMD_WRAPPER, __FCMD_PADDING = 31);
  PCommand = ^TCommand;
- TCommand = record
+ TCommand = packed record
   Next: PCommand;
-  Name: PLChar; 
+  Name: PLChar;
   Callback: TCmdFunction;
-  Flags: UInt32;
+  Flags: TCmdFlags;
  end;
  {$IF SizeOf(TCommand) <> 16} {$MESSAGE WARN 'Structure size mismatch @ TCommand.'} {$DEFINE MSME} {$IFEND}
 
-                         //1                              // 4
  TCVarFlags = set of (FCVAR_ARCHIVE = 0, FCVAR_USERINFO, FCVAR_SERVER, FCVAR_EXTDLL,
                       FCVAR_CLIENTDLL, FCVAR_PROTECTED, FCVAR_SPONLY, FCVAR_PRINTABLEONLY,
                       FCVAR_UNLOGGED, __FCVAR_PADDING = 31);
- {$IF SizeOf(TCVarFlags) <> 4} {$MESSAGE WARN 'Structure size mismatch @ TCVarFlags.'} {$DEFINE MSME} {$IFEND}
-
  PCVar = ^TCVar;
- TCVar = record
+ TCVar = packed record
   Name, Data: PLChar;
   Flags: TCVarFlags;
   Value: Single;
@@ -299,17 +236,17 @@ type
  PAlias = ^TAlias;
  TAlias = record
   Next: PAlias;
-  Name: array[1..MAX_ALIAS_NAME] of LChar;
+  Name: array[1..56] of LChar;
   Command: PLChar;
  end;
- {$IF SizeOf(TAlias) <> 40} {$MESSAGE WARN 'Structure size mismatch @ TAlias.'} {$DEFINE MSME} {$IFEND}
-
+ 
  // dp NET_GetLong
  // can be changed
  PSizeBuf = ^TSizeBuf;
- TSizeBuf = record
+ TSizeBuf = packed record
   Name: PLChar;
-  AllowOverflow: set of (FSB_ALLOWOVERFLOW = 0, FSB_OVERFLOWED, __FSB_PADDING = 15); // 16bit boundary
+  AllowOverflow: set of (FSB_ALLOWOVERFLOW = 0, FSB_OVERFLOWED, __FSB_PADDING = 15); // 16 bit boundary
+  __Padding1: UInt16;
   Data: Pointer;
   MaxSize: UInt32;
   CurrentSize: UInt32;
@@ -319,7 +256,7 @@ type
  // COM_LoadFile
  TFileAllocType = (FILE_ALLOC_ZONE = 0, FILE_ALLOC_HUNK, FILE_ALLOC_TEMP_HUNK, FILE_ALLOC_CACHE,
                    FILE_ALLOC_LOADBUF, FILE_ALLOC_MEMORY);
-
+                   
  PUserCmd = ^TUserCmd;
  TUserCmd = packed record
   LerpMSec: Int16; // 0
@@ -339,37 +276,32 @@ type
  PUserCmdArray = ^TUserCmdArray;
  {$IF SizeOf(TUserCmd) <> 52} {$MESSAGE WARN 'Structure size mismatch @ TUserCmd.'} {$DEFINE MSME} {$IFEND}
 
- PRGBColor = ^TRGBColor;
  TRGBColor = packed record
   R, G, B: Byte;
  end;
  {$IF SizeOf(TRGBColor) <> 3} {$MESSAGE WARN 'Structure size mismatch @ TRGBColor.'} {$DEFINE MSME} {$IFEND}
 
- PResourceInfo = ^TResourceInfo;
- TResourceInfo = record
-  Info: array[0..7] of record
-   Size: UInt32;
-  end;
- end;
- {$IF SizeOf(TResourceInfo) <> 32} {$MESSAGE WARN 'Structure size mismatch @ TResourceInfo.'} {$DEFINE MSMW} {$IFEND}
+ TResourceType = (RT_SOUND = 0, RT_SKIN, RT_MODEL, RT_DECAL, RT_GENERIC, RT_EVENTSCRIPT, RT_WORLD);
+ TResourceFlags = set of (RES_FATALIFMISSING = 0, RES_WASMISSING, RES_CUSTOM, RES_REQUESTED, RES_PRECACHED, RES_ALWAYS, RES_PADDING, RES_CHECKFILE);
+ {$IF SizeOf(TResourceFlags) <> 1} {$MESSAGE WARN 'Structure size mismatch @ TResourceFlags.'} {$DEFINE MSME} {$IFEND}
 
- TResourceFlags = set of (RES_FATALIFMISSING, RES_WASMISSING, RES_CUSTOM, RES_REQUESTED, RES_PRECACHED, RES_ALWAYS, RES_PADDING, RES_CHECKFILE);
- TCustFlags = set of (FCUST_FROMHPAK, FCUST_WIPEDATA, FCUST_IGNOREINIT);
- {$IF SizeOf(TResourceFlags) <> 1} {$MESSAGE WARN 'Structure size mismatch @ TResourceFlags.'} {$DEFINE MSMW} {$IFEND}
+ TResourcePackSize = array[TResourceType] of UInt;
 
  PResource = ^TResource;
  TResource = packed record // 136
-  Name: array[1..MAX_RESOURCE_NAME] of LChar; // 0
-  ResourceType: UInt32; // 64
+  Name: array[1..64] of LChar; // 0
+  ResourceType: TResourceType; // 64
   Index, DownloadSize: UInt32; // 68, 72
   Flags: TResourceFlags; // +76, byte cf
   MD5Hash: array[1..16] of LChar; // +77 cf , in consistency = 81
   PlayerNum: Int8; // +93 signed
   Reserved: array[1..32] of LChar; // +94 cf
-  __Padding1, __Padding2: Byte;
+  __Padding3: UInt16;
   Next, Prev: PResource; // +128, +132, confirmed
  end;
- {$IF SizeOf(TResource) <> 136} {$MESSAGE WARN 'Structure size mismatch @ TResource.'} {$DEFINE MSMW} {$IFEND}
+ {$IF SizeOf(TResource) <> 136} {$MESSAGE WARN 'Structure size mismatch @ TResource.'} {$DEFINE MSME} {$IFEND}
+
+ TCustFlags = set of (FCUST_FROMHPAK, FCUST_WIPEDATA, FCUST_IGNOREINIT);
 
  PPCustomization = ^PCustomization;
  PCustomization = ^TCustomization;
@@ -645,18 +577,19 @@ type
   FieldType: UInt32;          // 0. Confirmed.
   Name: array[1..32] of LChar; // 4. Confirmed. A field name.
   Offset: UInt32;             // 36. Confirmed. Offset (unsigned).
-  Parsed: UInt16;                 // 40. Sets to "1" when parsing.
+  FieldSize: UInt16;                 // 40. Sets to "1" when parsing.
   Bits: UInt32;               // 44. Confirmed. How many bits are in offset value.
   Scale: Single;              // 48. Should really be a scale.
   PScale: Single;             // 52. Another scale.
   Flags: set of (ffReady, __ffPadding = 15);    // 56. Unsure about this.
                                                 //     Is 16-bit, actually.
   SendCount: UInt32;          // 60. How many times we should "send" this field.
-  RecvCount: UInt32;         // 64. Delta_Parse increments it.
+  RecvCount: UInt32;          // 64. Delta_Parse increments it.
+  TotalScale: Single;         // 68. Custom field.
  end;
  TDeltaFieldArray = array[0..0] of TDeltaField;
  // dp @ metadelta; dp @ static delta constants 
- {$IF SizeOf(TDeltaField) <> 68} {$MESSAGE WARN 'Structure size mismatch @ TDeltaField.'} {$DEFINE MSME} {$IFEND}
+// {$IF SizeOf(TDeltaField) <> 68} {$MESSAGE WARN 'Structure size mismatch @ TDeltaField.'} {$DEFINE MSME} {$IFEND}
 
  // Should be declared as "cdecl" for exporting purposes.
  TDeltaEncoder = procedure(Delta: PDelta; OS, NS: Pointer); cdecl;
@@ -698,16 +631,9 @@ type
   Offsets: PDeltaOffsetArray;
  end;
 
- PDeltaRegistry = ^TDeltaRegistry;
- TDeltaRegistry = record
-  Prev: PDeltaRegistry;
-  Name: PLChar;
-  Delta: PDelta;
- end;
-
- PServerDelta = ^TServerDelta;
- TServerDelta = record
-  Prev: PServerDelta;
+ PDeltaReg = ^TDeltaReg;
+ TDeltaReg = record
+  Prev: PDeltaReg;
   Name: PLChar;
   FileName: PLChar;
   Delta: PDelta;
@@ -717,20 +643,20 @@ type
 const
  HPAK_VERSION = 1;
  HPAK_MAX_ENTRIES = 32768;
- HPAK_MAX_DATA_SIZE = 128*1024;
+ HPAK_MIN_LUMP_SIZE = 1024;
+ HPAK_MAX_LUMP_SIZE = 128*1024;
 
- // Some sort of a refactoring trick
  HPAK_TAG = Ord('H') + Ord('P') shl 8 + Ord('A') shl 16 + Ord('K') shl 24;
 
 type
- PHPAK = ^THPAK;
- THPAK = record
+ PHPAKQueue = ^THPAKQueue;
+ THPAKQueue = record
   Name: PLChar; // 0. Confirmed.
   Resource: TResource; // 4
 
   Size: UInt32; // 140
   Buffer: Pointer; // 144
-  Prev: PHPAK; // 148. Confirmed.
+  Prev: PHPAKQueue; // 148. Confirmed.
  end;
 
  THPAKHeader = record
@@ -864,14 +790,7 @@ type
  TMPlaneArray = array[0..0] of TMPlane;
  {$IF SizeOf(TDPlane) <> 20} {$MESSAGE WARN 'Structure size mismatch @ TDPlane.'} {$DEFINE MSME} {$IFEND}
 
-
- PDMiptexLump = ^TDMiptexLump;
- TDMiptexLump = record
-  NumMiptex: Int32;
-  DataOfs: array[0..3] of Int32;
- end;
- {$IF SizeOf(TDMiptexLump) <> 20} {$MESSAGE WARN 'Structure size mismatch @ TDMiptexLump.'} {$DEFINE MSME} {$IFEND}
-
+ TDMiptexOffsetArray = array[0..0] of Int32; 
 
 // networking
 
@@ -879,25 +798,33 @@ const
  NET_SERVERPORT = 27015;
 
  MAX_LOOPBACK = 4;
- MAX_LOOPBACK_PACKETLEN = 4040;
 
+ MIN_CLIENT_FRAGSIZE = 128;
+ DEF_CLIENT_FRAGSIZE = 256;
+ MAX_CLIENT_FRAGSIZE = 1200;
+ 
  MAX_FRAGLEN = 1400;
- MAX_NETPACKETLEN = 4010;
+ MAX_NETCHANLEN = 3990;
+ MAX_DATAGRAM = 4000;
+ MAX_MESSAGELEN = 4010;
+ MAX_PACKETLEN = 4040;
+ MAX_NETBUFLEN = 65536;
 
  MAX_NET_QUEUES = 40;
  NET_QUEUESIZE = $600;
- MAX_SPLIT_CTX = 16;
-
- OUTOFBAND_TAG = -1;
- SPLIT_TAG = -2;
 
  MAX_SPLIT = 5;
+ MAX_SPLIT_CTX = 16;
 
+ FLOW_UPDATETIME = 0.1;
  MAX_LATENT = 32;
+
+ MAX_FRAGMENTS = 25000;
 
  UDP_OVERHEAD = 28;
 
- MAX_DATAGRAM = 4000; // max length of unreliable packet, confirmed
+ OUTOFBAND_TAG = -1;
+ SPLIT_TAG = -2;
 
  // server to all
  S2C_PRINT = 'l';
@@ -919,7 +846,7 @@ const
 
  C2S_SERVERQUERY_GETCHALLENGE = 'W';
 
- A2A_ACK = 'i';
+ A2A_ACK = 'j';
 
 type
  TNetAdrType = (NA_UNUSED = 0, NA_LOOPBACK, NA_BROADCAST, NA_IP); //, NA_IPX, NA_BROADCAST_IPX});
@@ -937,7 +864,7 @@ type
 
  PLoopMsg = ^TLoopMsg;
  TLoopMsg = record // 4044
-  Data: array[0..MAX_LOOPBACK_PACKETLEN - 1] of Byte;
+  Data: array[0..MAX_PACKETLEN - 1] of Byte;
   Size: UInt32;
  end;
 
@@ -985,9 +912,11 @@ type
   PacketsLeft: Int;
   Size: UInt;
   Ack: set of 0..MAX_SPLIT - 1;
-  Data: array[1..MAX_NETPACKETLEN] of Byte;
+  Data: array[1..MAX_PACKETLEN] of Byte;
  end;
-  
+
+ TNetStream = (NS_NORMAL = 0, NS_FILE);
+ TFlowSrc = (FS_TX = 0, FS_RX);
 
  PFragBuf = ^TFragBuf;
  TFragBuf = record // 1708. confirmed.
@@ -1011,14 +940,14 @@ type
  PFragBufDir = ^TFragBufDir;
  TFragBufDir = record
   Next: PFragBufDir; // +0
-  Count: UInt32; // +4, unsure
+  Count: UInt32; // +4
   FragBuf: PFragBuf; // +8
  end;
 
  PNetchanFlowStats = ^TNetchanFlowStats; // W 536 L 404
  TNetchanFlowStats = record
   Bytes: UInt32; // +0
-  TimeWindow: Double; // +8
+  Time: Double; // +8
  end;
 
  PNetchanFlowData = ^TNetchanFlowData;
@@ -1026,7 +955,7 @@ type
   // 8432 start of something
   Stats: array[0..MAX_LATENT - 1] of TNetchanFlowStats;           
 
-  InSeq: Int32; // +8948 not very confirmed
+  InSeq: Int32; // +8948 confirmed
   UpdateTime: Double; // +8952 confirmed
   KBRate, KBAvgRate: Single; // +8960 +8964 confirmed so yeah
  end;
@@ -1036,7 +965,7 @@ type
  TNetchan = record
   Source: TNetSrc; // +0, fully confirmed: 0, 1, 2 are possible values
   Addr: TNetAdr; // +4, fully confirmed
-  ClientIndex: Int32; // +24, fully confirmed client index
+  ClientIndex: UInt32; // +24, fully confirmed client index
   LastReceived, FirstReceived: Single; // +28 and +32
 
   Rate: Double; // +40 | +36, guess it's confirmed
@@ -1054,29 +983,29 @@ type
   Client: Pointer; // +84 | +80, confirmed  pclient
   FragmentFunc: function(Client: Pointer): UInt32; cdecl; // +88 | +84, fully confirmed
   NetMessage: TSizeBuf; // +92 | +88, fully confirmed
-  NetMessageBuf: array[1..3990] of Byte; // W 112,  L 108 fully confirmed
+  NetMessageBuf: array[1..MAX_NETCHANLEN] of Byte; // W 112,  L 108 fully confirmed
 
   ReliableLength: UInt32; // +4104 yeah confirmed
-  ReliableBuf: array[1..3990] of Byte; // W 4108 confirmed   L 4104 confirmed
+  ReliableBuf: array[1..MAX_NETCHANLEN] of Byte; // W 4108 confirmed   L 4104 confirmed
 
   // this fragbuf stuff seems to be confirmed
-  FragBufDirs: array[1..2] of PFragBufDir; // W 8100   L 8096?
-  FragBufActive: array[1..2] of Boolean; // W 8108
-  FragBufSequence: array[1..2] of Int32; // W 8116
-  FragBufBase: array[1..2] of PFragBuf; // W 8124   L ?8120
-  FragBufSplitCount: array[1..2] of UInt32; // W 8132 L 8128
-  FragBufOffset: array[1..2] of UInt16; // W 8140
-  FragBufSize: array[1..2] of UInt16; // W 8144
+  FragBufQueue: array[TNetStream] of PFragBufDir; // W 8100   L 8096?
+  FragBufActive: array[TNetStream] of Boolean; // W 8108
+  FragBufSequence: array[TNetStream] of Int32; // W 8116
+  FragBufBase: array[TNetStream] of PFragBuf; // W 8124   L ?8120
+  FragBufNum: array[TNetStream] of UInt32; // W 8132 L 8128
+  FragBufOffset: array[TNetStream] of UInt16; // W 8140
+  FragBufSize: array[TNetStream] of UInt16; // W 8144
   
-  IncomingBuf: array[1..2] of PFragBuf; // W 8148 L 8144
-  IncomingActive: array[1..2] of Boolean; // W 8156 L 8152  is completed
+  IncomingBuf: array[TNetStream] of PFragBuf; // W 8148 L 8144
+  IncomingReady: array[TNetStream] of Boolean; // W 8156 L 8152  is completed
 
   FileName: array[1..MAX_PATH_A] of LChar; // W 8164 confirmed
 
   TempBuffer: Pointer; // W 8424
   TempBufferSize: UInt32; // W 8428
 
-  Flow: array[1..2] of TNetchanFlowData; // W 8432    flow data size = 536
+  Flow: array[TFlowSrc] of TNetchanFlowData; // W 8432    flow data size = 536
  end;
 
 const
@@ -1144,7 +1073,7 @@ type
  PDTexInfo = ^TDTexInfo;
  TDTexInfo = record
   Vecs: array[0..1] of array[0..3] of Single;
-  MipTex: Int32;
+  Miptex: Int32;
   Flags: Int32;
  end; 
  PMTexInfo = ^TMTexInfo;
@@ -1544,7 +1473,7 @@ type
  TStudioHeader = record
   FileTag, Version: Int32; // 0, 4
   Name: array[1..64] of LChar; // 8
-  Length: Int32; // 72
+  Length: UInt32; // 72
   EyePosition, Min, Max: TVec3; // 76, 88, 100
   BBMin, BBMax: TVec3; // 112, 124
   Flags: Int32; // 136
@@ -1558,7 +1487,8 @@ type
   SeqIndex: UInt32;
   NumSeqGroups: Int32; // 172
   SeqGroupIndex: UInt32; // 176
-  NumTextures, TextureIndex, TextureDataIndex: Int32; // 180, 184, 188
+  NumTextures: Int32;
+  TextureIndex, TextureDataIndex: UInt32; // 180, 184, 188
   NumSkinRef, NumSkinFamilies, SkinIndex: Int32;
   NumBodyParts, BodyPartIndex: UInt32;
   NumAttachments: Int32;
@@ -2126,9 +2056,9 @@ type
   PM_Info_ValueForKey: function(S, Key: PLChar): PLChar; cdecl; // +324948
   PM_Particle: procedure(var Origin: TVec3; Color: Int32; Life: Single; ZPos, ZVel: Int32); cdecl; // +324952
   PM_TestPlayerPosition: function(var Pos: TVec3; Trace: PPMTrace): Int32; cdecl; // +324956
-  Con_NPrintF: procedure(ID: Int32; S: PLChar); cdecl varargs; // +324960
-  Con_DPrintF: procedure(S: PLChar); cdecl varargs; // +324964
-  Con_PrintF: procedure(S: PLChar); cdecl varargs; // +324968
+  Con_NPrintF: procedure(ID: Int32; S: PLChar); cdecl; // +324960
+  Con_DPrintF: procedure(S: PLChar); cdecl; // +324964
+  Con_PrintF: procedure(S: PLChar); cdecl; // +324968
   Sys_FloatTime: function: Double; cdecl; // +324972
 
   PM_StuckTouch: procedure(HitEnt: Int32; var TraceResult: TPMTrace); cdecl;
@@ -2324,8 +2254,8 @@ type
 
  PPacketEntities = ^TPacketEntities;
  TPacketEntities = record
-  NumEnts: UInt32; // +0
-  EntLimit: UInt32; // custom
+  NumEnts: UInt; // +0
+  EntLimit: UInt;
   Ents: PEntityStateArray; // +36
  end;
 
@@ -2691,7 +2621,15 @@ const
   (Name: 'bparam1'; Offset: 64),
   (Name: 'bparam2'; Offset: 68));
 
-
+ DT_MetaDelta_T: array[1..8] of TDeltaOffset =
+ ((Name: 'fieldType'; Offset: 0),
+  (Name: 'fieldName'; Offset: 4),
+  (Name: 'fieldOffset'; Offset: 36),
+  (Name: 'fieldSize'; Offset: 40),
+  (Name: 'significant_bits'; Offset: 44),
+  (Name: 'premultiply'; Offset: 48),
+  (Name: 'postmultiply'; Offset: 52),
+  (Name: 'flags'; Offset: 56));
 
 
 // blending interface
@@ -2906,7 +2844,7 @@ type
   CVarGetString: function(Name: PLChar): PLChar; cdecl;
   CVarSetFloat: procedure(Name: PLChar; Value: Single); cdecl;
   CVarSetString: procedure(Name, Value: PLChar); cdecl;
-  AlertMessage: procedure(AlertType: TAlertType; Msg: PChar); cdecl;
+  AlertMessage: procedure(AlertType: TAlertType; Msg: PLChar); cdecl;
   EngineFPrintF: procedure(F: Pointer; Msg: PLChar); cdecl;
 
   PvAllocEntPrivateData: function(var E: TEdict; Size: Int32): Pointer; cdecl;
@@ -2918,7 +2856,7 @@ type
   PEntityOfEntOffset: function(Offset: UInt32): PEdict; cdecl;
   EntOffsetOfPEntity: function(var E: TEdict): UInt32; cdecl;
   IndexOfEdict: function(E: PEdict): Int32; cdecl;
-  PEntityOfEntIndex: function(Index: Int32): PEdict; cdecl;
+  PEntityOfEntIndex: function(Index: UInt32): PEdict; cdecl;
   FindEntityByVars: function(var E: TEntVars): PEdict; cdecl;
 
   GetModelPtr: function(E: PEdict): Pointer; cdecl;
@@ -2998,8 +2936,8 @@ type
   ForceUnmodified: procedure(FT: TForceType; MinS, MaxS: PVec3; FileName: PLChar); cdecl;
   GetPlayerStats: procedure(var E: TEdict; out Ping, PacketLoss: Int32); cdecl;
   AddServerCommand: procedure(Name: PLChar; Func: TCmdFunction); cdecl;
-  Voice_GetClientListening: function(Receiver, Sender: Int32): Int32; cdecl;
-  Voice_SetClientListening: function(Receiver, Sender, IsListening: Int32): Int32; cdecl;
+  Voice_GetClientListening: function(Receiver, Sender: UInt32): UInt32; cdecl;
+  Voice_SetClientListening: function(Receiver, Sender, IsListening: UInt32): UInt32; cdecl;
 
   GetPlayerAuthID: function(var E: TEdict): PLChar; cdecl;
 
@@ -3100,7 +3038,7 @@ type
   SetupVisibility: procedure(var Target, Entity: TEdict; var PVS, PAS: PByte); cdecl;
   UpdateClientData: procedure(var E: TEdict; SendWeapons: Int32; var ClientData: TClientData); cdecl;
   AddToFullPack: function(var State: TEntityState; Index: UInt32; var Entity, Host: TEdict; HostFlags, Player: Int32; PackSet: PByte): Int32; cdecl;
-  CreateBaseline: procedure(Player, EntityIndex: Int32; BaseLine: Pointer; var E: TEdict; PlayerModelIndex: Int32; MinSX, MinSY, MinSZ, MaxSX, MaxSY, MaxSZ: Single); cdecl;
+  CreateBaseline: procedure(Player, EntityIndex: Int32; BaseLine: Pointer; var E: TEdict; PlayerModelIndex: Int32; MinS, MaxS: PVec3; MinSY, MinSZ, MaxSY, MaxSZ: Int32); cdecl;
   RegisterEncoders: procedure; cdecl;
   GetWeaponData: function(var E: TEdict; var Info: TWeaponData): Int32; cdecl;
   CmdStart: procedure(var E: TEdict; var Command: TUserCmd; RandomSeed: UInt32); cdecl; // +43
@@ -3119,14 +3057,6 @@ type
   ShouldCollide: function(var Touched, Other: TEdict): Int32; cdecl;
   CVarValue: procedure(var E: TEdict; Value: PLChar); cdecl;
   CVarValue2: procedure(var E: TEdict; RequestID: Int32; CVarName, Value: PLChar); cdecl;
- end;
-
- THostParms = record
-  BaseDir: PLChar;
-  ArgCount: UInt;
-  ArgData: ^PLChar;
-  MemBase: Pointer;
-  MemSize: UInt;
  end;
 
 {$IFDEF MSME}

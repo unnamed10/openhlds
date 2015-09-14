@@ -7,6 +7,8 @@ interface
 uses Default, SDK;
 
 procedure SV_LinkNewUserMsgs;
+procedure SV_FreeAllUserMsgs;
+procedure SV_SendUserReg(var SB: TSizeBuf; Base: PUserMsg);
 
 procedure SV_StartParticle(const Origin, Direction: TVec3; Color, Count: UInt);
 procedure SV_StartSound(SkipSelf: Boolean; const E: TEdict; Channel: Int; Sample: PLChar; Volume: Int; Attn: Single; Flags: UInt; Pitch: Int);
@@ -18,11 +20,10 @@ procedure SV_Multicast(const E: TEdict; const Origin: TVec3; Flags: UInt; Reliab
 
 var
  UserMsgs, NewUserMsgs: PUserMsg;
- NextUserMsg: UInt = 64;
  
 implementation
 
-uses Common, Console, Edict, Host, Memory, Model, MsgBuf, Network, Server, SysMain, SVMove, SVWorld;
+uses Common, Console, Edict, Host, Memory, Model, MsgBuf, Network, SVMain, SVMove, SVWorld, SysMain;
 
 procedure SV_LinkNewUserMsgs;
 var
@@ -39,12 +40,42 @@ if NewUserMsgs <> nil then
  end;
 end;
 
+procedure SV_FreeAllUserMsgs;
+var
+ P, P2: PUserMsg;
+begin
+SV_LinkNewUserMsgs;
+
+P := UserMsgs;
+while P <> nil do
+ begin
+  P2 := P.Prev;
+  Mem_Free(P);
+  P := P2;
+ end;
+end;
+
+procedure SV_SendUserReg(var SB: TSizeBuf; Base: PUserMsg);
+var
+ P: PUserMsg;
+begin
+P := Base;
+while P <> nil do
+ begin
+  MSG_WriteByte(SB, SVC_NEWUSERMSG);
+  MSG_WriteByte(SB, P.Index);
+  MSG_WriteByte(SB, P.Size);
+  MSG_WriteBuffer(SB, SizeOf(P.Name), @P.Name);
+  P := P.Prev;
+ end;
+end;
+
 procedure SV_StartParticle(const Origin, Direction: TVec3; Color, Count: UInt);
 var
  I: UInt;
  J: Int;
 begin
-if SV.Datagram.CurrentSize > SV.Datagram.MaxSize - 16 then
+if SV.Datagram.CurrentSize + 16 > SV.Datagram.MaxSize then
  begin
   DPrint('SV_StartParticle call ignored, would overflow.');
   Exit;
@@ -334,7 +365,7 @@ for I := 0 to SVS.MaxClients - 1 do
   if not Dst.Active then
    Continue;
 
-  if ((Flags and MULTICAST_SKIP_SELF) <> 0) and (Src = Dst) then
+  if ((Flags and MULTICAST_SKIP_SELF) > 0) and (Src = Dst) then
    Continue;
 
   if (@E <> nil) and (Dst.Entity <> nil) and FilterGroup(E, Dst.Entity^) then
@@ -347,7 +378,7 @@ for I := 0 to SVS.MaxClients - 1 do
     else
      SB := @Dst.UnreliableMessage;
 
-    if SB.MaxSize - SB.CurrentSize >= SV.Multicast.CurrentSize then
+    if SV.Multicast.CurrentSize + SB.CurrentSize <= SB.MaxSize then
      SZ_Write(SB^, SV.Multicast.Data, SV.Multicast.CurrentSize)
     else
      Inc(SV.MulticastOverflowed, SV.Multicast.CurrentSize);

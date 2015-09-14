@@ -4,7 +4,7 @@ unit Main;
 
 interface
 
-uses Default;
+uses Default, SDK;
 
 procedure Start;
 function Frame: Boolean;
@@ -12,14 +12,15 @@ procedure Shutdown;
 
 implementation
 
-uses Common, Console, Host, StdUI, SysMain;
+uses Common, Console, CoreUI, Host, StdUI, SysMain;
 
 var
  ShutdownCalled: Boolean;
 
 procedure Start;
 begin
-UI_Init;
+StdUI_Init;
+Print([sLineBreak, '   -- OpenHLDS ' + ProjectVersion + ' --', sLineBreak]);
 Sys_Init;
 end;
 

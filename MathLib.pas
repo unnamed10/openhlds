@@ -40,9 +40,9 @@ function Length(const VIn: TVec3): Single;
 function VectorNormalize(var VOut: TVec3): Single;
 procedure VectorInverse(var VOut: TVec3);
 procedure VectorSet(out VOut: TVec3; Value: Single);
-procedure VectorScale(const VIn: TVec3; Scale: Single; out VOut: TVec3); {$IFDEF SUPPORTS_INLINE} inline; {$ENDIF}
+procedure VectorScale(const VIn: TVec3; Scale: Single; out VOut: TVec3);
 
-function Q_log2(X: Int): Int;
+function Log2(X: Int): Int;
 
 procedure VectorMatrix(const Fwd: TVec3; var Right, Up: TVec3);
 procedure VectorAngles(const Fwd: TVec3; out Angles: TVec3);
@@ -383,7 +383,7 @@ VOut[1] := Scale * VIn[1];
 VOut[2] := Scale * VIn[2];
 end;
 
-function Q_log2(X: Int): Int;
+function Log2(X: Int): Int;
 begin
 Result := 0;
 X := X shr 1;

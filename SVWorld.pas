@@ -35,7 +35,7 @@ var
 
 implementation
 
-uses Common, Console, GameLib, Host, MathLib, Renderer, Server, SysMain, SVMove;
+uses Common, Console, GameLib, Host, MathLib, Renderer, SVMain, SysMain, SVMove;
 
 var
  TouchLinkSemaphore: Boolean = False;
@@ -126,8 +126,8 @@ else
  begin
   VectorSubtract(E.V.MinS, MaxS, HullMinS);
   VectorSubtract(E.V.MaxS, MinS, HullMaxS);
+  VOut := E.V.Origin;
   Result := SV_HullForBox(HullMinS, HullMaxS);
-  VOut := E.V.Origin; 
  end;
 end;
 
@@ -263,9 +263,10 @@ if Node.Axis <> -1 then
  end;
 end;
 
-procedure SV_FindTouchedLeafs(var E: TEdict; const Node: TMNode; var LeafNum: Int32);
+procedure SV_FindTouchedLeafs_Old(var E: TEdict; const Node: TMNode; var LeafNum: Int32);
 var
  Sides: Int;
+ PlaneType: UInt;
 begin
 if Node.Contents <> CONTENTS_SOLID then
  if Node.Contents < 0 then
@@ -278,13 +279,14 @@ if Node.Contents <> CONTENTS_SOLID then
    E.NumLeafs := MAX_ENT_LEAFS + 1
  else
   begin
-   if Node.Plane.PlaneType > 2 then
+   PlaneType := Node.Plane.PlaneType;
+   if PlaneType > 2 then
     Sides := BoxOnPlaneSide(E.V.AbsMin, E.V.AbsMax, Node.Plane)
    else
-    if Node.Plane.Distance <= E.V.AbsMin[Node.Plane.PlaneType] then
+    if Node.Plane.Distance <= E.V.AbsMin[PlaneType] then
      Sides := 1
     else
-     if Node.Plane.Distance >= E.V.AbsMax[Node.Plane.PlaneType] then
+     if Node.Plane.Distance >= E.V.AbsMax[PlaneType] then
       Sides := 2
      else
       Sides := 3;
@@ -293,10 +295,80 @@ if Node.Contents <> CONTENTS_SOLID then
     LeafNum := (UInt(@Node) - UInt(SV.WorldModel.Nodes)) div SizeOf(TMNode);
 
    if (Sides and 1) > 0 then
-    SV_FindTouchedLeafs(E, Node.Children[0]^, LeafNum);
+    SV_FindTouchedLeafs_Old(E, Node.Children[0]^, LeafNum);
    if (Sides and 2) > 0 then
-    SV_FindTouchedLeafs(E, Node.Children[1]^, LeafNum);
+    SV_FindTouchedLeafs_Old(E, Node.Children[1]^, LeafNum);
   end;
+end;
+
+procedure SV_FindTouchedLeafs(var E: TEdict; const Node: TMNode; var LeafNum: Int32);
+var
+ P: PMNode;
+ Contents, Sides: Int;
+ PlaneType: UInt;
+ Distance: Single;
+begin
+P := @Node;
+
+repeat
+ Contents := P.Contents;
+ if Contents = CONTENTS_SOLID then
+  Exit;
+
+ if Contents < 0 then
+  begin
+   if E.NumLeafs < MAX_ENT_LEAFS then
+    begin
+     E.LeafNums[E.NumLeafs] := (UInt(P) - UInt(SV.WorldModel.Leafs)) div SizeOf(TMLeaf) - 1;
+     Inc(E.NumLeafs);
+    end
+   else
+    E.NumLeafs := MAX_ENT_LEAFS + 1;
+   
+   Exit;
+  end;
+
+ PlaneType := P.Plane.PlaneType;
+ if PlaneType >= 3 then
+  begin
+   Sides := BoxOnPlaneSide(E.V.AbsMin, E.V.AbsMax, P.Plane);
+
+   if Sides = 1 then
+    P := P.Children[0]
+   else
+    if Sides = 2 then
+     P := P.Children[1]
+    else
+     if Sides = 0 then
+      Exit
+     else
+      begin
+       if LeafNum = -1 then
+        LeafNum := (UInt(P) - UInt(SV.WorldModel.Nodes)) div SizeOf(TMNode);
+
+       SV_FindTouchedLeafs(E, P.Children[0]^, LeafNum);
+       P := P.Children[1];
+      end;
+
+   Continue;
+  end;
+
+ Distance := P.Plane.Distance;
+ if Distance <= E.V.AbsMin[PlaneType] then
+  P := P.Children[0]
+ else
+  if Distance >= E.V.AbsMax[PlaneType] then
+   P := P.Children[1]
+  else
+   begin
+    if LeafNum = -1 then
+     LeafNum := (UInt(P) - UInt(SV.WorldModel.Nodes)) div SizeOf(TMNode);
+
+    SV_FindTouchedLeafs(E, P.Children[0]^, LeafNum);
+    P := P.Children[1];
+   end;
+
+until False;
 end;
 
 procedure SV_LinkEdict(var E: TEdict; TouchTriggers: Boolean);
@@ -307,7 +379,7 @@ begin
 if E.Area.Prev <> nil then
  SV_UnlinkEdict(E);
 
-if (@E <> SV.Edicts) and (E.Free = 0) then
+if (@E <> @SV.Edicts[0]) and (E.Free = 0) then
  begin
   DLLFunctions.SetAbsBox(E);
   if (E.V.MoveType = MOVETYPE_FOLLOW) and (E.V.AimEnt <> nil) and (E.V.AimEnt.Free = 0) then
@@ -472,9 +544,6 @@ if Num < 0 then
  end
 else
  begin
-  if (Num < Hull.FirstClipNode) or (Num > Hull.LastClipNode) then
-   Sys_Error('SV_RecursiveHullCheck: Bad node number.');
-
   Node := @Hull.ClipNodes[Num];
   Plane := @Hull.Planes[Node.PlaneNum];
 
@@ -531,12 +600,14 @@ else
      begin
       if Side > 0 then
        begin
-        VectorSubtract(Vec3Origin, Plane.Normal, Trace.Plane.Normal); // chs?
+        Trace.Plane.Normal[0] := -Plane.Normal[0];
+        Trace.Plane.Normal[1] := -Plane.Normal[1];
+        Trace.Plane.Normal[2] := -Plane.Normal[2];
         Trace.Plane.Distance := -Plane.Distance;
        end
       else
        begin
-        VectorCopy(Plane.Normal, Trace.Plane.Normal);
+        Trace.Plane.Normal := Plane.Normal;
         Trace.Plane.Distance := Plane.Distance;
        end;
 
@@ -544,12 +615,7 @@ else
        begin
         Frac := Frac - 0.1;
         if Frac < 0 then
-         begin
-          Trace.Fraction := MidF;
-          Trace.EndPos := Mid;
-          Result := False;
-          Exit;
-         end;
+         Break;
 
         MidF := (P2F - P1F) * Frac + P1F;
         for I := 0 to 2 do
@@ -569,7 +635,7 @@ var
  Hull: PHull;
  VOut, StartL, EndL, Fwd, Right, Up, V1, V2: TVec3;
  HullNum: Int32;
- B: Boolean;
+ B, B2: Boolean;
  I: Int;
  T: TTrace;
  LastHull: UInt;
@@ -623,8 +689,9 @@ else
     SV_RecursiveHullCheck(Hull^, Hull.FirstClipNode, 0, 1, StartL, EndL, T);
     if (I = 0) or (T.AllSolid > 0) or (T.StartSolid > 0) or (T.Fraction < Trace.Fraction) then
      begin
+      B2 := Trace.StartSolid <> 0;
       Move(T, Trace, SizeOf(Trace));
-      if T.StartSolid <> 0 then
+      if B2 then
        Trace.StartSolid := 1;
       LastHull := I;
      end;

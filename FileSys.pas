@@ -67,6 +67,8 @@ var
  FSInput: PFileSystem;
  WarningLevel: TFileWarningLevel = FSW_SILENT;
 
+ UseAddonsDir, UseHDModels: Boolean;
+
 procedure FS_Init;
 begin
 FSInput.Init;
@@ -414,6 +416,9 @@ var
  {$IFNDEF MSWINDOWS} Buf: array[1..MAX_PATH_W] of LChar; {$ENDIF}
  L: UInt;
 begin
+UseAddonsDir := COM_CheckParm('-addons') > 0;
+UseHDModels := COM_CheckParm('-hdmodels') > 0;
+
 FSInput := FS_SetupInterface(EngineOutput);
 if FSInput = nil then
  Sys_Error('Couldn''t initialize file system.');

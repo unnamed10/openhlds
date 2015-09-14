@@ -23,6 +23,9 @@ implementation
 
 uses Console, Common, SysMain, FileSys, Memory;
 
+const
+ TYP_QPIC = 66;
+
 var
  WADList: array[0..1] of TWADListEntry = ((Loaded: False), (Loaded: False));
 
@@ -106,7 +109,7 @@ for I := Low(WADList) to High(WADList) do
 
      StrLCopy(@E.Name, Name, SizeOf(E.Name) - 1);
      if PUInt32(@E.Data.FileTag)^ <> WAD3_TAG then
-      Sys_Error(['W_LoadWADFile: WAD file ", Name, '' doesn''t have WAD3 ID.']);
+      Sys_Error(['W_LoadWADFile: WAD file "', Name, '" doesn''t have WAD3 ID.']);
 
      E.NumEntries := LittleLong(E.Data.NumEntries);
      E.Entries := Pointer(UInt(E.Data) + UInt(LittleLong(E.Data.FileOffset)));

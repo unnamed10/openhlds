@@ -4,7 +4,7 @@ unit FSNative;
 
 interface
 
-uses SysUtils, {$IFDEF MSWINDOWS} Windows, {$ELSE} Libc, {$ENDIF} Default, SDK;
+uses {$IFDEF MSWINDOWS} Windows, {$ELSE} Libc, {$ENDIF} SysUtils, Default, SDK;
 
 function FS_SetupInterface(const Input: TFileSystemInput): PFileSystem;
 
@@ -18,8 +18,8 @@ type
  PFileSearchPath = ^TFileSearchPath;
  TFileSearchPath = record
   Prev, Next: PFileSearchPath;
-  Path: PLChar; // offset - no free
-  Name: PLChar; // offset - no free
+  Path: PLChar; // offset
+  Name: PLChar; // offset
   Flags: TSearchPathFlags;
  end;
 
@@ -52,6 +52,12 @@ type
   Position: Int64;
  end;
  {$ENDIF}
+
+ PFileFindInternal = ^TFileFindInternal;
+ TFileFindInternal = record
+  SR: TSearchRec;
+  Res: PLChar;
+ end;
 
 var
  InitDone: Boolean = False;
@@ -713,7 +719,7 @@ if (@F = nil) or (Name = nil) or (Options = nil) then
  FS_Warning('Bad parameters specified in FS_OpenPathID.', FSW_WARNING)
 else
  begin
-  F := EngineInput.MemAlloc(SizeOf(TFileInternal));
+  F := FS_MemAlloc(SizeOf(TFileInternal));
   MemSet(F^, SizeOf(TFileInternal), 0);
   if F = nil then
    FS_Warning('FS_OpenPathID: Out of memory.', FSW_WARNING)
@@ -730,7 +736,7 @@ else
 
     if not Result then
      begin
-      EngineInput.MemFree(F);
+      FS_MemFree(F);
       F := nil;
      end;
    end;
@@ -763,7 +769,7 @@ else
   if P.Handle > 0 then
    CloseHandle(P.Handle);
 
-  EngineInput.MemFree(P);
+  FS_MemFree(P);
  end;
 end;
 {$ELSE}
@@ -777,7 +783,7 @@ else
   P := F;
   if P.Handle > 0 then
    __close(P.Handle);
-  EngineInput.MemFree(P);
+  FS_MemFree(P);
  end;
 end;
 {$ENDIF}
@@ -1146,7 +1152,7 @@ var
 begin
 if FS_CheckFile(F, 'FS_WriteString') then
  begin
-  if S <> nil then
+  if (S <> nil) and (S^ > #0) then
    begin
     L := StrLen(S);
     BytesWritten := FS_Write(F, S, L);
@@ -1165,7 +1171,20 @@ FS_WriteLine(F, S, NeedLineBreak);
 Result := StrLen(S);
 end;
 
+procedure FS_FreeFindResult(var P: TFileFindInternal);
+begin
+if P.Res <> nil then
+ begin
+  FS_MemFree(P.Res);
+  P.Res := nil;
+ end;
+P.SR.Name := '';
+end;
+
 function FS_FindFirst(Name: PLChar; out H: TFileFindHandle): PLChar;
+var
+ P: PFileFindInternal;
+ FullName: array[1..MAX_PATH_W] of LChar;
 begin
 Result := nil;
 
@@ -1175,19 +1194,45 @@ else
  if @H = nil then
   FS_Warning('Bad find handle specified in FS_FindFirst.', FSW_WARNING)
  else
-  begin
-   FS_Warning('FS_FindFirst: Not implemented.', FSW_WARNING);
-  end;
+  if FS_FindFile(Name, FullName, True, nil) and (FullName[Low(FullName)] > #0) then
+   begin
+    H := FS_MemAlloc(SizeOf(TFileFindInternal));
+    MemSet(H^, SizeOf(TFileFindInternal), 0);
+    P := H;
+    P.SR.Name := '';
+    
+    if FindFirst(FullName, faAnyFile, P.SR) = 0 then
+     begin
+      P.Res := FS_MemAlloc(Length(P.SR.Name) + 1);
+      StrCopy(P.Res, PChar(P.SR.Name));
+     end
+    else
+     P.Res := nil;
+   
+    Result := P.Res;
+   end;
 end;
 
 function FS_FindNext(H: TFileFindHandle): PLChar;
+var
+ P: PFileFindInternal;
 begin
 Result := nil;
 if H = nil then
  FS_Warning('Bad find handle specified in FS_FindNext.', FSW_WARNING)
 else
  begin
-  FS_Warning('FS_FindNext: Not implemented.', FSW_WARNING);
+  P := H;
+  FS_FreeFindResult(P^);
+  if FindNext(P.SR) = 0 then
+   begin
+    P.Res := FS_MemAlloc(Length(P.SR.Name) + 1);
+    StrCopy(P.Res, PChar(P.SR.Name));
+   end
+  else
+   P.Res := nil;
+
+  Result := P.Res;
  end;
 end;
 
@@ -1197,18 +1242,21 @@ Result := False;
 if H = nil then
  FS_Warning('Bad find handle specified in FS_FindIsDirectory.', FSW_WARNING)
 else
- begin
-  FS_Warning('FS_FindIsDirectory: Not implemented.', FSW_WARNING);
- end;
+ FS_Warning('FS_FindIsDirectory: Not implemented.', FSW_WARNING);
 end;
 
 procedure FS_FindClose(H: TFileFindHandle);
+var
+ P: PFileFindInternal;
 begin
 if H = nil then
  FS_Warning('Bad find handle specified in FS_FindClose.', FSW_WARNING)
 else
  begin
-  FS_Warning('FS_FindClose: Not implemented.', FSW_WARNING);
+  P := H;
+  FS_FreeFindResult(P^);
+  FindClose(P.SR);
+  FS_MemFree(P);
  end;
 end;
 
@@ -1428,7 +1476,7 @@ var
  P: PFileSearchPath;
 begin
 if (OldPath = nil) or (NewPath = nil) then
- FS_Warning('Bad parameters provided in FS_Rename', FSW_WARNING)
+ FS_Warning('Bad parameters provided in FS_Rename.', FSW_WARNING)
 else
  begin
   StrLCopy(@OldPathBuf, OldPath, SizeOf(OldPathBuf) - 1);
@@ -1441,17 +1489,18 @@ else
    begin
     S := StrLECopy(@FullNameBuf, P.Path, MAX_PATH_W - 1);
     StrLCopy(S, @OldPathBuf, MAX_PATH_W - 1 - (UInt(S) - UInt(@FullNameBuf)));
-    if FS_FileExists_Internal(S) then
+    if FS_FileExists_Internal(@FullNameBuf) then
      begin
       S2 := StrLECopy(@OldPathBuf, P.Path, MAX_PATH_W - 1);
       StrLCopy(S2, @NewPathBuf, MAX_PATH_W - 1 - (UInt(S2) - UInt(@OldPathBuf)));
       {$IFDEF MSWINDOWS}
-       RenameFile(S, S2);
+       RenameFile(FullNameBuf, OldPathBuf);
       {$ELSE}
-       __rename(S, S2);
+       __rename(@FullNameBuf, @OldPathBuf);
       {$ENDIF}
       Exit;
      end;
+    P := P.Prev;
    end;
  end;
 end;
@@ -1485,6 +1534,7 @@ procedure FS_Shutdown; // export
 begin
 if InitDone then
  begin
+  FS_RemoveAllSearchPaths;
   MemSet(EngineInput, SizeOf(EngineInput), 0);
   InitDone := False;
  end;
@@ -1523,7 +1573,7 @@ var
    FindFirst: FS_FindFirst;
    FindNext: FS_FindNext;
    FindIsDirectory: FS_FindIsDirectory;
-   FindClose: FS_Close;
+   FindClose: FS_FindClose;
    GetLocalCopy: FS_GetLocalCopy;
    GetLocalPath: FS_GetLocalPath;
    ParseFile: FS_ParseFile;

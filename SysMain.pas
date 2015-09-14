@@ -39,20 +39,17 @@ function Sys_FindNext(Base: PLChar): PLChar;
 procedure Sys_FindClose;
 
 var
- IsNT4: Boolean = False;
- IsWin95: Boolean = False;
- IsWin98: Boolean = False;
-
- InSysError: Boolean = False;
+ InSysError: Boolean;
 
 implementation
 
-uses GameLib, SysClock, Host, Main, Server, Common, Network,
-     SysArgs, Console, FileSys, Memory, StdUI;
+uses Common, Console, CoreUI, FileSys, GameLib, Host, Main, Memory, Network,
+     SVExport, SVMain, SysArgs, SysClock;
 
 var
  FindHandle: TFileFindHandle = INVALID_FIND_HANDLE;
- ErrorReEntry: Boolean = False;
+ ErrorReEntry: Boolean;
+ IsNT4, IsWin95, IsWin98: Boolean;
 
 function Sys_GetProcAddress(Module: THandle; Name: PLChar): Pointer;
 begin
@@ -295,87 +292,40 @@ begin
 end;
 {$ENDIF}
 
-procedure Sys_InitMemory;
-var
- S: PLChar;
- B: Boolean;
-begin
-B := False;
-
-if COM_CheckParm('-minmemory') > 0 then
- HostInfo.MemSize := 14*1024*1024
-else
- begin
-  S := COM_ParmValueByName('-heapsize');
-  if S^ > #0 then
-   begin
-    B := True;
-    HostInfo.MemSize := StrToIntDef(S, 32*1024) * 1024;
-    if HostInfo.MemSize < 4*1024*1024 then
-     begin
-      Print('The avaliable heap size should be no lesser than 4 MB.');
-      HostInfo.MemSize := 4*1024*1024;
-     end;
-   end
-  else
-   HostInfo.MemSize := 32*1024*1024;
- end;
- 
-with HostInfo do
- begin
-  GetMem(MemBase, MemSize);
-  if B and (MemBase = nil) then
-   begin
-    Print(['Unable to allocate ', MemSize div (1024*1024), ' MB (defined by -heapsize).',
-           'Falling back to the default value.']);
-    MemSize := 32*1024*1024;
-    GetMem(MemBase, MemSize);
-   end;
-
-  if MemBase = nil then
-   Sys_Error(['Sys_InitMemory: Unable to allocate ', MemSize div (1024*1024), ' MB.']);
- end;
-end;
-
 procedure Sys_Init;
 begin
 HostInit := False;
 
 Sys_InitArgs;
-
-UseAddonsDir := COM_CheckParm('-addons') > 0;
-UseHDModels := COM_CheckParm('-hdmodels') > 0;
-
-FileSystem_Init;
-HostInfo.BaseDir := BaseDir;
-
-MemSet(ModInfo, SizeOf(ModInfo), 0);
+if COM_CheckParm('-dev') > 0 then
+ begin
+  developer.Data := '1';
+  developer.Value := 1;
+ end;
 
 Sys_InitClock;
 Sys_CheckOSVersion;
 Sys_SetStartTime;
 
-SeedRandomNumberGenerator;
-Sys_InitMemory;
+Memory_Init;
+FileSystem_Init;
 Host_Init;
 
 if HostInit then
  begin
-  UI_OnEngineReady(EngFuncs);
-
-  Host_InitializeGameDLL;
+  UI_EngineReady(EngFuncs);
   NET_Config(True);
+  Host_InitializeGameDLL;
  end;
 end;
 
 procedure Sys_Shutdown;
 begin
 Host_Shutdown;
-
 FileSystem_Shutdown;
-Sys_ShutdownArgs;
+Memory_Shutdown;
 Sys_ShutdownClock;
+Sys_ShutdownArgs;
 end;
 
 end.
-

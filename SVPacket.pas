@@ -6,6 +6,8 @@ interface
 
 uses SysUtils, Default, SDK;
 
+function SV_CheckChallenge(const Addr: TNetAdr; Challenge: UInt32; Reject: Boolean): Boolean;
+
 procedure SV_RejectConnection(const Addr: TNetAdr; Msg: PLChar); overload;
 procedure SV_RejectConnection(const Addr: TNetAdr; const Msg: array of const); overload;
 
@@ -15,9 +17,6 @@ procedure SV_HandleRconPacket;
 function SV_FilterPacket: Boolean;
 
 procedure SV_ReadPackets;
-
-procedure SV_InitRateFilter;
-procedure SV_ShutdownRateFilter;
 
 var
  sv_contact: TCVar = (Name: 'sv_contact'; Data: ''; Flags: [FCVAR_SERVER]);
@@ -31,18 +30,17 @@ var
  sv_maxipsessions: TCVar = (Name: 'sv_maxipsessions'; Data: '5');
  sv_fullservermsg: TCVar = (Name: 'sv_fullservermsg'; Data: 'Server is full.');
 
- max_queries_sec: TCVar = (Name: 'max_queries_sec'; Data: '3'; Flags: [FCVAR_SERVER, FCVAR_PROTECTED]);
- max_queries_sec_global: TCVar = (Name: 'max_queries_sec_global'; Data: '30'; Flags: [FCVAR_SERVER, FCVAR_PROTECTED]);
- max_queries_window: TCVar = (Name: 'max_queries_window'; Data: '60'; Flags: [FCVAR_SERVER, FCVAR_PROTECTED]);
+ ipf_min_samples: TCVar = (Name: 'ipf_min_samples'; Data: '25'; Flags: [FCVAR_SERVER, FCVAR_PROTECTED]);
+ ipf_max_queries_sec: TCVar = (Name: 'ipf_max_queries_sec'; Data: '10'; Flags: [FCVAR_SERVER, FCVAR_PROTECTED]);
+ ipf_timeout: TCVar = (Name: 'ipf_timeout'; Data: '5'; Flags: [FCVAR_SERVER, FCVAR_PROTECTED]);
 
  sv_limit_queries: TCVar = (Name: 'sv_limit_queries'; Data: '0');
- max_query_ips: TCVar = (Name: 'max_query_ips'; Data: '2048');
 
- sv_enableoldqueries: TCVar = (Name: 'sv_enableoldqueries'; Data: '0');
+ sv_enableoldqueries: TCVar = (Name: 'sv_enableoldqueries'; Data: '1');
 
 implementation
 
-uses Common, Console, Edict, FilterIP, GameLib, Host, Info, Memory, MsgBuf, Network, Resource, Server, SVAuth, SVClient, SVDelta, SVEvent, SVRcon, SVSend;
+uses Common, Console, Edict, FilterIP, GameLib, Host, Info, Memory, MsgBuf, Network, Resource, SVAuth, SVClient, SVDelta, SVEvent, SVMain, SVRcon, SVSend;
 
 const
  MAX_CHALLENGES = 1024;
@@ -55,64 +53,28 @@ type
   Time: UInt32;
  end;
 
- PIPRate = ^TIPRate;
- TIPRate = record
-  TimeStamp: Double;
-  NumSent: UInt;
- end;
-
 var
  Challenges: array[0..MAX_CHALLENGES - 1] of TChallenge;
-
- RateChecker: record
-  IPF: TIPFilter;
-  Global: TIPRate;
- end;
+ LastChallenge: UInt;
 
 function CheckIP(const Addr: TNetAdr): Boolean;
 var
- IR: PIPRate;
+ R: PIPFilterRec;
+ IP: UInt32;
 begin
-if sv_limit_queries.Value = 0 then
- Result := True
-else
+Result := True;
+
+if sv_limit_queries.Value <> 0 then
  begin
-  if max_query_ips.Value > 0 then
-   while RateChecker.IPF.TotalIPs > max_query_ips.Value do
-    IPF_RemoveOldestChain(RateChecker.IPF);
+  IP := PUInt32(@Addr.IP)^;
+  R := FindInIPFilter(OutOfBandIPF, IP, ipf_timeout.Value);
 
-  if IPF_Search(RateChecker.IPF, PUInt32(@Addr.IP)^, Pointer(IR)) = 0 then
+  if R <> nil then
    begin
-    IPF_Alloc(RateChecker.IPF, PUInt32(@Addr.IP)^, Pointer(IR));
-    IR.TimeStamp := RealTime;
-    IR.NumSent := 1;
-   end
-  else
-   if max_queries_window.Value < RealTime - IR.TimeStamp then
-    begin
-     IR.TimeStamp := RealTime;
-     IR.NumSent := 1;
-    end
-   else
-    begin
-     Inc(IR.NumSent);
-     if IR.NumSent / max_queries_window.Value > max_queries_sec.Value then
-      begin
-       Result := False;
-       Exit;
-      end;
-    end;
+    if ipf_max_queries_sec.Value <= 0 then
+     CVar_DirectSet(ipf_max_queries_sec, '3');
 
-  if max_queries_window.Value < RealTime - RateChecker.Global.TimeStamp then
-   begin
-    RateChecker.Global.TimeStamp := RealTime;
-    RateChecker.Global.NumSent := 1;
-    Result := True;
-   end
-  else
-   begin
-    Inc(IR.NumSent);
-    Result := IR.NumSent / max_queries_window.Value <= max_queries_sec_global.Value;
+    Result := (ipf_min_samples.Value >= R.Samples) or (R.AvgDiff > 1 / ipf_max_queries_sec.Value);
    end;
  end;
 end;
@@ -147,24 +109,26 @@ var
  X: UInt;
  S: PLChar;
 begin
-if C.Connected then
+if not C.Connected then
+ Result := DEF_CLIENT_FRAGSIZE
+else
  begin
   if not C.FragSizeUpdated then
    begin
     S := Info_ValueForKey(@C.UserInfo, 'cl_dlmax');
     if (S = nil) or (S^ = #0) then
-     X := 128
+     X := DEF_CLIENT_FRAGSIZE
     else
      begin
       X := StrToInt(S);
       if X = 0 then
-       X := 128
+       X := DEF_CLIENT_FRAGSIZE
       else
-       if X < 64 then
-        X := 64
+       if X < MIN_CLIENT_FRAGSIZE then
+        X := MIN_CLIENT_FRAGSIZE
        else
-        if X > 1024 then
-         X := 1024;
+        if X > MAX_CLIENT_FRAGSIZE then
+         X := MAX_CLIENT_FRAGSIZE;
      end;
 
     C.FragSize := X;
@@ -172,9 +136,7 @@ if C.Connected then
    end;
 
   Result := C.FragSize;
- end
-else
- Result := 1024;
+ end;
 end;
 
 function SV_CheckProtocol(const Addr: TNetAdr; Protocol: Int): Boolean;
@@ -459,7 +421,10 @@ else
      Exit;
 
     if not SV_CheckIPConnectionReuse(NetFrom) then
-     Exit;
+     begin
+      SV_RejectConnection(NetFrom, 'There are too many clients connecting from your IP address.'#10);
+      Exit;
+     end;
 
     if Reconnect then
      begin
@@ -474,23 +439,18 @@ else
       Exit;
 
     SV_ClearClient(C^);
-    C.Frames := Mem_ZeroAlloc(SVUpdateBackup * SizeOf(TClientFrame));
+
+    SV_ClearFrames(C^);
+    SV_AllocFrames(C^);
 
     C.UserID := CurrentUserID;
     C.Auth.UniqueID := C.UserID;
     Inc(CurrentUserID);
     if CurrentUserID = 0 then
      CurrentUserID := 1;
-    C.ChokeCount := 0;
-
-    C.NeedUpdate := False;
-    C.SkipThisUpdate := False;
-    C.FragSizeUpdated := False;
 
     C.Entity := @SV.Edicts[ClientIndex + 1];
     C.Entity.V.NetName := UInt(@C.NetName) - PRStrings;
-    C.Target := nil;
-    C.FakeClient := False;
     C.Protocol := Protocol;
 
     Netchan_Setup(NS_SERVER, C.Netchan, NetFrom, ClientIndex, C, SV_GetFragmentSize);
@@ -498,13 +458,13 @@ else
     C.UpdateRate := 0.05;
     C.NextUpdateTime := RealTime + 0.05;
     C.UpdateMask := -1;
-    MemSet(C.UserCmd, SizeOf(C.UserCmd), 0);
-    MemSet(C.PhysInfo, SizeOf(C.PhysInfo), 0);
-    C.NextPingTime := 0;
     StrLCopy(@C.CDKey, @CDKey, SizeOf(C.CDKey) - 1);
 
+    C.Connected := True;
+    C.ConnectTime := RealTime;
+
     NET_AdrToString(C.Netchan.Addr, AddrBuf, SizeOf(AddrBuf));
-    
+
     if C.Netchan.Addr.AddrType = NA_LOOPBACK then
      Print('Local connection.')
     else
@@ -512,9 +472,6 @@ else
       Print(['Client ', PLChar(@UserName), ' connected (', PLChar(@AddrBuf), ').'])
      else
       Print(['Client ', PLChar(@UserName), ' reconnected (', PLChar(@AddrBuf), ').']);
-
-    C.Connected := True;
-    C.ConnectTime := RealTime;
 
     Netchan_OutOfBandPrint(NS_SERVER, C.Netchan.Addr, [LChar(S2C_CONNECT), ' ', C.UserID, ' "', PLChar(@AddrBuf), '" 0']);
     LPrint(['"', PLChar(@UserName), '<', C.UserID, '><', SV_GetClientIDString(C^), '><>" connected (', PLChar(@AddrBuf), ').'#10]);
@@ -546,34 +503,26 @@ end;
 
 function SV_DispatchChallenge(const Addr: TNetAdr): PChallenge;
 var
- I, J: Int;
+ I: Int;
  C: PChallenge;
- MinTime: UInt32;
 begin
-J := 0;
-MinTime := $FFFFFFFF;
-
 for I := 0 to MAX_CHALLENGES - 1 do
- begin
-  C := @Challenges[I];
-  if NET_CompareBaseAdr(Addr, C.Addr) then
-   begin
-    Result := C;
-    Exit;
-   end
-  else
-   if C.Time < MinTime then
-    begin
-     MinTime := C.Time;
-     J := I;
-    end;
- end;
+ if NET_CompareBaseAdr(Addr, Challenges[I].Addr) then
+  begin
+   Result := @Challenges[I];
+   Exit;
+  end;
 
-Result := @Challenges[J];
+C := @Challenges[LastChallenge];
+C.Addr := Addr;
+C.Challenge := RandomLong(0, 65535) or (RandomLong(0, 36863) shl 16);
+C.Time := Trunc(RealTime);
 
-Result.Addr := Addr;
-Result.Challenge := RandomLong(0, 65535) or (RandomLong(0, 36863) shl 16);
-Result.Time := Trunc(RealTime);
+Inc(LastChallenge);
+if LastChallenge = MAX_CHALLENGES then
+ LastChallenge := 0;
+
+Result := C;
 end;
 
 procedure SVC_GetChallenge;
@@ -589,9 +538,9 @@ S := UIntToStrE(SV_DispatchChallenge(NetFrom).Challenge, S^, 32);
 
 if B then
  if sv_secureflag.Value <> 0 then
-  StrCopy(S, ' 3 0 1'#10)
+  StrCopy(S, ' 3 1 1'#10)
  else
-  StrCopy(S, ' 3 0 0'#10)
+  StrCopy(S, ' 3 1 0'#10)
 else
  StrCopy(S, ' 2'#10);
 
@@ -695,7 +644,7 @@ else
  MSG_WriteByte(SB, 0);
 
 MSG_WriteByte(SB, UInt(sv_secureflag.Value <> 0));
-MSG_WriteByte(SB, Min(SV_GetFakeClientCount, High(Byte)));
+MSG_WriteByte(SB, Min(SV_CountFakeClients, High(Byte)));
 
 if not (FSB_OVERFLOWED in SB.AllowOverflow) then
  NET_SendPacket(NS_SERVER, SB.CurrentSize, SB.Data, NetFrom);
@@ -962,7 +911,7 @@ if sv_visiblemaxplayers.Value < 0 then
 else
  MSG_WriteByte(SB, Min(Trunc(sv_visiblemaxplayers.Value), High(Byte)));
 
-MSG_WriteByte(SB, Min(SV_GetFakeClientCount, High(Byte)));
+MSG_WriteByte(SB, Min(SV_CountFakeClients, High(Byte)));
 MSG_WriteChar(SB, 'd');
 MSG_WriteChar(SB, {$IFDEF MSWINDOWS}'w'{$ELSE}'l'{$ENDIF});
 
@@ -1219,18 +1168,6 @@ while NET_GetPacket(NS_SERVER) do
        Break;
       end;
     end;    
-end;
-
-procedure SV_InitRateFilter;
-begin
-IPF_Init(RateChecker.IPF, nil, SizeOf(TIPRate));
-RateChecker.Global.TimeStamp := 0;
-RateChecker.Global.NumSent := 0;
-end;
-
-procedure SV_ShutdownRateFilter;
-begin
-IPF_Shutdown(RateChecker.IPF);
 end;
 
 end.

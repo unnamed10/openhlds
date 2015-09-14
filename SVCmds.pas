@@ -6,6 +6,8 @@ interface
 
 uses SysUtils, Default, SDK;
 
+procedure SV_FreeLogNodes;
+
 procedure SV_SetLogAddress_F; cdecl;
 procedure SV_AddLogAddress_F; cdecl;
 procedure SV_DelLogAddress_F; cdecl;
@@ -31,7 +33,20 @@ var
 
 implementation
 
-uses Common, Console, FileSys, GameLib, Info, Memory, MsgBuf, Host, Network, Server, SVAuth, SVClient, SVDelta, SVRcon, SVSend;
+uses Common, Console, FileSys, GameLib, Info, Memory, MsgBuf, Host, Network, SVAuth, SVClient, SVDelta, SVMain, SVRcon, SVSend;
+
+procedure SV_FreeLogNodes;
+var
+ P, P2: PLogNode;
+begin
+P := FirstLog;
+while P <> nil do
+ begin
+  P2 := P.Prev;
+  Mem_Free(P);
+  P := P2;
+ end;
+end;
 
 procedure SV_SetLogAddress_F; cdecl;
 var
@@ -406,9 +421,9 @@ if CmdSource = csServer then
        S := StrECopy(S, '; UniqueID: ');
        S := StrECopy(S, SV_GetClientIDString(C^));
        S := StrECopy(S, '; Out: ');
-       S := StrECopy(S, PLChar(FloatToStr(RoundTo(C.Netchan.Flow[1].KBAvgRate, -2))));
+       S := StrECopy(S, PLChar(FloatToStr(RoundTo(C.Netchan.Flow[FS_RX].KBAvgRate, -2))));
        S := StrECopy(S, ' KBps; In: ');
-       S := StrECopy(S, PLChar(FloatToStr(RoundTo(C.Netchan.Flow[2].KBAvgRate, -2))));
+       S := StrECopy(S, PLChar(FloatToStr(RoundTo(C.Netchan.Flow[FS_TX].KBAvgRate, -2))));
        StrCopy(S, ' KBps).');
 
        Print(@Buf);
@@ -434,11 +449,10 @@ procedure SV_New_F; cdecl;
 var
  SB: TSizeBuf;
  Buf: array[1..1024] of LChar;
- SBData: array[1..65536] of Byte;
+ SBData: array[1..MAX_NETBUFLEN] of Byte;
  Name: array[1..MAX_PLAYER_NAME] of LChar;
  Address: array[1..256] of LChar;
  RejectReason: array[1..128] of LChar;
- OldUserMsgs: PUserMsg; 
  S: PLChar;
  C: PClient;
  I: Int;
@@ -467,13 +481,9 @@ SZ_Clear(HostClient.UnreliableMessage);
 Netchan_Clear(HostClient.Netchan);
 
 SV_SendServerInfo(SB, HostClient^);
+
 if UserMsgs <> nil then
- begin
-  OldUserMsgs := NewUserMsgs;
-  NewUserMsgs := UserMsgs;
-  SV_SendUserReg(SB);
-  NewUserMsgs := OldUserMsgs;
- end;
+ SV_SendUserReg(SB, UserMsgs);
 HostClient.UserMsgReady := True;
 
 StrCopy(@Name, @HostClient.NetName);
@@ -489,7 +499,7 @@ if DLLFunctions.ClientConnect(HostClient.Entity^, @Name, @Address, @RejectReason
   for I := 0 to SVS.MaxClients - 1 do
    begin
     C := @SVS.Clients[I];
-    if (C = HostClient) or C.Connected then
+    if C.Connected then
      SV_FullClientUpdate(C^, SB);
    end;
 
@@ -503,7 +513,7 @@ if DLLFunctions.ClientConnect(HostClient.Entity^, @Name, @Address, @RejectReason
  end
 else
  begin
-  SV_ClientPrint(@RejectReason, True);
+  SV_ClientPrint(@RejectReason, False);
   SV_DropClient(HostClient^, False, ['Server refused connection: ', PLChar(@RejectReason), '.']);
  end;
 end;
@@ -511,7 +521,7 @@ end;
 procedure SV_Spawn_F; cdecl;
 var
  SB: TSizeBuf;
- SBData: array[1..65536] of Byte;
+ SBData: array[1..MAX_NETBUFLEN] of Byte;
  CRC: PCRC;
 begin
 if (CmdSource = csClient) and (Cmd_Argc = 3) then
@@ -558,7 +568,7 @@ end;
 procedure SV_SendRes_F; cdecl;
 var
  SB: TSizeBuf;
- SBData: array[1..65536] of Byte;
+ SBData: array[1..MAX_NETBUFLEN] of Byte;
 begin
 if (CmdSource <> csServer) and (HostClient.Active or not HostClient.Spawned) and (RealTime > HostClient.SendResTime) then
  begin

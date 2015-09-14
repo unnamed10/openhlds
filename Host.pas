@@ -19,18 +19,21 @@ procedure Host_Say(Team: Boolean);
 
 procedure Host_EndSection(Name: PLChar);
 
-procedure Host_ClearMemory(KeepClients: Boolean);
+procedure Host_ClearMemory;
 
 procedure Host_Error(Msg: PLChar); overload;
 procedure Host_Error(const Msg: array of const); overload;
 
 procedure Host_ShutdownServer(SkipNotify: Boolean);
-procedure Host_ClientCommands(var C: TClient; S: PLChar);
 
 function Host_Frame: Boolean;
 
 procedure Host_Init;
 procedure Host_Shutdown;
+
+const
+ LangName = 'english';
+ LowViolenceBuild = False;
 
 var
  console_cvar: TCVar = (Name: 'console'; Data: '0');
@@ -39,60 +42,35 @@ var
  coop: TCVar = (Name: 'coop'; Data: '0'; Flags: [FCVAR_SERVER]);
  hostname: TCVar = (Name: 'hostname'; Data: ProjectName + ' v' + ProjectVersion + ' server');
  skill: TCVar = (Name: 'skill'; Data: '1');
-
- hostmap: TCVar = (Name: 'HostMap'; Data: '');
-
+ hostmap: TCVar = (Name: 'hostmap'; Data: '');
  host_killtime: TCVar = (Name: 'host_killtime'; Data: '0');
-
  sys_ticrate: TCVar = (Name: 'sys_ticrate'; Data: '100'; Flags: [FCVAR_SERVER]);
  sys_maxframetime: TCVar = (Name: 'sys_maxframetime'; Data: '0.25');
  sys_minframetime: TCVar = (Name: 'sys_minframetime'; Data: '0.001');
-
  sys_timescale: TCVar = (Name: 'sys_timescale'; Data: '1');
  host_limitlocal: TCVar = (Name: 'host_limitlocal'; Data: '0');
  host_framerate: TCVar = (Name: 'host_framerate'; Data: '0');
  host_speeds: TCVar = (Name: 'host_speeds'; Data: '0');
  host_profile: TCVar = (Name: 'host_profile'; Data: '0');
-
  pausable: TCVar = (Name: 'pausable'; Data: '0'; Flags: [FCVAR_SERVER]);
 
  HostInit: Boolean = False;
- HostInfo: THostParms;
+ HostActive, HostSubState, HostStateInfo: UInt;
+ QuitCommandIssued: Boolean;
+ InHostError: Boolean;
+ InHostShutdown: Boolean;
+ HostHunkLevel: UInt;
+ HostFrameTime: Double;
+ HostNumFrames: UInt;
+ 
+ RealTime, OldRealTime: Double;
 
- RealTime: Double = 0;
- OldRealTime: Double = 0;
-
- HostActive: UInt32 = 0; // unused?
- HostSubState: UInt32 = 0;
- HostStateInfo: UInt32 = 0;
-
- LowViolenceBuild: Boolean = False;
- QuitCommandIssued: Boolean = False;
-
- // gamedir
- BaseDir: PLChar; // C:\HLDS
- GameDir: PLChar; // cstrike
- DefaultGameDir: PLChar; // valve
- FallbackDir: PLChar;
- LangName: PLChar = 'english';
-
- UseAddonsDir, UseHDModels: Boolean;
+ BaseDir, GameDir, DefaultGameDir, FallbackDir: PLChar;
 
  CSFlagsInitialized: Boolean = False;
- IsCStrike: Boolean = False;
- IsCZero: Boolean = False;
- IsCZeroRitual: Boolean = False;
- IsTerrorStrike: Boolean = False;
-
- InHostError: Boolean = False;
- InHostShutdown: Boolean = False;
+ IsCStrike, IsCZero, IsCZeroRitual, IsTerrorStrike: Boolean;
 
  WADPath: PLChar;
-
- HostHunkLevel: UInt;
-
- HostFrameTime: Double;
- HostFrameCount: UInt = 0;
 
  HostTimes: record
   Cur, Prev, Frame: Double;
@@ -105,13 +83,13 @@ var
  TimeTotal: Double;
 
  CmdLineTicrateCheck: Boolean = False;
- CmdLineTicrate: UInt = 0;
+ CmdLineTicrate: UInt;
 
- RollingFPS: Double = 0;
+ RollingFPS: Double;
 
 implementation
 
-uses Common, Console, Decal, Delta, Edict, Encode, GameLib, HostCmds, HostSave, HPAK, Memory, Model, MsgBuf, Network, Renderer, Resource, Server, StdUI, SVClient, SVEdict, SVEvent, SVExport, SVMain, SVPacket, SVPhys, SVRcon, SVSend, SVWorld, SysMain, SysArgs, SysClock, Texture;
+uses Common, Console, CoreUI, Decal, Delta, Edict, Encode, GameLib, HostCmds, HostSave, HPAK, Memory, Model, MsgBuf, Network, Renderer, Resource, SVClient, SVEdict, SVEvent, SVExport, SVMain, SVPacket, SVPhys, SVRcon, SVSend, SVWorld, SysMain, SysArgs, SysClock, Texture;
 
 function Host_SaveGameDirectory: PLChar;
 begin
@@ -157,24 +135,20 @@ else
 CBuf_AddText(#10'disconnect'#10);
 end;
 
-procedure Host_ClearMemory(KeepClients: Boolean);
+procedure Host_ClearMemory;
 begin
 DPrint('Clearing memory.');
 
-CM_FreePAS;
-SV_ClearEntities;
 Mod_ClearAll;
+CM_FreePAS;
+SV_FreePMSimulator;
+SV_ClearEntities;
 SV_ClearPrecachedEvents;
+
 if HostHunkLevel > 0 then
  Hunk_FreeToLowMark(HostHunkLevel);
 
-if KeepClients then
- begin
-  SV_ClearClientFrames;
-  SV_ClearClientStates;
- end
-else
- SV_ClearClients;
+SV_ClearClientStates;
 
 MemSet(SV, SizeOf(SV), 0);
 end;
@@ -182,15 +156,16 @@ end;
 procedure Host_Error(Msg: PLChar);
 begin
 if InHostError then
- Sys_Error('Host_Error: Recursively entered.');
+ Sys_Error('Host_Error: Recursively entered.')
+else
+ begin
+  InHostError := True;
+  Print(['Host_Error: ', Msg]);
+  if SV.Active then
+   Host_ShutdownServer(False);
 
-InHostError := True;
-Print(['Host_Error: ', Msg]);
-if SV.Active then
- Host_ShutdownServer(False);
-
-Sys_Error(['Host_Error: ', Msg]);
-InHostError := False;
+  Sys_Error(['Host_Error: ', Msg]);
+ end;
 end;
 
 procedure Host_Error(const Msg: array of const);
@@ -214,18 +189,14 @@ if SV.Active then
 
   SV_ServerDeactivate;
   SV.Active := False;
-  
-  SV_ClearEntities;
-  FreeAllEntPrivateData;
+
+  HPAK_FlushHostQueue;
+  Host_ClearMemory;
 
   SV_ClearClients;
   MemSet(SVS.Clients^, SizeOf(TClient) * SVS.MaxClientsLimit, 0);
-
-  SV_ClearPrecachedEvents;
-  HPAK_FlushHostQueue;
-
+  
   NET_ClearLagData(False, True);
-  MemSet(SV, SizeOf(SV), 0);
   LPrint('Server shutdown'#10);
   Log_Close;
  end;
@@ -235,15 +206,6 @@ procedure Host_InitLocal;
 begin
 Host_InitCommands;
 Host_InitCVars;
-end;
-
-procedure Host_ClientCommands(var C: TClient; S: PLChar);
-begin
-if C.Connected and not C.FakeClient then
- begin
-  MSG_WriteByte(C.Netchan.NetMessage, SVC_STUFFTEXT);
-  MSG_WriteString(C.Netchan.NetMessage, S);
- end;
 end;
 
 procedure Host_Say(Team: Boolean);
@@ -306,31 +268,26 @@ Host_ShutdownServer(False);
 if not Save then
  begin
   Host_ClearGameState;
-  SV_InactivateClients;
   SVS.ServerFlags := 0;
  end;
 
 if SV_SpawnServer(Name, nil) then
- begin
-  if Save then
-   begin
-    if not LoadGamestate(Name, True) then
-     SV_LoadEntities;
-
-    SV.Paused := True;
-    SV.SavedGame := True;
-    SV_ActivateServer(False);
-   end
-  else
-   begin
+ if Save then
+  begin
+   if not LoadGamestate(Name, True) then
     SV_LoadEntities;
-    SV_ActivateServer(True);
-    if not SV.Active then
-     Exit;
-   end;
 
-  SV_LinkNewUserMsgs;
- end;
+   SV.Paused := True;
+   SV.SavedGame := True;
+   SV_ActivateServer(False);
+   SV_LinkNewUserMsgs;
+  end
+ else
+  begin
+   SV_LoadEntities;
+   SV_ActivateServer(True);
+   SV_LinkNewUserMsgs;
+  end;
 end;
 
 procedure Host_SetHostTimes;
@@ -363,8 +320,10 @@ var
  F: Double;
 begin
 Host_CheckTimeCVars;
-
-RealTime := RealTime + Time * sys_timescale.Value;
+if sys_timescale.Value <> 1 then
+ RealTime := RealTime + Time * sys_timescale.Value
+else
+ RealTime := RealTime + Time;
 
 if not CmdLineTicrateCheck then
  begin
@@ -432,14 +391,14 @@ if Host_FilterTime(Time) then
    HostTimes.Rcon := Sys_FloatTime;
 
   Host_WriteSpeeds;
-  Inc(HostFrameCount);
+  Inc(HostNumFrames);
   if sv_stats.Value <> 0 then
    Host_UpdateStats;
 
   if (host_killtime.Value <> 0) and (host_killtime.Value < SV.Time) then
    CBuf_AddText('quit'#10);
 
-  UI_OnFrame(RealTime);
+  UI_Frame(RealTime);
  end;
 end;
 
@@ -504,30 +463,22 @@ var
  IntBuf: array[1..32] of LChar;
 begin
 RealTime := 0;
-Memory_Init(HostInfo.MemBase, HostInfo.MemSize);
 
+Rand_Init;
 CBuf_Init;
 Cmd_Init;
-CVar_Init;
-CVar_CmdInit;
-COM_Init;
-Con_Init;
-
-CVar_RegisterVariable(console_cvar);
-CVar_RegisterVariable(developer);
-if (COM_CheckParm('-console') > 0) or (COM_CheckParm('-toconsole') > 0) or (COM_CheckParm('-dev') > 0) then
- CVar_DirectSet(console_cvar, '1');
-if COM_CheckParm('-dev') > 0 then
- CVar_DirectSet(developer, '1');
-
+CVar_Init;       
 Host_InitLocal;
-
 Host_ClearSaveDirectory;
+Con_Init;
 HPAK_Init;
+
+SV_SetMaxClients;
 W_LoadWADFile('gfx.wad');
 W_LoadWADFile('fonts.wad');
 Decal_Init;
 Mod_Init;
+R_Init;
 NET_Init;
 Netchan_Init;
 Delta_Init;
@@ -538,10 +489,6 @@ StrLCat(@Buf, ',47-48,', SizeOf(Buf) - 1);
 StrLCat(@Buf, IntToStr(BuildNumber, IntBuf, SizeOf(IntBuf)), SizeOf(Buf) - 1);
 CVar_DirectSet(sv_version, @Buf);
 
-DPrint(['Heap size: ', RoundTo(HostInfo.MemSize div (1024 * 1024), -3), ' MB.']);
-
-CVar_RegisterVariable(r_cachestudio);
-R_InitTextures;
 HPAK_CheckIntegrity('custom.hpk');
 
 CBuf_InsertText('exec valve.rc'#10);
@@ -549,6 +496,7 @@ Hunk_AllocName(0, '-HOST_HUNKLEVEL-');
 HostHunkLevel := Hunk_LowMark;
 
 HostActive := 1;
+HostNumFrames := 0;
 
 HostTimes.Prev := Sys_FloatTime;
 HostInit := True;
@@ -561,33 +509,31 @@ if InHostShutdown then
 else
  begin
   InHostShutdown := True;
-  SV_ServerDeactivate;
   HostInit := False;
 
-  HPAK_FlushHostQueue;
-  SV_DeallocateDynamicData;
+  SV_ServerDeactivate;
 
-  SV_ClearClientFrames;
+  Mod_ClearAll;
+  SV_ClearEntities;
+  CM_FreePAS;
+  SV_FreePMSimulator;
 
   SV_Shutdown;
-  NET_Shutdown;
   ReleaseEntityDLLs;
-
+  Delta_Shutdown;
+  NET_Shutdown;
+  if WADPath <> nil then
+   Mem_FreeAndNil(WADPath);
+  Draw_DecalShutdown;
+  W_Shutdown;
+  HPAK_FlushHostQueue;
+  Con_Shutdown;
   Cmd_RemoveGameCmds;
   Cmd_Shutdown;
   CVar_Shutdown;
-  Con_Shutdown;
 
-  CM_FreePAS;
-  if WADPath <> nil then
-   Mem_FreeAndNil(WADPath);
-
-  Draw_DecalShutdown;
-  W_Shutdown;
   LPrint('Server shutdown'#10);
   Log_Close;
-  COM_Shutdown;
-  Delta_Shutdown;
   RealTime := 0;
   SV.Time := 0;
  end;

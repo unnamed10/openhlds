@@ -2,8 +2,6 @@ unit Model;
 
 {$I HLDS.inc}
 
-// 60 is a node size, probably
-
 interface
 
 uses SysUtils, Default, SDK;
@@ -15,7 +13,7 @@ function CM_LeafPVS(Index: UInt): Pointer;
 function CM_LeafPAS(Index: UInt): Pointer;
 procedure CM_FreePAS;
 procedure CM_CalcPAS(const Model: TModel);
-function CM_HeadnodeVisible(Node: PMNode; VisData: PByte; LeafIndex: PUInt32): Boolean;
+function CM_HeadnodeVisible(const Node: TMNode; Vis: Pointer; out LeafIndex: UInt): Boolean;
 function Mod_LeafPVS(Leaf: PMLeaf; Model: PModel): PByte;
 
 function Mod_FindName(NeedCRC: Boolean; Name: PLChar): PModel;
@@ -32,12 +30,11 @@ function Mod_PointInLeaf(const P: TVec3; const M: TModel): PMLeaf;
 function SurfaceAtPoint(const M: TModel; const Node: TMNode; const MinS, MaxS: TVec3): PMSurface;
 
 var
- // must not start from 1
- TexGammaTable: array[Byte] of Byte;
+ mod_lowmem: TCVar = (Name: 'mod_lowmem'; Data: '0');  
 
 implementation
 
-uses Common, Console, Decal, Encode, FileSys, Host, MathLib, Memory, Renderer, Server, SysArgs, SysClock, SysMain, Texture;
+uses Common, Console, Decal, Encode, FileSys, Host, MathLib, Memory, Renderer, SVMain, SysArgs, SysClock, SysMain, Texture;
 
 const
  NL_PRESENT = 0;
@@ -46,28 +43,24 @@ const
  NL_CLIENT = 3;
 
 var
- Mod_NoVis, VisDecompressed: array[0..MAX_MAP_LEAFS div 8 - 1] of Byte; // cf
+ NoVis, VisDecompressed: array[0..MAX_MAP_LEAFS div 8 - 1] of Byte;
  PASData: PByte = nil;
  PVSData: PByte = nil;
-
- PVSRowBytes: UInt32 = 0;
-
+ PVSRowBytes: UInt = 0;
 
  Mod_NumKnown: UInt = 0;
  Mod_Known: array[0..MAX_MOD_KNOWN - 1] of TModel;
- Mod_KnownInfo: array[0..MAX_MOD_KNOWN - 1] of TModelCRCInfo;
+ Mod_KnownCRC: array[0..MAX_MOD_KNOWN - 1] of TModelCRCInfo;
 
- LoadName: array[1..MAX_MODEL_NAME] of LChar;
  ModBase: Pointer;
+ LoadName: array[1..MAX_MODEL_NAME] of LChar;
  LoadModel: PModel;
-
- AdTested: Boolean = False;
- AdEnabled: Boolean = False;
- AdWAD: PCacheWAD = nil;
+ LoadLowMem: Boolean;
 
 procedure Mod_Init;
 begin
-MemSet(Mod_NoVis, SizeOf(Mod_NoVis), $FF);
+MemSet(NoVis, SizeOf(NoVis), $FF);
+CVar_RegisterVariable(mod_lowmem);
 end;
 
 function Mod_DecompressVis(Data: PByte; Model: PModel): PByte;
@@ -78,13 +71,13 @@ if Data <> nil then
   Result := @VisDecompressed;
  end
 else
- Result := @Mod_NoVis;
+ Result := @NoVis;
 end;
 
 function Mod_LeafPVS(Leaf: PMLeaf; Model: PModel): PByte;
 begin
-if Leaf = PMLeaf(Model.Leafs) then
- Result := @Mod_NoVis
+if Leaf = Pointer(Model.Leafs) then
+ Result := @NoVis
 else
  if PVSData <> nil then
   Result := CM_LeafPVS((UInt(Leaf) - UInt(Model.Leafs)) div SizeOf(Leaf^))
@@ -95,7 +88,7 @@ end;
 procedure CM_DecompressPVS(Src, Dst: PByte; Size: UInt);
 var
  DstEnd: PByte;
- RowSize: Byte;
+ RowSize: UInt;
 begin
 if Src <> nil then
  begin
@@ -120,23 +113,23 @@ if Src <> nil then
     end;
  end
 else
- Move(Mod_NoVis, Dst^, Size);
+ Move(NoVis, Dst^, Size);
 end;
 
 function CM_LeafPVS(Index: UInt): Pointer;
 begin
 if PVSData <> nil then
- Result := Pointer(UInt(PVSData) + PVSRowBytes * Index)
+ Result := Pointer(UInt(PVSData) + Index * PVSRowBytes)
 else
- Result := @Mod_NoVis;
+ Result := @NoVis;
 end;
 
 function CM_LeafPAS(Index: UInt): Pointer;
 begin
 if PASData <> nil then
- Result := Pointer(UInt(PASData) + PVSRowBytes * Index)
+ Result := Pointer(UInt(PASData) + Index * PVSRowBytes)
 else
- Result := @Mod_NoVis;
+ Result := @NoVis;
 end;
 
 procedure CM_FreePAS;
@@ -149,32 +142,32 @@ end;
 
 procedure CM_CalcPAS(const Model: TModel);
 var
- K, C, L, M: UInt;
- LeafCount, RowIndex, RowCount: UInt;
- Visible, Audible: UInt;
+ I, J, K, M: UInt;
+ LeafCount, RowDWords, RowCount, Offset, Leaf, Visible, Audible: UInt;
  PVS, PAS: PByte;
- P, P2: PUInt32;
  B: Byte;
-
- I, J: UInt;
+ Src, Dst: PUInt32;
+ Info: Boolean;
 begin
 DPrint('Building PAS...');
 CM_FreePAS;
 
+Info := developer.Value <> 0;
 RowCount := (Model.NumLeafs + 7) shr 3;
 LeafCount := Model.NumLeafs + 1;
 PVSRowBytes := (RowCount + 3) and not 3;
-RowIndex := PVSRowBytes shr 2;
+RowDWords := PVSRowBytes shr 2;
+PVSData := Mem_ZeroAlloc(LeafCount * PVSRowBytes);
+PASData := Mem_ZeroAlloc(LeafCount * PVSRowBytes);
 
 Visible := 0;
 Audible := 0;
 
-PVSData := Mem_CAlloc(PVSRowBytes, LeafCount);
 PVS := PVSData;
 for I := 0 to LeafCount - 1 do
  begin
   CM_DecompressPVS(Model.Leafs[I].CompressedVis, PVS, RowCount);
-  if I > 0 then
+  if Info and (I > 0) then
    for J := 0 to LeafCount - 1 do
     if ((1 shl (J and 7)) and PByte(UInt(PVS) + (J shr 3))^) > 0 then
      Inc(Visible);
@@ -182,72 +175,71 @@ for I := 0 to LeafCount - 1 do
   Inc(UInt(PVS), PVSRowBytes);
  end;
 
-PASData := Mem_CAlloc(PVSRowBytes, LeafCount);
 PVS := PVSData;
 PAS := PASData;
 for I := 0 to LeafCount - 1 do
  begin
   Move(PVS^, PAS^, PVSRowBytes);
-  C := 1;
+
+  Offset := 1;
   if PVSRowBytes > 0 then
    for J := 0 to PVSRowBytes - 1 do
     begin
      B := PByte(UInt(PVS) + J)^;
+
      if B > 0 then
       for K := 0 to 7 do
        if ((1 shl K) and B) > 0 then
         begin
-         L := K + C;
-         if (L > 0) and (L < LeafCount) then
+         Leaf := Offset + K;
+         if (Leaf > 0) and (Leaf < LeafCount) then
           begin
-           P := PUInt32(PAS);
-           P2 := Pointer(UInt(PVSData) + L * PVSRowBytes);
-           for M := 1 to RowIndex do
+           Src := Pointer(UInt(PVSData) + Leaf * PVSRowBytes);
+           Dst := Pointer(PAS);
+           for M := 1 to RowDWords do
             begin
-             P^ := P^ or P2^;
-             Inc(UInt(P), SizeOf(P^));
-             Inc(UInt(P2), SizeOf(P2^));
+             Dst^ := Dst^ or Src^;
+             Inc(UInt(Src), SizeOf(UInt32));
+             Inc(UInt(Dst), SizeOf(UInt32));
             end;
           end;
         end;
 
-     Inc(C, 8);
+     Inc(Offset, 8);
     end;
 
-  if I > 0 then
+  if Info and (I > 0) then
    for J := 0 to LeafCount - 1 do
     if ((1 shl (J and 7)) and PByte(UInt(PAS) + (J shr 3))^) > 0 then
      Inc(Audible);
 
   Inc(UInt(PVS), PVSRowBytes);
-  Inc(UInt(PAS), 4 * RowIndex);
+  Inc(UInt(PAS), PVSRowBytes);
  end;
 
-if LeafCount > 0 then
- DPrint(['CM_CalcPAS: ', Visible div LeafCount, ' visible; ',
-                         Audible div LeafCount, ' audible; ',
-                         LeafCount, ' total.']);
+if Info then
+ DPrint(['Average leaves: ', Visible div LeafCount, ' visible; ',
+                             Audible div LeafCount, ' audible; ',
+                             LeafCount, ' total.']);
 end;
 
-function CM_HeadnodeVisible(Node: PMNode; VisData: PByte; LeafIndex: PUInt32): Boolean;
+function CM_HeadnodeVisible(const Node: TMNode; Vis: Pointer; out LeafIndex: UInt): Boolean;
 var
- Index: UInt;
+ Index: Int;
+ Leaf: PMLeaf;
 begin
-if (Node <> nil) and (Node.Contents <> CONTENTS_SOLID) then
- if Node.Contents < 0 then
+Leaf := @Node;
+if Leaf.Contents <> CONTENTS_SOLID then
+ if Leaf.Contents < 0 then
   begin
-   Index := (UInt(Node) - UInt(SV.WorldModel.Leafs)) div SizeOf(TMLeaf) - 1;
-   Result := (Int(Index) <> -1) and (((1 shl (Index and 7)) and PByte(UInt(VisData) + (Index shr 3))^) > 0);
-   if Result and (LeafIndex <> nil) then
-    LeafIndex^ := Index;
-   Exit;
+   Index := (UInt(Leaf) - UInt(SV.WorldModel.Leafs)) div SizeOf(TMLeaf) - 1;
+   Result := (Index <> -1) and (((1 shl (Index and 7)) and PByte(UInt(Vis) + UInt(Index shr 3))^) > 0);
+   if Result then
+    LeafIndex := Index;
   end
  else
-  begin
-   Result := CM_HeadnodeVisible(Node.Children[0], VisData, LeafIndex);
-   if not Result then
-    Result := CM_HeadnodeVisible(Node.Children[1], VisData, LeafIndex);
-  end
+  Result := CM_HeadnodeVisible(Node.Children[0]^, Vis, LeafIndex) or
+            CM_HeadnodeVisible(Node.Children[1]^, Vis, LeafIndex)
 else
  Result := False;
 end;
@@ -283,8 +275,7 @@ procedure CalcSurfaceExtents(var S: TMSurface);
 var
  MinS, MaxS: array[0..1] of Single;
  BMinS, BMaxS: array[0..1] of Int32;
- I, J: Int;
- E: Int32;
+ I, J, E: Int;
  V: PMVertex;
  Val: Single;
  Tex: PMTexInfo;
@@ -307,7 +298,7 @@ for I := 0 to S.NumEdges - 1 do
 
   for J := 0 to 1 do
    begin
-    Val := DotProduct(V.Position, PVec3(@Tex.Vecs[J])^) + Tex.Vecs[J][3];
+    Val := DotProduct(V.Position, PVec3(@Tex.Vecs[J][0])^) + Tex.Vecs[J][3];
     if Val < MinS[J] then
      MinS[J] := Val;
     if Val > MaxS[J] then
@@ -319,7 +310,7 @@ for I := 0 to 1 do
  begin
   BMinS[I] := Floor(MinS[I] / 16);
   BMaxS[I] := Ceil(MaxS[I] / 16);
-
+  
   S.TextureMinS[I] := BMinS[I] * 16;
   S.Extents[I] := (BMaxS[I] - BMinS[I]) * 16;
   if ((Tex.Flags and TEX_SPECIAL) = 0) and (S.Extents[I] > 256) then
@@ -347,55 +338,31 @@ for I := 0 to 2 do
 Result := Length(Corner);
 end;
 
-procedure Mod_AdInit;
+function Mod_LoadPalette(PInPal: PDModelPalette; PPal: PMModelPalette; NumPalette: UInt): Pointer;
 var
- S: PLChar;
-begin
-if not AdTested then
- begin
-  AdTested := True;
-  S := COM_ParmValueByName('-ad');
-  if S^ > #0 then
-   if FS_SizeByName(S) > 0 then
-    begin
-     Draw_CacheWADInit(S, 16, AdWAD);
-     AdEnabled := True;
-    end
-   else
-    Print('Invalid size in -ad file.')
-  else
-   DPrint('No -ad file specified, skipping.');
- end;
-end;
-
-procedure Mod_AdSwap(Tex: PTexture; Size: UInt; NumPalette: Int);
-var
- P: PTexture;
  I: Int;
- PIn: PDModelPalette;
- POut: PMModelPalette;
 begin
-if AdTested and AdEnabled then
+if not LoadLowMem then
  begin
-  P := Draw_CacheGet(@AdWAD, Draw_CacheIndex(@AdWAD, 'img'));
-  if P <> nil then
+  for I := 0 to NumPalette - 1 do
    begin
-    Move(Pointer(UInt(P) + SizeOf(P^))^, Pointer(UInt(Tex) + SizeOf(Tex^))^, Size);
-    PIn := Pointer(UInt(P) + SizeOf(P^) + Size + SizeOf(UInt16));
-    POut := Pointer(UInt(Tex) + SizeOf(P^) + Size + SizeOf(UInt16));
-    for I := 0 to NumPalette - 1 do
-     begin
-      POut.R := PIn.B;
-      POut.G := PIn.G;
-      POut.B := PIn.R;
-      POut.A := 0;
+    PPal.R := PInPal.R;
+    PPal.G := PInPal.G;
+    PPal.B := PInPal.B;
+    PPal.A := 0;
 
-      Inc(UInt(PIn), SizeOf(PIn^));
-      Inc(UInt(POut), SizeOf(POut^));      
-     end;
+    Inc(UInt(PInPal), SizeOf(PInPal^));
+    Inc(UInt(PPal), SizeOf(PPal^));
    end;
- end;
+
+  Result := PInPal;
+ end
+else
+ Result := Pointer(UInt(PInPal) + NumPalette * SizeOf(PInPal^));
 end;
+
+
+
 
 
 // Alias models
@@ -681,7 +648,7 @@ for I := 0 to MAX_PALETTE - 1 do
 Total := Hunk_LowMark - Start;
 Cache_Alloc(M.Cache, Total, @LoadName);
 if M.Cache.Data <> nil then
- begin
+ begin                                                    
   Move(AliasHeader^, M.Cache.Data^, Total);
   Hunk_FreeToLowMark(Start);
  end;
@@ -697,52 +664,55 @@ function Mod_LoadSpriteFrame(P: Pointer; var Frame: PMSpriteFrame): Pointer;
 var
  PInFrame: PDSpriteFrame;
  PFrame: PMSpriteFrame;
- Width, Height: Int32;
+ Width, Height: Int;
  Size: UInt;
- Origin: array[0..1] of Int32;
+ Origin: array[0..1] of Int;
 begin
 PInFrame := P;
 Width := LittleLong(PInFrame.Width);
 Height := LittleLong(PInFrame.Height);
-Size := Width * Height;
-
-PFrame := Hunk_AllocName(Size + SizeOf(PFrame^), @LoadName);
-MemSet(PFrame^, Size + SizeOf(PFrame^), 0);
-Frame := PFrame;
-
-PFrame.Width := Width;
-PFrame.Height := Height;
-
 Origin[0] := LittleLong(PInFrame.Origin[0]);
 Origin[1] := LittleLong(PInFrame.Origin[1]);
 
+Size := Width * Height;
+if not LoadLowMem then
+ begin
+  PFrame := Hunk_AllocName(SizeOf(TMSpriteFrame) + Size, @LoadName);
+  Move(Pointer(UInt(PInFrame) + SizeOf(PInFrame^))^, Pointer(UInt(PFrame) + SizeOf(PFrame^))^, Size);
+ end
+else
+ PFrame := Hunk_AllocName(SizeOf(TMSpriteFrame), @LoadName);
+
+PFrame.Width := Width;
+PFrame.Height := Height;
+PFrame.CacheSpot := nil;
 PFrame.Up := Origin[1];
 PFrame.Down := Origin[1] - Height;
 PFrame.Left := Origin[0];
 PFrame.Right := Origin[0] + Width;
+PUInt32(@PFrame.Pixels)^ := 0;
 
-Move(Pointer(UInt(PInFrame) + SizeOf(PInFrame^))^, Pointer(UInt(PFrame) + SizeOf(PFrame^))^, Size);
 Result := Pointer(UInt(PInFrame) + SizeOf(PInFrame^) + Size);
+Frame := PFrame;
 end;
 
 function Mod_LoadSpriteFrameGroup(P: Pointer; var Frame: PMSpriteFrame): Pointer;
 var
+ I, NumFrames: Int;
  PInGroup: PDSpriteGroup;
- PGroup: PMSpriteGroup;
- NumFrames: Int32;
- I: Int;
+ PGroup: PMSpriteGroup; 
  PInIntervals: PDSpriteInterval;
  PIntervals: PSingle;
  PFrameDescs: PMSpriteGroupFrameDesc;
 begin
 PInGroup := P;
-NumFrames := LittleLong(PInGroup.NumFrames);
-PGroup := Hunk_AllocName(SizeOf(PGroup^) + NumFrames * SizeOf(TMSpriteGroupFrameDesc), @LoadName);
-PGroup.NumFrames := NumFrames;
-Frame := PMSpriteFrame(PGroup);
-
 PInIntervals := Pointer(UInt(PInGroup) + SizeOf(PInGroup^));
-PIntervals := Hunk_AllocName(NumFrames * SizeOf(PIntervals^), @LoadName);
+NumFrames := LittleLong(PInGroup.NumFrames);
+
+PGroup := Hunk_AllocName(SizeOf(TMSpriteGroup) + NumFrames * SizeOf(TMSpriteGroupFrameDesc), @LoadName);
+PIntervals := Hunk_AllocName(NumFrames * SizeOf(Single), @LoadName);
+
+PGroup.NumFrames := NumFrames;
 PGroup.Intervals := PIntervals;
 
 for I := 0 to NumFrames - 1 do
@@ -762,154 +732,176 @@ for I := 0 to NumFrames - 1 do
   P := Mod_LoadSpriteFrame(P, PFrameDescs.FramePtr);
   Inc(PFrameDescs, SizeOf(PFrameDescs^));
  end;
+
 Result := P;
+Frame := PMSpriteFrame(PGroup);
 end;
 
 procedure Mod_LoadSpriteModel(var M: TModel; P: Pointer);
 var
- Header: PSpriteHeader;
  Version, Size: UInt;
- NumFrames: Int32;
- SpriteHeader: PMSprite;
- I, NumPalette: Int;
- PPalette: PMModelPalette;
- PInPalette: PDModelPalette;
- FrameType: TSpriteFrameType;
- PFrameType: PDSpriteFrameType;
- PSpriteFrame: PMSpriteFrameDesc;
+ I, NumFrames, NumPalette: Int;
+ Header: PSpriteHeader;
+ Sprite: PMSprite;
+ PInFrame: PDSpriteFrameType;
+ PFrame: PMSpriteFrameDesc;
 begin
 Header := P;
 Version := LittleLong(Header.Version);
-if Version <> SPRITE_VERSION then
- Sys_Error(['Mod_LoadSpriteModel: "', PLChar(@M.Name), '" has wrong version number (', Version, '; should be ', SPRITE_VERSION, ').']);
-
 NumFrames := LittleLong(Header.NumFrames);
-if NumFrames <= 0 then
- Sys_Error(['Mod_LoadSpriteModel: Model "', PLChar(@M.Name), '" has no frames.']);
-
-Size := NumFrames * SizeOf(TMSpriteFrameDesc) + SizeOf(TMSprite) +
-        LittleLong(Header.NumPalette) * SizeOf(TMModelPalette) + SizeOf(UInt16);
-SpriteHeader := Hunk_AllocName(Size, @LoadName);
-
-M.Cache.Data := SpriteHeader;
-
-SpriteHeader.T := LittleLong(Header.SpriteType);
-SpriteHeader.FrameIndex := LittleLong(Header.FrameIndex);
-SpriteHeader.MaxWidth := LittleLong(Header.Width);
-SpriteHeader.MaxHeight := LittleLong(Header.Height);
-SpriteHeader.BeamLength := LittleFloat(Header.BeamLength);
-SpriteHeader.NumFrames := NumFrames;
-
-M.SyncType := TSyncType(LittleLong(Int32(Header.SyncType)));
-M.MinS[0] := -SpriteHeader.MaxWidth / 2;
-M.MinS[1] := -SpriteHeader.MaxWidth / 2;
-M.MinS[2] := -SpriteHeader.MaxHeight / 2;
-M.MaxS[0] := SpriteHeader.MaxWidth / 2;
-M.MaxS[1] := SpriteHeader.MaxWidth / 2;
-M.MaxS[2] := SpriteHeader.MaxHeight / 2;
-SpriteHeader.Palette := SizeOf(TMSprite) + NumFrames * SizeOf(TMSpriteFrameDesc) + SizeOf(UInt16);
 NumPalette := LittleLong(Header.NumPalette);
-PUInt16(UInt(SpriteHeader) + UInt(SpriteHeader.Palette) - SizeOf(UInt16))^ := NumPalette;
 
-PPalette := Pointer(UInt(SpriteHeader) + UInt(SpriteHeader.Palette));
-PInPalette := Pointer(UInt(Header) + SizeOf(Header^));
-for I := 0 to NumPalette - 1 do
- begin
-  PPalette.R := PInPalette.R;
-  PPalette.G := PInPalette.G;
-  PPalette.B := PInPalette.B;
-  PPalette.A := 0;
+if Version <> SPRITE_VERSION then
+ Sys_Error(['Mod_LoadSpriteModel: "', PLChar(@M.Name), '" has wrong version number (', Version, '; should be ', SPRITE_VERSION, ').'])
+else
+ if NumFrames <= 0 then
+  Sys_Error(['Mod_LoadSpriteModel: Model "', PLChar(@M.Name), '" has no frames.']);
 
-  Inc(UInt(PPalette), SizeOf(PPalette^));
-  Inc(UInt(PInPalette), SizeOf(PInPalette^));
- end;
+Size := SizeOf(TMSprite) + NumFrames * SizeOf(TMSpriteFrameDesc) + SizeOf(UInt16);
+if not LoadLowMem then
+ Inc(Size, NumPalette * SizeOf(TMModelPalette));
 
-M.NumFrames := NumFrames;
-M.Flags := 0;
+Sprite := Hunk_AllocName(Size, @LoadName);
+M.Cache.Data := Sprite;
 
-PFrameType := PDSpriteFrameType(PInPalette);
-PSpriteFrame := Pointer(UInt(SpriteHeader) + SizeOf(SpriteHeader^));
-for I := 0 to NumFrames - 1 do
- begin
-  FrameType := TSpriteFrameType(LittleLong(Int32(PFrameType.T)));
-  PSpriteFrame.T := FrameType;
-
-  if FrameType = SPR_GROUP then
-   PFrameType := Mod_LoadSpriteFrameGroup(Pointer(UInt(PFrameType) + SizeOf(PFrameType^)), PSpriteFrame.FramePtr)
-  else
-   PFrameType := Mod_LoadSpriteFrame(Pointer(UInt(PFrameType) + SizeOf(PFrameType^)), PSpriteFrame.FramePtr);
-
-  Inc(UInt(PSpriteFrame), SizeOf(PSpriteFrame^));
- end;
+Sprite.T := LittleLong(Header.SpriteType);
+Sprite.FrameIndex := LittleLong(Header.FrameIndex);
+Sprite.MaxWidth := LittleLong(Header.Width);
+Sprite.MaxHeight := LittleLong(Header.Height);
+Sprite.NumFrames := NumFrames;
+Sprite.BeamLength := LittleFloat(Header.BeamLength);
+Sprite.Palette := SizeOf(TMSprite) + NumFrames * SizeOf(TMSpriteFrameDesc) + SizeOf(UInt16);
+if LoadLowMem then
+ PUInt16(UInt(Sprite) + UInt(Sprite.Palette) - SizeOf(UInt16))^ := 0
+else
+ PUInt16(UInt(Sprite) + UInt(Sprite.Palette) - SizeOf(UInt16))^ := NumPalette;
 
 M.ModelType := ModSprite;
+M.NumFrames := NumFrames;
+M.SyncType := TSyncType(LittleLong(Int32(Header.SyncType)));
+M.Flags := 0;
+M.MaxS[0] := Sprite.MaxWidth / 2;
+M.MaxS[1] := Sprite.MaxWidth / 2;
+M.MaxS[2] := Sprite.MaxHeight / 2;
+M.MinS[0] := -M.MaxS[0];
+M.MinS[1] := -M.MaxS[1];
+M.MinS[2] := -M.MaxS[2];
+
+P := Mod_LoadPalette(Pointer(UInt(Header) + SizeOf(Header^)),
+                     Pointer(UInt(Sprite) + UInt(Sprite.Palette)), NumPalette);
+
+PInFrame := Pointer(P);
+PFrame := Pointer(UInt(Sprite) + SizeOf(TMSprite));
+for I := 0 to NumFrames - 1 do
+ begin
+  PFrame.T := TSpriteFrameType(LittleLong(Int32(PInFrame.T)));
+
+  if PFrame.T = SPR_GROUP then
+   PInFrame := Mod_LoadSpriteFrameGroup(Pointer(UInt(PInFrame) + SizeOf(PInFrame^)), PFrame.FramePtr)
+  else
+   PInFrame := Mod_LoadSpriteFrame(Pointer(UInt(PInFrame) + SizeOf(PInFrame^)), PFrame.FramePtr);
+
+  Inc(UInt(PFrame), SizeOf(PFrame^));
+ end;
 end;
 
 
 
 
+procedure Mod_LoadStudioBogus(var M: TModel);
+var
+ Header: PStudioHeader;
+begin
+Header := Cache_Alloc(M.Cache, SizeOf(TStudioHeader), @M.Name);
+if Header <> nil then
+ begin
+  MemSet(Header^, SizeOf(TStudioHeader), 0);
+  StrCopy(@Header.Name, 'bogus');
+  Header.Length := SizeOf(TStudioHeader);
+ end;
 
+M.Flags := 0;
+end;
 
 procedure Mod_LoadStudioModel(var M: TModel; P: Pointer);
 var
  Header: PStudioHeader;
- PModel, PInTexture, PTexture: Pointer;
  Size: UInt;
  I, J: Int;
+ PModel, PInTexture, PTexture: Pointer;
  Tex: PMStudioTexture;
  PInPalette: PDModelPalette;
  PPalette: PMModelPalette;
 begin
 Header := P;
-if LittleLong(Header.Version) <> STUDIO_VERSION then
- begin
-  MemSet(Header^, SizeOf(Header^), 0);
-  StrCopy(@Header.Name, 'bogus');
-  Header.Length := SizeOf(Header^);
-  Header.TextureDataIndex := SizeOf(Header^);
- end;
-
 M.ModelType := ModStudio;
-M.Flags := Header.Flags;
 
-Cache_Alloc(M.Cache, Header.Length + (256 * 8) * Header.NumTextures, @M.Name);
-PModel := M.Cache.Data;
-if PModel = nil then
- Exit;
-
-if Header.TextureIndex = 0 then
- Move(P^, PModel^, Header.Length)
+if Header.Version <> STUDIO_VERSION then
+ Mod_LoadStudioBogus(M)
 else
  begin
-  Move(P^, PModel^, Header.TextureDataIndex);
-  PInTexture := Pointer(UInt(P) + UInt(Header.TextureDataIndex));
-  PTexture := Pointer(UInt(PModel) + UInt(Header.TextureDataIndex));
-  for I := 0 to Header.NumTextures - 1 do
-   begin
-    Tex := Pointer(UInt(PModel) + UInt(Header.TextureIndex + I * SizeOf(Tex^)));
-    Tex.Index := UInt(PTexture) - UInt(M.Cache.Data);
-    Size := Tex.Width * Tex.Height;
-    Move(PInTexture^, PTexture^, Size);
+  M.Flags := Header.Flags;
 
-    PInPalette := Pointer(UInt(PInTexture) + Size);
-    PPalette := Pointer(UInt(PTexture) + Size);
-    for J := 0 to MAX_PALETTE - 1 do
-     begin
-      PPalette.R := TexGammaTable[PInPalette.R];
-      PPalette.G := TexGammaTable[PInPalette.G];
-      PPalette.B := TexGammaTable[PInPalette.B];
-      PPalette.A := 0;
+  PModel := Cache_Alloc(M.Cache, Header.Length + MAX_PALETTE * (SizeOf(TMModelPalette) - SizeOf(TDModelPalette)) * UInt(Header.NumTextures), @M.Name);
+  if PModel <> nil then
+   if Header.TextureIndex = 0 then
+    Move(P^, PModel^, Header.Length)
+   else
+    begin
+     Move(P^, PModel^, Header.TextureDataIndex);
+     PInTexture := Pointer(UInt(P) + Header.TextureDataIndex);
+     PTexture := Pointer(UInt(PModel) + Header.TextureDataIndex);
+     for I := 0 to Header.NumTextures - 1 do
+      begin
+       Tex := Pointer(UInt(PModel) + Header.TextureIndex + UInt(I) * SizeOf(Tex^));
+       Tex.Index := UInt(PTexture) - UInt(PModel);
+       Size := Tex.Width * Tex.Height;
+       Move(PInTexture^, PTexture^, Size);
 
-      Inc(UInt(PPalette), SizeOf(PPalette^));
-      Inc(UInt(PInPalette), SizeOf(PInPalette^));
-     end;
-    PInTexture := PInPalette;
-    PTexture := PPalette;
-   end;
+       PInPalette := Pointer(UInt(PInTexture) + Size);
+       PPalette := Pointer(UInt(PTexture) + Size);
+       for J := 0 to MAX_PALETTE - 1 do
+        begin
+         PPalette.R := PInPalette.R;
+         PPalette.G := PInPalette.G;
+         PPalette.B := PInPalette.B;
+         PPalette.A := 0;
+
+         Inc(UInt(PInPalette), SizeOf(PInPalette^));
+         Inc(UInt(PPalette), SizeOf(PPalette^));
+        end;
+       PInTexture := PInPalette;
+       PTexture := PPalette;
+      end;
+    end;
  end;
 end;
 
+procedure Mod_LoadStudioModelFast(var M: TModel; P: Pointer);
+var
+ Header: PStudioHeader;
+ L: UInt;
+ PModel: Pointer;
+begin
+Header := P;
+M.ModelType := ModStudio;
 
+if Header.Version = STUDIO_VERSION then
+ begin
+  M.Flags := Header.Flags;
+  
+  if Header.TextureDataIndex > 0 then
+   L := Header.TextureDataIndex
+  else
+   L := Header.Length;
+  
+  PModel := Cache_Alloc(M.Cache, L, @M.Name);
+  if PModel <> nil then
+   Move(P^, PModel^, L);                                     
+ end
+else
+ Mod_LoadStudioBogus(M);
+end;
 
 procedure Mod_LoadVertexes(const L: TLump);
 var
@@ -993,12 +985,13 @@ if L.FileLength = 0 then
  LoadModel.Entities := nil
 else
  begin
-  E := Hunk_AllocName(L.FileLength, @LoadName);
-  LoadModel.Entities := E;
+  E := Hunk_AllocName(L.FileLength + 1, @LoadName);
   Move(Pointer(UInt(ModBase) + L.FileOffset)^, E^, L.FileLength);
+  PLChar(UInt(E) + L.FileLength)^ := #0;
+  LoadModel.Entities := E;
 
   P := COM_Parse(E);
-  while (PLChar(P)^ > #0) and (COM_Token[Low(COM_Token)] <> '}') do
+  while (P <> nil) and (PLChar(P)^ > #0) and (COM_Token[Low(COM_Token)] <> '}') do
    if StrComp(@COM_Token, 'wad') = 0 then
     begin
      COM_Parse(P);
@@ -1015,192 +1008,199 @@ end;
 procedure Mod_LoadTextures(const L: TLump);
 var
  Start: Double;
- M: PDMiptexLump;
- MT: PMiptex;
- I, J: Int;
- WADLoaded, LB: Boolean;
- LumpBuf: Pointer;
- Pixels, NumPalette: UInt;
- TX, TX2: PTexture;
+ P, LumpBuf: Pointer;
+ NumMiptex, InPixels, NumPalette, DataSize: UInt;
+ OfsMiptex: ^TDMiptexOffsetArray;
+ Offset, I, J: Int;
+ Miptex: PMiptex;
+ WADLoaded, FromWAD: Boolean;
+ Tex, Tex2: PTexture;
  PIn: PDModelPalette;
  POut: PMModelPalette;
  Anims, AltAnims: array[0..9] of PTexture;
+
  Max, AltMax, Num: Byte;
 begin
 WADLoaded := False;
 Start := Sys_FloatTime;
-if not AdTested then
- Mod_AdInit;
 
 if L.FileLength = 0 then
  begin
+  LoadModel.NumTextures := 0;
   LoadModel.Textures := nil;
-  Exit;
- end;
-
-M := Pointer(UInt(ModBase) + L.FileOffset);
-M.NumMiptex := LittleLong(M.NumMiptex);
-
-LoadModel.NumTextures := M.NumMiptex;
-LoadModel.Textures := Hunk_AllocName(M.NumMiptex * SizeOf(PTexture), @LoadName);
-
-for I := 0 to M.NumMiptex - 1 do
+ end
+else
  begin
-  M.DataOfs[I] := LittleLong(M.DataOfs[I]);
-  if M.DataOfs[I] = -1 then
-   Continue;
+  P := Pointer(UInt(ModBase) + L.FileOffset);
+  NumMiptex := LittleLong(PUInt32(P)^);
+  OfsMiptex := Pointer(UInt(P) + SizeOf(UInt32));
 
-  MT := Pointer(UInt(M) + UInt(M.DataOfs[I]));
-  LB := False;
-  if LittleLong(MT.Offsets[0]) = 0 then
+  LoadModel.NumTextures := NumMiptex;
+  LoadModel.Textures := Hunk_AllocName(NumMiptex * SizeOf(PTexture), @LoadName);
+
+  for I := 0 to NumMiptex - 1 do
    begin
-    if not WADLoaded then
-     begin
-      TEX_InitFromWAD(WADPath);
-      WADLoaded := True;
-     end;
-
-    if TEX_LoadLump(@MT.Name, LumpBuf) = 0 then
-     begin
-      M.DataOfs[I] := -1;
-      Continue;
-     end;
-
-    LB := True;
-    MT := LumpBuf;
-   end;
-
-  for J := 0 to MIPLEVELS - 1 do
-   MT.Offsets[J] := LittleLong(MT.Offsets[J]);
-
-  MT.Width := LittleLong(MT.Width);
-  MT.Height := LittleLong(MT.Height);
-
-  if ((MT.Width and 15) > 0) or ((MT.Height and 15) > 0) then
-   Sys_Error(['Mod_LoadTextures: Texture "', PLChar(@MT.Name), '" is not 16 aligned.']);
-
-  Pixels := ((MT.Width * MT.Height) div 64) * 85;
-  NumPalette := PUInt16(UInt(MT) + SizeOf(MT^) + Pixels)^;
-
-  TX := Hunk_AllocName(Pixels + SizeOf(TX^) + SizeOf(UInt16) + NumPalette * SizeOf(TMModelPalette), @LoadName);
-  LoadModel.Textures[I] := TX;
-
-  Move(MT.Name, TX.Name, SizeOf(TX.Name));
-  if StrScan(@TX.Name, '~') <> nil then
-   PLChar(UInt(@TX.Name) + 2)^ := ' ';
-
-  TX.Width := MT.Width;
-  TX.Height := MT.Height;
-
-  for J := 0 to MIPLEVELS - 1 do
-   TX.Offsets[J] := MT.Offsets[J] + TEX_SIZEDIF;
-
-  Move(Pointer(UInt(MT) + SizeOf(MT^))^, Pointer(UInt(TX) + SizeOf(TX^))^, Pixels + SizeOf(UInt16));
-  // initsky
-
-  PIn := Pointer(UInt(MT) + SizeOf(MT^) + Pixels + SizeOf(UInt16));
-  POut := Pointer(UInt(TX) + SizeOf(TX^) + Pixels + SizeOf(UInt16));
-  for J := 0 to NumPalette - 1 do
-   begin
-    POut.R := TexGammaTable[PIn.B];
-    POut.G := TexGammaTable[PIn.G];
-    POut.B := TexGammaTable[PIn.R];
-    POut.A := 0;
-
-    Inc(UInt(PIn), SizeOf(PIn^));
-    Inc(UInt(POut), SizeOf(POut^));
-   end;
-
-  if AdEnabled and (StrIComp(@TX.Name, 'DEFAULT') = 0) then
-   Mod_AdSwap(TX, Pixels, NumPalette);
-
-  if LB then
-   Mem_Free(LumpBuf);
- end;
-
-if WADLoaded then
- TEX_CleanupWadInfo;
-
-for I := 0 to M.NumMiptex - 1 do
- begin
-  TX := LoadModel.Textures[I];
-  if (TX = nil) or ((TX.Name[Low(TX.Name)] <> '+') and (TX.Name[Low(TX.Name)] <> '-')) or (TX.AnimNext <> nil) then
-   Continue;
-
-  MemSet(Anims, SizeOf(Anims), 0);
-  MemSet(AltAnims, SizeOf(AltAnims), 0);
-  
-  AltMax := 0;
-  Max := Ord(UpperC(TX.Name[2]));
-  if (Max >= Ord('0')) and (Max <= Ord('9')) then
-   begin
-    Dec(Max, Ord('0'));
-    AltMax := 0;
-    Anims[Max] := TX;
-    Inc(Max);
-   end
-  else
-   if (Max >= Ord('A')) and (Max <= Ord('J')) then
-    begin
-     AltMax := Ord(Max) - Ord('A');
-     Max := 0;
-     AltAnims[AltMax] := TX;
-     Inc(AltMax);
-    end
-   else
-    Sys_Error(['Bad animating texture "', PLChar(@TX.Name), '".']);
-
-  for J := I + 1 to M.NumMiptex - 1 do
-   begin
-    TX2 := LoadModel.Textures[J];
-    if (TX2 = nil) or ((TX2.Name[Low(TX2.Name)] <> '+') and (TX2.Name[Low(TX2.Name)] <> '-')) or
-       (StrComp(@TX2.Name[3], @TX.Name[3]) <> 0) then
+    Offset := LittleLong(OfsMiptex[I]);
+    if Offset = -1 then
      Continue;
 
-    Num := Ord(UpperC(TX2.Name[2]));
-    if (Num >= Ord('0')) and (Num <= Ord('9')) then
+    Miptex := Pointer(UInt(P) + UInt(Offset));
+    FromWAD := False;
+    if LittleLong(Miptex.Offsets[0]) = 0 then
      begin
-      Dec(Num, Ord('0'));
-      Anims[Num] := TX2;
-      if Num + 1 > Max then
-       Max := Num + 1;
+      if not WADLoaded then
+       begin
+        TEX_InitFromWAD(WADPath);
+        WADLoaded := True;
+       end;
+
+      if TEX_LoadLump(@Miptex.Name, LumpBuf) > 0 then
+       begin
+        FromWAD := True;
+        Miptex := LumpBuf;
+       end
+      else
+       begin
+        OfsMiptex[I] := -1;
+        Continue;
+       end;
+     end;
+
+    Miptex.Width := LittleLong(Miptex.Width);
+    Miptex.Height := LittleLong(Miptex.Height);
+    for J := 0 to MIPLEVELS - 1 do
+     Miptex.Offsets[J] := LittleLong(Miptex.Offsets[J]);
+
+    if ((Miptex.Width and 15) > 0) or ((Miptex.Height and 15) > 0) then
+     Sys_Error(['Mod_LoadTextures: Texture "', PLChar(@Miptex.Name), '" is not 16 aligned.']);
+
+    InPixels := ((Miptex.Width * Miptex.Height) div 64) * 85;
+    NumPalette := PUInt16(UInt(Miptex) + SizeOf(TMiptex) + InPixels)^;
+
+    if LoadLowMem then
+     DataSize := 0
+    else
+     DataSize := InPixels + NumPalette * SizeOf(TMModelPalette);
+
+    Tex := Hunk_AllocName(SizeOf(TTexture) + SizeOf(UInt16) + DataSize, @LoadName);
+    LoadModel.Textures[I] := Tex;
+
+    Move(Miptex.Name, Tex.Name, SizeOf(Tex.Name));
+    if StrScan(@Tex.Name, '~') <> nil then
+     PLChar(UInt(@Tex.Name) + 2)^ := ' ';
+
+    Tex.Width := Miptex.Width;
+    Tex.Height := Miptex.Height;
+
+    for J := 0 to MIPLEVELS - 1 do
+     Tex.Offsets[J] := Miptex.Offsets[J] + TEX_SIZEDIF;
+
+    if LoadLowMem then
+     begin
+      Move(Pointer(UInt(Miptex) + SizeOf(TMiptex))^, Pointer(UInt(Tex) + SizeOf(TTexture))^, InPixels + SizeOf(UInt16));
+
+      PIn := Pointer(UInt(Miptex) + SizeOf(TMiptex) + InPixels + SizeOf(UInt16));
+      POut := Pointer(UInt(Tex) + SizeOf(TTexture) + InPixels + SizeOf(UInt16));
+      for J := 0 to NumPalette - 1 do
+       begin
+        POut.R := PIn.B;
+        POut.G := PIn.G;
+        POut.B := PIn.R;
+        POut.A := 0;
+
+        Inc(UInt(PIn), SizeOf(PIn^));
+        Inc(UInt(POut), SizeOf(POut^));
+       end;
+     end;
+
+    if FromWAD and (LumpBuf <> nil) then
+     Mem_Free(LumpBuf);
+   end;
+
+  if WADLoaded then
+   TEX_CleanupWadInfo;
+
+  for I := 0 to NumMiptex - 1 do
+   begin
+    Tex := LoadModel.Textures[I];
+    if (Tex = nil) or (Tex.AnimNext <> nil) or not (Tex.Name[Low(Tex.Name)] in ['+', '-']) then
+     Continue;
+
+    MemSet(Anims, SizeOf(Anims), 0);
+    MemSet(AltAnims, SizeOf(AltAnims), 0);
+
+    AltMax := 0;
+    Max := Ord(UpperC(Tex.Name[2]));
+    if (Max >= Ord('0')) and (Max <= Ord('9')) then
+     begin
+      Max := Ord(Max) - Ord('0');
+      AltMax := 0;
+      Anims[Max] := Tex;
+      Inc(Max);
      end
     else
-     if (Num >= Ord('A')) and (Num <= Ord('J')) then
+     if (Max >= Ord('A')) and (Max <= Ord('J')) then
       begin
-       Dec(Num, Ord('A'));
-       AltAnims[Num] := TX2;
-       if Num + 1 > AltMax then
-        AltMax := Num + 1;
+       AltMax := Ord(Max) - Ord('A');
+       Max := 0;
+       AltAnims[AltMax] := Tex;
+       Inc(AltMax);
       end
      else
-      Sys_Error(['Bad animating texture "', PLChar(@TX.Name), '".']);
-   end;
+      Sys_Error(['Bad animating texture "', PLChar(@Tex.Name), '".']);
 
-  for J := 0 to Max - 1 do
-   begin
-    TX2 := Anims[J];
-    if TX2 = nil then
-     Sys_Error(['Missing frame ', J, ' of ', PLChar(@TX.Name), '.']);
-    TX2.AnimTotal := Max;
-    TX2.AnimMin := J;
-    TX2.AnimMax := J + 1;
-    TX2.AnimNext := Anims[(J + 1) mod Max];
-    if AltMax > 0 then
-     TX2.AlternateAnims := AltAnims[0];
-   end;
+    for J := I + 1 to NumMiptex - 1 do
+     begin
+      Tex2 := LoadModel.Textures[J];
+      if (Tex2 = nil) or not (Tex2.Name[Low(Tex2.Name)] in ['+', '-']) or
+         (StrComp(@Tex2.Name[3], @Tex.Name[3]) <> 0) then
+       Continue;
 
-  for J := 0 to AltMax - 1 do
-   begin
-    TX2 := AltAnims[J];
-    if TX2 = nil then
-     Sys_Error(['Missing frame ', J, ' of ', PLChar(@TX.Name), '.']);
-    TX2.AnimTotal := AltMax;
-    TX2.AnimMin := J;
-    TX2.AnimMax := J + 1;
-    TX2.AnimNext := AltAnims[(J + 1) mod AltMax];
-    if Max > 0 then
-     TX2.AlternateAnims := Anims[0];
+      Num := Ord(UpperC(Tex2.Name[2]));
+      if (Num >= Ord('0')) and (Num <= Ord('9')) then
+       begin
+        Dec(Num, Ord('0'));
+        Anims[Num] := Tex2;
+        if Num + 1 > Max then
+         Max := Num + 1;
+       end
+      else
+       if (Num >= Ord('A')) and (Num <= Ord('J')) then
+        begin
+         Dec(Num, Ord('A'));
+         AltAnims[Num] := Tex2;
+         if Num + 1 > AltMax then
+          AltMax := Num + 1;
+        end
+       else
+        Sys_Error(['Bad animating texture "', PLChar(@Tex2.Name), '".']);
+     end;
+
+    for J := 0 to Max - 1 do
+     begin
+      Tex2 := Anims[J];
+      if Tex2 = nil then
+       Sys_Error(['Missing frame #', J, ' of "', PLChar(@Tex.Name), '".']);
+      Tex2.AnimTotal := Max;
+      Tex2.AnimMin := J;
+      Tex2.AnimMax := J + 1;
+      Tex2.AnimNext := Anims[(J + 1) mod Max];
+      if AltMax > 0 then
+       Tex2.AlternateAnims := AltAnims[0];
+     end;
+
+    for J := 0 to AltMax - 1 do
+     begin
+      Tex2 := AltAnims[J];
+      if Tex2 = nil then
+       Sys_Error(['Missing frame #', J, ' of "', PLChar(@Tex.Name), '".']);
+      Tex2.AnimTotal := AltMax;
+      Tex2.AnimMin := J;
+      Tex2.AnimMax := J + 1;
+      Tex2.AnimNext := AltAnims[(J + 1) mod AltMax];
+      if Max > 0 then
+       Tex2.AlternateAnims := Anims[0];
+     end;
    end;
  end;
 
@@ -1259,9 +1259,8 @@ var
  PIn: PDTexInfo;
  POut: PMTexInfo;
  Count: UInt;
- I, J: Int;
+ I, J, Miptex: Int;
  L1, L2: Single;
- Miptex: Int32;
 begin
 PIn := Pointer(UInt(ModBase) + L.FileOffset);
 if (L.FileLength mod SizeOf(PIn^)) > 0 then
@@ -1294,8 +1293,6 @@ for I := 0 to Count - 1 do
     else
      POut.MipAdjust := 1;
 
-  Miptex := LittleLong(PIn.MipTex);
-
   if LoadModel.Textures = nil then
    begin
     POut.Texture := NoTextureMIP;
@@ -1303,17 +1300,18 @@ for I := 0 to Count - 1 do
    end
   else
    begin
+    Miptex := LittleLong(PIn.Miptex);
     if (Miptex < 0) or (UInt(Miptex) >= LoadModel.NumTextures) then
      Sys_Error('Mod_LoadTexInfo: Miptex number is invalid.');
 
     POut.Texture := LoadModel.Textures[Miptex];
-    if POut.Texture = nil then
+    if POut.Texture <> nil then
+     POut.Flags := LittleLong(PIn.Flags)
+    else
      begin
       POut.Texture := NoTextureMIP;
       POut.Flags := 0;
-     end
-    else
-     POut.Flags := LittleLong(PIn.Flags);
+     end;
    end;
 
   Inc(UInt(PIn), SizeOf(PIn^));
@@ -1326,8 +1324,7 @@ var
  PIn: PDFace;
  POut: PMSurface;
  Count: UInt;
- I, J: Int;
- PlaneNum, LightOfs: Int32;
+ I, J, PlaneNum, TexInfoNum, LightOfs: Int;
  TexName: PLChar;
 begin
 PIn := Pointer(UInt(ModBase) + L.FileOffset);
@@ -1345,13 +1342,19 @@ for I := 0 to Count - 1 do
   POut.NumEdges := LittleShort(PIn.NumEdges);
   POut.Flags := 0;
   POut.Decals := nil;
-
-  PlaneNum := LittleShort(PIn.PlaneNum);
   if LittleShort(PIn.Side) <> 0 then
    POut.Flags := POut.Flags or SURF_PLANEBACK;
+  
+  PlaneNum := LittleShort(PIn.PlaneNum);
+  TexInfoNum := LittleShort(PIn.TexInfo);
+  if (PlaneNum < 0) or (UInt(PlaneNum) >= LoadModel.NumPlanes) then
+   Sys_Error('Mod_LoadFaces: Plane number is invalid.')
+  else
+   if (TexInfoNum < 0) or (UInt(TexInfoNum) >= LoadModel.NumTexInfo) then
+    Sys_Error('Mod_LoadFaces: Texture info number is invalid.');
 
   POut.Plane := Pointer(UInt(LoadModel.Planes) + UInt(SizeOf(TMPlane) * PlaneNum));
-  POut.TexInfo := Pointer(UInt(LoadModel.TexInfo) + UInt(SizeOf(TMTexInfo) * LittleShort(PIn.TexInfo)));
+  POut.TexInfo := Pointer(UInt(LoadModel.TexInfo) + UInt(SizeOf(TMTexInfo) * TexInfoNum));
   CalcSurfaceExtents(POut^);
 
   for J := 0 to MAXLIGHTMAPS - 1 do
@@ -1365,7 +1368,7 @@ for I := 0 to Count - 1 do
 
   TexName := @POut.TexInfo.Texture.Name;
   if StrLComp(TexName, 'sky', 3) = 0 then
-   POut.Flags := POut.Flags or (SURF_DRAWTILED or SURF_DRAWSKY)
+   POut.Flags := POut.Flags or SURF_DRAWTILED or SURF_DRAWSKY
   else
    if StrLComp(TexName, 'scroll', 6) = 0 then
     begin
@@ -1534,7 +1537,7 @@ POut := Hunk_AllocName(Count * SizeOf(POut^), @LoadName);
 LoadModel.NumClipNodes := Count;
 LoadModel.ClipNodes := Pointer(POut);
 
-for I := 1 to 3 do // yep, 1 to 3
+for I := 1 to 3 do
  begin
   Hull := @LoadModel.Hulls[I];
   Hull.ClipNodes := Pointer(POut);
@@ -1656,7 +1659,6 @@ var
  M2: PModel;
  SMName: array[1..MAX_MODEL_NAME] of LChar;
 begin
-LoadModel.ModelType := ModBrush;
 Header := P;
 Header.Version := LittleLong(Header.Version);
 for I := 0 to HEADER_LUMPS - 1 do
@@ -1667,6 +1669,10 @@ for I := 0 to HEADER_LUMPS - 1 do
 
 if (Header.Version <> BSPVERSION29) and (Header.Version <> BSPVERSION30) then
  Sys_Error(['Mod_LoadBrushModel: "', PLChar(@M.Name), '" has wrong version number (', Header.Version, '; should be ', BSPVERSION30, ').']);
+
+M.ModelType := ModBrush;
+M.NumFrames := 2;
+M.Flags := 0;
 
 ModBase := P;
 Mod_LoadVertexes(Header.Lumps[LUMP_VERTEXES]);
@@ -1696,8 +1702,6 @@ Mod_LoadClipNodes(Header.Lumps[LUMP_CLIPNODES]);
 Mod_LoadSubModels(Header.Lumps[LUMP_MODELS]);
 Mod_MakeHull0;
 
-M.NumFrames := 2;
-M.Flags := 0;
 M2 := @M;
 for I := 0 to M.NumSubModels - 1 do
  begin
@@ -1711,16 +1715,15 @@ for I := 0 to M.NumSubModels - 1 do
 
   M2.FirstModelSurface := SM.FirstFace;
   M2.NumModelSurfaces := SM.NumFaces;
-
   M2.MinS := PVec3(@SM.MinS)^;
   M2.MaxS := PVec3(@SM.MaxS)^;
   M2.Radius := RadiusFromBounds(M2.MinS, M2.MaxS);
-
   M2.NumLeafs := SM.VisLeafs;
+
   if UInt(I) < M2.NumSubModels - 1 then
    begin
     SMName[1] := '*';
-    IntToStr(I + 1, SMName[2], SizeOf(SMName));
+    IntToStr(I + 1, SMName[2], SizeOf(SMName) - 1);
     LoadModel := Mod_FindName(False, @SMName);
     Move(M2^, LoadModel^, SizeOf(LoadModel^));
     StrLCopy(@LoadModel.Name, @SMName, MAX_MODEL_NAME - 1);
@@ -1728,7 +1731,6 @@ for I := 0 to M.NumSubModels - 1 do
    end;
  end;
 end;
-
 
 
 function Mod_LoadModel(var M: TModel; Crash, NeedCRC: Boolean): PModel;
@@ -1746,18 +1748,18 @@ if (M.ModelType = ModAlias) or (M.ModelType = ModStudio) then
   end
  else
 else
- if (M.NeedLoad = NL_PRESENT) or (M.NeedLoad = NL_CLIENT) then
+ if M.NeedLoad = NL_PRESENT then
   begin
    Result := @M;
    Exit;
   end;
 
-L := 0; // required
+L := 0;
 P := COM_LoadFile(@M.Name, FILE_ALLOC_MEMORY, @L);
 if P = nil then
  begin
   if Crash then
-   Sys_Error(['Mod_LoadModel: ', PLChar(@M.Name), ' not found.']);
+   Sys_Error(['Mod_LoadModel: "', PLChar(@M.Name), '" was not found.']);
   Result := nil;
   Exit;
  end;
@@ -1765,38 +1767,44 @@ if P = nil then
 if NeedCRC then
  begin
   Index := (UInt(@M) - UInt(@Mod_Known)) div SizeOf(TModel);
-  if Mod_KnownInfo[Index].NeedCRC then
+  if Mod_KnownCRC[Index].NeedCRC then
    begin
     CRC32_Init(CRC);
     CRC32_ProcessBuffer(CRC, P, L);
     CRC := CRC32_Final(CRC);
 
-    if not Mod_KnownInfo[Index].Filled then
+    if not Mod_KnownCRC[Index].Filled then
      begin
-      Mod_KnownInfo[Index].Filled := True;
-      Mod_KnownInfo[Index].CRC := CRC;
+      Mod_KnownCRC[Index].Filled := True;
+      Mod_KnownCRC[Index].CRC := CRC;
      end
     else
-     if CRC <> Mod_KnownInfo[Index].CRC then
+     if CRC <> Mod_KnownCRC[Index].CRC then
       begin
        Sys_Error(['"', PLChar(@M.Name), '" has been modified since starting the engine. Consider running system diagnostics to check for faulty hardware.']);
+       COM_FreeFile(P);
        Result := nil;
        Exit;
       end;
    end;
  end;
 
-if developer.Value >= 1 then
+if developer.Value <> 0 then
  DPrint(['Loading "', PLChar(@M.Name), '".']);
 
 COM_FileBase(@M.Name, @LoadName);
 LoadModel := @M;
+LoadLowMem := mod_lowmem.Value <> 0;
 M.NeedLoad := NL_PRESENT;
 
 case LittleLong(PModelHeader(P).FileTag) of
  Ord('I') + Ord('D') shl 8 + Ord('P') shl 16 + Ord('O') shl 24: Mod_LoadAliasModel(M, P);
  Ord('I') + Ord('D') shl 8 + Ord('S') shl 16 + Ord('P') shl 24: Mod_LoadSpriteModel(M, P);
- Ord('I') + Ord('D') shl 8 + Ord('S') shl 16 + Ord('T') shl 24: Mod_LoadStudioModel(M, P);
+ Ord('I') + Ord('D') shl 8 + Ord('S') shl 16 + Ord('T') shl 24:
+  if LoadLowMem then
+   Mod_LoadStudioModelFast(M, P)
+  else
+   Mod_LoadStudioModel(M, P);
  else Mod_LoadBrushModel(M, P);
 end;
 
@@ -1828,15 +1836,12 @@ var
  Plane: PMPlane;
  D: Single;
 begin
-if (@M = nil) or (M.Nodes = nil) then
- Sys_Error('Mod_PointInLeaf: Bad model.');
-
 Node := Pointer(M.Nodes);
 while Node.Contents >= 0 do
  begin
   Plane := Node.Plane;
   if Plane.PlaneType > 2 then
-   D := DotProduct(Plane.Normal, P) - Plane.Distance
+   D := DotProduct(P, Plane.Normal) - Plane.Distance
   else
    D := P[Plane.PlaneType] - Plane.Distance;
 
@@ -1857,69 +1862,57 @@ begin
 for I := 0 to Mod_NumKnown - 1 do
  begin
   P := @Mod_Known[I];
-  if P.NeedLoad <> NL_CLIENT then
-   begin
-    P.NeedLoad := NL_UNREFERENCED;
-    if P.ModelType = ModSprite then
-     P.Cache.Data := nil;
-   end;
+  P.NeedLoad := NL_UNREFERENCED;
+  if P.ModelType = ModSprite then
+   P.Cache.Data := nil;
  end;
 end;
 
 procedure Mod_FillInCRCInfo(NeedCRC: Boolean; Index: UInt);
 begin
-Mod_KnownInfo[Index].NeedCRC := NeedCRC;
-Mod_KnownInfo[Index].Filled := False;
-Mod_KnownInfo[Index].CRC := 0;
+Mod_KnownCRC[Index].NeedCRC := NeedCRC;
+Mod_KnownCRC[Index].Filled := False;
+Mod_KnownCRC[Index].CRC := 0;
 end;
 
 function Mod_FindName(NeedCRC: Boolean; Name: PLChar): PModel;
 var
- I, J: Int;
+ I: Int;
  P, Avail: PModel;
 begin
-if (Name = nil) or (Name^ = #0) then
+if Name = nil then
  Sys_Error('Mod_FindName: Invalid name.');
 
-J := -1;
 Avail := nil;
-P := @Mod_Known[Low(Mod_Known)];
-
 for I := 0 to Mod_NumKnown - 1 do
  begin
   P := @Mod_Known[I];
   if StrComp(@P.Name, Name) = 0 then
    begin
-    J := I;
-    Break;
+    Result := P;
+    Exit;
    end
   else
-   if (P.NeedLoad = NL_UNREFERENCED) and ((Avail = nil) or ((P.ModelType <> ModAlias) and (P.ModelType <> ModStudio))) then
+   if (Avail = nil) and (P.NeedLoad = NL_UNREFERENCED) then
     Avail := P;
  end;
 
-if J = -1 then
+P := @Mod_Known[Mod_NumKnown];
+if Mod_NumKnown < MAX_MOD_KNOWN then
  begin
-  P := @Mod_Known[Mod_NumKnown];
-
-  if Mod_NumKnown < MAX_MOD_KNOWN then
-   begin
-    Mod_FillInCRCInfo(NeedCRC, Mod_NumKnown);
-    Inc(Mod_NumKnown);
-   end
-  else
-   begin
-    if Avail = nil then
-     Sys_Error('No avaliable space in model cache.');
-    P := Avail;
-    Mod_FillInCRCInfo(NeedCRC, (UInt(P) - UInt(@Mod_Known)) div SizeOf(TModel));
-   end;
-
-  StrLCopy(@P.Name, Name, MAX_MODEL_NAME - 1);
-  if P.NeedLoad <> NL_CLIENT then
-   P.NeedLoad := NL_NEEDS_LOADED;
+  Mod_FillInCRCInfo(NeedCRC, Mod_NumKnown);
+  Inc(Mod_NumKnown);
+ end
+else
+ begin
+  if Avail = nil then
+   Sys_Error('No avaliable space in model cache.');
+  Mod_FillInCRCInfo(NeedCRC, (UInt(Avail) - UInt(@Mod_Known)) div SizeOf(TModel));
+  P := Avail;  
  end;
- 
+
+StrLCopy(@P.Name, Name, MAX_MODEL_NAME - 1);
+P.NeedLoad := NL_NEEDS_LOADED;
 Result := P;
 end;
 
@@ -1928,8 +1921,8 @@ var
  Index: UInt;
 begin
 Index := (UInt(Mod_FindName(True, Name)) - UInt(@Mod_Known)) div SizeOf(TModel);
-if Mod_KnownInfo[Index].Filled then
- Result := CRC = Mod_KnownInfo[Index].CRC
+if Mod_KnownCRC[Index].Filled then
+ Result := CRC = Mod_KnownCRC[Index].CRC
 else
  Result := True;
 end;
@@ -1939,7 +1932,7 @@ var
  Index: UInt;
 begin
 Index := (UInt(Mod_FindName(False, Name)) - UInt(@Mod_Known)) div SizeOf(TModel);
-Mod_KnownInfo[Index].NeedCRC := NeedCRC;
+Mod_KnownCRC[Index].NeedCRC := NeedCRC;
 end;
 
 function Mod_ForName(Name: PLChar; Crash, NeedCRC: Boolean): PModel;
@@ -1947,11 +1940,6 @@ begin
 Result := Mod_FindName(NeedCRC, Name);
 if Result <> nil then
  Result := Mod_LoadModel(Result^, Crash, NeedCRC);
-end;
-
-procedure Mod_MarkClient(var M: TModel);
-begin
-M.NeedLoad := NL_CLIENT;
 end;
 
 function SurfaceAtPoint(const M: TModel; const Node: TMNode; const MinS, MaxS: TVec3): PMSurface;
@@ -1977,7 +1965,7 @@ else
     for I := 0 to 2 do
      V[I] := (MaxS[I] - MinS[I]) * D + MinS[I];
     Result := SurfaceAtPoint(M, Node.Children[UInt(F1 < 0)]^, MinS, V);
-    if (Result = nil) and (((F1 >= 0) or (F2 >= 0)) and ((F1 < 0) or (F2 < 0))) then
+    if Result = nil then
      begin
       Surface := @M.Surfaces[Node.FirstSurface];
       for I := 1 to Node.NumSurfaces do

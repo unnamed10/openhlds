@@ -27,7 +27,7 @@ var
 
 implementation
 
-uses Common, Console, Edict, Info, MathLib, Renderer, Server, SVMove, SVSend, SVWorld, SysClock, SysMain;
+uses Common, Console, Edict, Info, MathLib, Renderer, SVMain, SVMove, SVSend, SVWorld, SysClock, SysMain;
 
 function PM_RecursiveHullCheck(const Hull: THull; Num: Int32; P1F, P2F: Single; const P1, P2: TVec3; out Trace: TPMTrace): Boolean; forward;
 
@@ -40,51 +40,42 @@ var
 
  ContentsResult: Int32;
 
-function PM_AddToTouched(const T: TPMTrace; const ImpactVelocity: TVec3): Boolean;
+procedure PM_StuckTouch(HitEnt: Int32; const TraceResult: TPMTrace);
 var
  I: Int;
 begin
-for I := 0 to PM.NumTouch - 1 do
- if PM.TouchIndex[I].Ent = T.Ent then
-  begin
-   Result := False;
-   Exit;
-  end;
-
-if PM.NumTouch >= MAX_PHYSENTS then
- PM.Con_DPrintF('Too many entities were touched!')
-else
- begin
-  PM.TouchIndex[PM.NumTouch] := T;
-  PM.TouchIndex[PM.NumTouch].DeltaVelocity := ImpactVelocity;
-  Inc(PM.NumTouch);
- end;
-
-Result := True;
-end;
-
-procedure PM_StuckTouch(HitEnt: Int32; const TraceResult: TPMTrace);
-begin
 if PM.Server <> 0 then
- PM_AddToTouched(TraceResult, PM.Velocity);
+ begin
+  for I := 0 to PM.NumTouch - 1 do
+   if PM.TouchIndex[I].Ent = TraceResult.Ent then
+    Exit;
+
+  if PM.NumTouch >= MAX_PHYSENTS then
+   PM.Con_DPrintF('Too many entities were touched!')
+  else
+   begin
+    PM.TouchIndex[PM.NumTouch] := TraceResult;
+    PM.TouchIndex[PM.NumTouch].DeltaVelocity := PM.Velocity;
+    Inc(PM.NumTouch);
+   end;
+ end;
 end;
 
 function PM_HullForBSP(const E: TPhysEnt; out Offset: TVec3): PHull;
+const
+ HullTable: array[0..3] of Int = (1, 3, 0, 2);
+var
+ H: PHull;
 begin
-case PM.UseHull of
- 1: Result := @E.Model.Hulls[3];
- 2: Result := @E.Model.Hulls[0];
- 3: Result := @E.Model.Hulls[2];
- else Result := @E.Model.Hulls[1];
-end;
-
-VectorSubtract(Result.ClipMinS, PlayerMinS[PM.UseHull], Offset);
+H := @E.Model.Hulls[HullTable[PM.UseHull]];
+VectorSubtract(H.ClipMinS, PlayerMinS[PM.UseHull], Offset);
 VectorAdd(Offset, E.Origin, Offset);
+Result := H;
 end;
 
 function PM_TraceModel(const E: TPhysEnt; const VStart, VEnd: TVec3; var T: TTrace): Single;
 var
- OldHull: Int32;
+ OldHull: Int;
  H: PHull;
  Offset, P1, P2: TVec3;
 begin
@@ -157,9 +148,6 @@ if Hull.FirstClipNode < Hull.LastClipNode then
  begin
   while Num >= 0 do
    begin
-    if (Num < Hull.FirstClipNode) or (Num > Hull.LastClipNode) then
-     Sys_Error('PM_HullPointContents: Bad node number.');
-
     Node := @Hull.ClipNodes[Num];
     Plane := @Hull.Planes[Node.PlaneNum];
 
@@ -281,7 +269,7 @@ for I := 0 to NumPhysEnt - 1 do
   PE := @PhysEnts[I];
 
   if (I > 0) and ((TraceFlags and PM_WORLD_ONLY) > 0) then
-   Break; // #0 is world brush entity
+   Break;
 
   if @IgnoreFunc = nil then
    if IgnorePE = I then
@@ -610,12 +598,14 @@ else
       begin
        if Side > 0 then
         begin
-         VectorSubtract(Vec3Origin, Plane.Normal, Trace.Plane.Normal); // chs?
+         Trace.Plane.Normal[0] := -Plane.Normal[0];
+         Trace.Plane.Normal[1] := -Plane.Normal[1];
+         Trace.Plane.Normal[2] := -Plane.Normal[2];
          Trace.Plane.Distance := -Plane.Distance;
         end
        else
         begin
-         VectorCopy(Plane.Normal, Trace.Plane.Normal);
+         Trace.Plane.Normal := Plane.Normal;
          Trace.Plane.Distance := Plane.Distance;
         end;
 
@@ -683,14 +673,18 @@ begin end;
 function __PM_TestPlayerPosition(var Pos: TVec3; Trace: PPMTrace): Int32; cdecl;
 begin Result := PM_TestPlayerPosition(Pos, Trace); end;
 
-procedure __Con_NPrintF(ID: Int32; S: PLChar); cdecl; // for now, just print the contents
-begin end;
+procedure __Con_NPrintF(ID: Int32; S: PLChar); cdecl;
+begin end;                   
 
 procedure __Con_DPrintF(S: PLChar); cdecl;
-begin DPrint(S); end;
+var
+ Buf: array[1..2048] of LChar;
+begin DPrint(VarArgsToString(S, @S, Buf, SizeOf(Buf) - 1), False); end;
 
 procedure __Con_PrintF(S: PLChar); cdecl;
-begin Print(S); end;
+var
+ Buf: array[1..2048] of LChar;
+begin Print(VarArgsToString(S, @S, Buf, SizeOf(Buf) - 1), False); end;
 
 function __Sys_FloatTime: Double; cdecl;
 begin Result := Sys_FloatTime; end;
@@ -773,7 +767,7 @@ for I := Low(P.PlayerMinS) to High(P.PlayerMinS) do
   P.PlayerMaxS[I] := PlayerMaxS[I];
  end;
 
-P.MoveVars := @Server.MoveVars;
+P.MoveVars := @MoveVars;
 P.PM_Info_ValueForKey := @__PM_Info_ValueForKey;
 P.PM_Particle := @__PM_Particle;
 P.PM_TestPlayerPosition := @__PM_TestPlayerPosition;

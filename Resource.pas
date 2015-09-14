@@ -9,7 +9,7 @@ uses SysUtils, Default, SDK;
 procedure SV_SetResourceLists(var C: TClient);
 procedure SV_ClearResourceLists(var C: TClient);
 
-procedure COM_ClearCustomizationList(var List: TCustomization);
+procedure SV_ClearCustomizationList(var List: TCustomization);
 
 procedure SV_CreateResourceList;
 procedure SV_CreateGenericResources;
@@ -27,23 +27,28 @@ var
  sv_allowupload: TCVar = (Name: 'sv_allowupload'; Data: '1'; Flags: [FCVAR_SERVER]);
 
  sv_uploadmax: TCVar = (Name: 'sv_uploadmax'; Data: '0.5'; Flags: [FCVAR_SERVER]);
- sv_uploadmaxnum: TCVar = (Name: 'sv_uploadmaxnum'; Data: '40'; Flags: [FCVAR_SERVER]); // 128 for now, change to 4
- sv_uploadmaxsingle: TCVar = (Name: 'sv_uploadmaxsingle'; Data: '0.128'; Flags: [FCVAR_SERVER]);
+ sv_uploadmaxnum: TCVar = (Name: 'sv_uploadmaxnum'; Data: '16'; Flags: [FCVAR_SERVER]);
+ sv_uploadmaxsingle: TCVar = (Name: 'sv_uploadmaxsingle'; Data: '0.256'; Flags: [FCVAR_SERVER]);
  sv_uploaddecalsonly: TCVar = (Name: 'sv_uploaddecalsonly'; Data: '1'; Flags: [FCVAR_SERVER]);
 
- sv_send_resources: TCVar = (Name: 'sv_send_resources'; Data: '1');
  sv_send_logos: TCVar = (Name: 'sv_send_logos'; Data: '1');
-
+ sv_send_resources: TCVar = (Name: 'sv_send_resources'; Data: '1');
+ 
 implementation
 
-uses Common, Console, Decal, Encode, FileSys, GameLib, Host, MathLib, Memory, MsgBuf, Network, HPAK, Renderer, Server, SVClient, SVExport, SysMain;
+uses Common, Console, Decal, Encode, FileSys, GameLib, Host, MathLib, Memory, MsgBuf, Network, HPAK, Renderer, SVClient, SVExport, SVMain, SysMain;
 
-procedure SV_SetResourceLists(var C: TClient);
+procedure SV_AddToResourceList(var Res, List: TResource);
 begin
-C.DownloadList.Next := @C.DownloadList;
-C.DownloadList.Prev := @C.DownloadList;
-C.UploadList.Next := @C.UploadList;
-C.UploadList.Prev := @C.UploadList;
+if (Res.Prev <> nil) or (Res.Next <> nil) then
+ Print('SV_AddToResourceList: Resource already linked.')
+else
+ begin
+  Res.Prev := List.Prev;
+  List.Prev.Next := @Res;
+  List.Prev := @Res;
+  Res.Next := @List;
+ end;
 end;
 
 procedure SV_RemoveFromResourceList(var Res: TResource);
@@ -62,7 +67,6 @@ P := Res.Next;
 while (P <> nil) and (P <> @Res) do
  begin
   P2 := P.Next;
-  SV_RemoveFromResourceList(P^);
   Mem_Free(P);
   P := P2;
  end;
@@ -71,32 +75,44 @@ Res.Prev := @Res;
 Res.Next := @Res;
 end;
 
-procedure SV_ClearResourceLists(var C: TClient);
-begin
-SV_ClearResourceList(C.UploadList);
-SV_ClearResourceList(C.DownloadList);
-end;
-
-procedure SV_AddToResourceList(var Res, List: TResource);
-begin
-if (Res.Prev <> nil) or (Res.Next <> nil) then
- Print('SV_AddToResourceList: Resource already linked.')
-else
- begin
-  Res.Prev := List.Prev;
-  List.Prev.Next := @Res;
-  List.Prev := @Res;
-  Res.Next := @List;
- end;
-end;
-
 procedure SV_MoveToOnHandList(var C: TClient; var Res: TResource);
 begin
 SV_RemoveFromResourceList(Res);
 SV_AddToResourceList(Res, C.DownloadList);
 end;
 
-procedure COM_ClearCustomizationList(var List: TCustomization);
+procedure SV_SetResourceLists(var C: TClient);
+begin
+C.DownloadList.Next := @C.DownloadList;
+C.DownloadList.Prev := @C.DownloadList;
+C.UploadList.Next := @C.UploadList;
+C.UploadList.Prev := @C.UploadList;
+end;
+
+procedure SV_ClearResourceLists(var C: TClient);
+begin
+SV_ClearResourceList(C.DownloadList);
+SV_ClearResourceList(C.UploadList);
+end;
+
+procedure SV_ClearCustomization(var C: TCustomization);
+begin
+if C.InUse then
+ begin
+  if C.Buffer <> nil then
+   Mem_Free(C.Buffer);
+
+  if C.Info <> nil then
+   begin
+    if C.Resource.ResourceType = RT_DECAL then
+     Draw_FreeWAD(C.Info);
+
+    Mem_Free(C.Info);
+   end;
+ end;
+end;
+
+procedure SV_ClearCustomizationList(var List: TCustomization);
 var
  P, P2: PCustomization;
 begin
@@ -104,20 +120,7 @@ P := List.Next;
 while P <> nil do
  begin
   P2 := P.Next;
-  if P.InUse then
-   begin
-    if P.Buffer <> nil then
-     Mem_Free(P.Buffer);
-
-    if P.Info <> nil then
-     begin
-      if P.Resource.ResourceType = RT_DECAL then
-       Draw_FreeWAD(P.Info);
-      
-      Mem_Free(P.Info);
-     end;
-   end;
-
+  SV_ClearCustomization(P^);
   Mem_Free(P);
   P := P2;
  end;
@@ -125,126 +128,120 @@ while P <> nil do
 List.Next := nil;                                 
 end;
 
-function InitCustomDecal(P: PCustomization; const Resource: TResource; Flags: TCustFlags; LumpCount: PUInt32): Boolean;
+function InitCustomDecal(var C: TCustomization; const Resource: TResource; Flags: TCustFlags; out LumpCount: UInt): Boolean;
 var
  Decal: PCacheWAD;
 begin
-Decal := Mem_ZeroAlloc(SizeOf(TCacheWAD));
-if Decal <> nil then
+if (Resource.DownloadSize >= 1024) and (Resource.DownloadSize <= 128*160) then
  begin
-  if (Resource.DownloadSize >= 1024) and (Resource.DownloadSize <= 20480) then
-   if CustomDecal_Init(Decal, P.Buffer, Resource.DownloadSize, P.Resource.PlayerNum) then
-    begin
-     if Decal.DecalCount > 0 then
-      begin
-       P.Info := Decal;
-       if LumpCount <> nil then
-        LumpCount^ := Decal.DecalCount;
-
-       P.Translated := True;
-       P.UserData1 := 0;
-       P.UserData2 := Decal.DecalCount;
-       if FCUST_WIPEDATA in Flags then
-        begin
-         Draw_FreeWAD(P.Info);
-         Mem_FreeAndNil(P.Info);
-        end;
-
-       Result := True;
-       Exit;
-      end;
-
-     Draw_FreeWAD(Decal);
-    end;
-  Mem_Free(Decal);
- end;
-Result := False;
-end;
-
-function ProcessResource(P: PCustomization; const Resource: TResource; PlayerIndex: Int; Flags: TCustFlags; LumpCount: PUInt32): Boolean;
-begin
-Result := True;
-if (RES_CUSTOM in P.Resource.Flags) and (P.Resource.ResourceType = RT_DECAL) then
- begin
-  P.Resource.PlayerNum := PlayerIndex;
-  if not CustomDecal_Validate(P.Buffer, Resource.DownloadSize) then
-   Result := False
-  else
-   if not (FCUST_IGNOREINIT in Flags) then
-    Result := InitCustomDecal(P, Resource, Flags, LumpCount);
- end;
-end;
-
-function COM_CreateCustomization(var List: TCustomization; const Resource: TResource; PlayerIndex: Int; Flags: TCustFlags; var Customization: PCustomization; var LumpCount: UInt32): Boolean;
-var
- P: PCustomization;
-begin
-P := Mem_ZeroAlloc(SizeOf(TCustomization));
-
-if P <> nil then
- begin
-  Move(Resource, P.Resource, SizeOf(P.Resource));
-
-  if Resource.DownloadSize > 0 then
+  Decal := Mem_ZeroAlloc(SizeOf(TCacheWAD));
+  if Decal <> nil then
    begin
-    P.InUse := True;
-
-    if not (FCUST_FROMHPAK in Flags) then
-     P.Buffer := COM_LoadFile(@Resource.Name, FILE_ALLOC_MEMORY, nil)
-    else
-     if not HPAK_GetDataPointer('custom.hpk', Resource, @P.Buffer, nil) then
-      P.Buffer := nil;
-
-    if P.Buffer <> nil then
+    if CustomDecal_Init(Decal, C.Buffer, Resource.DownloadSize, C.Resource.PlayerNum) then
      begin
-      if ProcessResource(P, Resource, PlayerIndex, Flags, @LumpCount) then
+      if Decal.DecalCount > 0 then
        begin
-        P.Next := List.Next;
-        List.Next := P;
-
-        if @Customization <> nil then
-         Customization := P;
+        C.Info := Decal;
+        C.Translated := True;
+        C.UserData1 := 0;
+        C.UserData2 := Decal.DecalCount;
+        LumpCount := Decal.DecalCount;
+        if FCUST_WIPEDATA in Flags then
+         begin
+          Draw_FreeWAD(Decal);
+          Mem_FreeAndNil(C.Info);
+         end;
 
         Result := True;
         Exit;
        end;
 
-      if FCUST_FROMHPAK in Flags then
-       Mem_Free(P.Buffer)
-      else
-       COM_FreeFile(P.Buffer);
+      Draw_FreeWAD(Decal);
      end;
+
+    Mem_Free(Decal);
    end;
-
-  Mem_Free(P);
  end;
-
-if @Customization <> nil then
- Customization := nil;
-if @LumpCount <> nil then
- LumpCount := 0;
 
 Result := False;
 end;
 
-function COM_SizeOfResourceList(const List: TResource; var ResInfo: TResourceInfo): UInt;
+function ProcessResource(var C: TCustomization; const Resource: TResource; PlayerIndex: Int; Flags: TCustFlags; out LumpCount: UInt): Boolean;
+begin
+Result := True;
+if (RES_CUSTOM in C.Resource.Flags) and (C.Resource.ResourceType = RT_DECAL) then
+ begin
+  C.Resource.PlayerNum := PlayerIndex;
+  if not CustomDecal_Validate(C.Buffer, Resource.DownloadSize) then
+   Result := False
+  else
+   if not (FCUST_IGNOREINIT in Flags) then
+    Result := InitCustomDecal(C, Resource, Flags, LumpCount);
+ end;
+end;
+
+function SV_CreateCustomization(var List: TCustomization; const Resource: TResource; PlayerIndex: Int; Flags: TCustFlags; out Customization: PCustomization; out LumpCount: UInt): Boolean;
+var
+ C: PCustomization;
+begin
+C := Mem_ZeroAlloc(SizeOf(TCustomization));
+
+if C <> nil then
+ begin
+  Move(Resource, C.Resource, SizeOf(C.Resource));
+
+  if Resource.DownloadSize > 0 then
+   begin
+    C.InUse := True;
+
+    if not (FCUST_FROMHPAK in Flags) then
+     C.Buffer := COM_LoadFile(@Resource.Name, FILE_ALLOC_MEMORY, nil)
+    else
+     if not HPAK_GetDataPointer('custom.hpk', Resource, @C.Buffer, nil) then
+      C.Buffer := nil;
+
+    if C.Buffer <> nil then
+     begin
+      if ProcessResource(C^, Resource, PlayerIndex, Flags, LumpCount) then
+       begin
+        C.Next := List.Next;
+        List.Next := C;
+
+        Customization := C;
+        Result := True;
+        Exit;
+       end;
+
+      if FCUST_FROMHPAK in Flags then
+       Mem_Free(C.Buffer)
+      else
+       COM_FreeFile(C.Buffer);
+     end;
+   end;
+
+  Mem_Free(C);
+ end;
+
+Customization := nil;
+LumpCount := 0;
+Result := False;
+end;
+
+function SV_SizeOfResourceList(const List: TResource; var Pack: TResourcePackSize): UInt;
 var
  P: PResource;
 begin
 Result := 0;
-MemSet(ResInfo, SizeOf(ResInfo), 0);
+MemSet(Pack, SizeOf(Pack), 0);
 
 P := List.Next;
 while P <> @List do
  begin
-  if P.ResourceType <= RT_WORLD then
-   begin
-    Inc(Result, P.DownloadSize);
-    if (P.ResourceType = RT_MODEL) and (P.Index = 1) then
-     Inc(ResInfo.Info[RT_WORLD].Size, P.DownloadSize)
-    else
-     Inc(ResInfo.Info[Byte(P.ResourceType)].Size, P.DownloadSize);
-   end;
+  Inc(Result, P.DownloadSize);
+  if (P.ResourceType = RT_MODEL) and (P.Index = 1) then
+   Inc(Pack[RT_WORLD], P.DownloadSize)
+  else
+   Inc(Pack[P.ResourceType], P.DownloadSize);
 
   P := P.Next;
  end;
@@ -268,7 +265,7 @@ for I := 0 to SVS.MaxClients - 1 do
        begin
         MSG_WriteByte(Dest.Netchan.NetMessage, SVC_CUSTOMIZATION);
         MSG_WriteByte(Dest.Netchan.NetMessage, I);
-        MSG_WriteByte(Dest.Netchan.NetMessage, P.Resource.ResourceType);
+        MSG_WriteByte(Dest.Netchan.NetMessage, Byte(P.Resource.ResourceType));
         MSG_WriteString(Dest.Netchan.NetMessage, @P.Resource.Name);
         MSG_WriteShort(Dest.Netchan.NetMessage, P.Resource.Index);
         MSG_WriteLong(Dest.Netchan.NetMessage, P.Resource.DownloadSize);
@@ -298,7 +295,7 @@ for I := 0 to SVS.MaxClients - 1 do
    begin
     MSG_WriteByte(P.Netchan.NetMessage, SVC_CUSTOMIZATION);
     MSG_WriteByte(P.Netchan.NetMessage, Index);
-    MSG_WriteByte(P.Netchan.NetMessage, Res.ResourceType);
+    MSG_WriteByte(P.Netchan.NetMessage, Byte(Res.ResourceType));
     MSG_WriteString(P.Netchan.NetMessage, @Res.Name);
     MSG_WriteShort(P.Netchan.NetMessage, Res.Index);
     MSG_WriteLong(P.Netchan.NetMessage, Res.DownloadSize);
@@ -328,9 +325,9 @@ procedure SV_CreateCustomizationList(var C: TClient);
 var
  C2: PCustomization;
  P: PResource;
- LumpCount: UInt32;
+ LumpCount: UInt;
 begin
-COM_ClearCustomizationList(C.Customization);
+SV_ClearCustomizationList(C.Customization);
 
 P := C.DownloadList.Next;
 while P <> @C.DownloadList do
@@ -340,7 +337,7 @@ while P <> @C.DownloadList do
   else
    begin
     LumpCount := 0;
-    if COM_CreateCustomization(C.Customization, P^, -1, [FCUST_FROMHPAK, FCUST_WIPEDATA], C2, LumpCount) then
+    if SV_CreateCustomization(C.Customization, P^, -1, [FCUST_FROMHPAK, FCUST_WIPEDATA], C2, LumpCount) then
      begin
       C2.UserData2 := LumpCount;
       DLLFunctions.PlayerCustomization(C.Entity^, C2);
@@ -507,7 +504,7 @@ procedure SV_ParseResourceList(var C: TClient);
 var
  DecalsOnly: Boolean;
  I, J, NumRes, MaxAllowed: Int;
- ResInfo: TResourceInfo;
+ Pack: TResourcePackSize;
  Size, EstSize, MaxSize: UInt;
  Res: TResource;
  P: PResource;
@@ -525,7 +522,7 @@ for I := 0 to NumRes - 1 do
  begin
   MemSet(Res, SizeOf(Res), 0);
   StrLCopy(@Res.Name, MSG_ReadString, SizeOf(Res.Name) - 1);
-  Res.ResourceType := MSG_ReadByte;
+  PByte(@Res.ResourceType)^ := MSG_ReadByte;
   Res.Index := MSG_ReadShort;
   Res.DownloadSize := MSG_ReadLong;
   Byte(Res.Flags) := MSG_ReadByte;
@@ -568,24 +565,24 @@ if (J > 0) and (sv_allowupload.Value <> 0) then
  begin
   DPrint(['Verifying and uploading resources for "', PLChar(@C.NetName), '".']);
 
-  Size := COM_SizeOfResourceList(C.UploadList, ResInfo);
+  Size := SV_SizeOfResourceList(C.UploadList, Pack);
   if Size = 0 then
    DPrint(['No resources for "', PLChar(@C.NetName), '".'])
   else
    begin
     DPrint(['"', PLChar(@C.NetName), '" requested upload of ', J, ' resources with total size = ', RoundTo(Size / 1024, -3), ' KB, including:']);
-    if ResInfo.Info[RT_MODEL].Size > 0 then
-     DPrint([' -> Models: ', RoundTo(ResInfo.Info[RT_MODEL].Size / 1024, -3), ' KB.']);
-    if ResInfo.Info[RT_SOUND].Size > 0 then
-     DPrint([' -> Sounds: ', RoundTo(ResInfo.Info[RT_SOUND].Size / 1024, -3), ' KB.']);
-    if ResInfo.Info[RT_DECAL].Size > 0 then
-     DPrint([' -> Decals: ', RoundTo(ResInfo.Info[RT_DECAL].Size / 1024, -3), ' KB.']);
-    if ResInfo.Info[RT_SKIN].Size > 0 then
-     DPrint([' -> Skins: ', RoundTo(ResInfo.Info[RT_SKIN].Size / 1024, -3), ' KB.']);
-    if ResInfo.Info[RT_GENERIC].Size > 0 then
-     DPrint([' -> Generic: ', RoundTo(ResInfo.Info[RT_GENERIC].Size / 1024, -3), ' KB.']);
-    if ResInfo.Info[RT_EVENTSCRIPT].Size > 0 then
-     DPrint([' -> Event scripts: ', RoundTo(ResInfo.Info[RT_EVENTSCRIPT].Size / 1024, -3), ' KB.']);
+    if Pack[RT_MODEL] > 0 then
+     DPrint([' -> Models: ', RoundTo(Pack[RT_MODEL] / 1024, -3), ' KB.']);
+    if Pack[RT_SOUND] > 0 then
+     DPrint([' -> Sounds: ', RoundTo(Pack[RT_SOUND] / 1024, -3), ' KB.']);
+    if Pack[RT_DECAL] > 0 then
+     DPrint([' -> Decals: ', RoundTo(Pack[RT_DECAL] / 1024, -3), ' KB.']);
+    if Pack[RT_SKIN] > 0 then
+     DPrint([' -> Skins: ', RoundTo(Pack[RT_SKIN] / 1024, -3), ' KB.']);
+    if Pack[RT_GENERIC] > 0 then
+     DPrint([' -> Generic: ', RoundTo(Pack[RT_GENERIC] / 1024, -3), ' KB.']);
+    if Pack[RT_EVENTSCRIPT] > 0 then
+     DPrint([' -> Event scripts: ', RoundTo(Pack[RT_EVENTSCRIPT] / 1024, -3), ' KB.']);
     
     EstSize := SV_EstimateNeededResources(C);
     if EstSize > sv_uploadmax.Value * (1024 * 1024) then
@@ -624,7 +621,7 @@ var
  Buf: array[1..512] of LChar;
 begin
 Size := MSG_ReadShort;
-if MSG_ReadCount + Size > NETMSG_SIZE then // buffer overrun prevention
+if MSG_ReadCount + Size > MAX_NETBUFLEN then // buffer overrun prevention
  begin
   SV_DropClient(C, False, 'Bad consistency response.');
   Exit;
@@ -781,7 +778,6 @@ for I := 0 to SV.NumResources - 1 do
            if not R_GetStudioBounds(@Buf, MinS, MaxS) then
             begin
              Print(['Warning: Unable to get bounds for "', PLChar(@Buf), '".']);
-             Exclude(Res.Flags, RES_CHECKFILE);
              Continue;
             end;
 
@@ -801,22 +797,13 @@ for I := 0 to SV.NumResources - 1 do
         end;
        end;
 
-      Inc(Num);
       Include(Res.Flags, RES_CHECKFILE);
+      Inc(Num);
      end;
    end;
  end;
 
 SV.NumConsistency := Num;
-end;
-
-procedure SV_Send_FileTxferFailed(var C: TClient; S: PLChar);
-begin
-if (S <> nil) and (S^ > #0) then
- begin
-  MSG_WriteByte(C.Netchan.NetMessage, SVC_FILETXFERFAILED);
-  MSG_WriteString(C.Netchan.NetMessage, S);
- end;
 end;
 
 procedure SV_CheckDownloadCVars;
@@ -842,19 +829,11 @@ if (CmdSource = csClient) and (Cmd_Argc = 2) then
   S := Cmd_Argv(1);
   if S^ > #0 then
    begin
-    SV_CheckDownloadCVars;    
-    if (sv_allowdownload.Value = 0) or not IsSafeFile(S) then
-     SV_Send_FileTxferFailed(HostClient^, S)
-    else
-     if StrLComp(S, '!MD5', 4) <> 0 then
-      if (sv_send_resources.Value <> 0) and Netchan_CreateFileFragments(HostClient.Netchan, S) then
-       Netchan_FragSend(HostClient.Netchan)
-      else
-       SV_Send_FileTxferFailed(HostClient^, S)
-     else
-      if (sv_send_logos.Value = 0) or not MD5_IsValid(PLChar(UInt(S) + 4)) then
-       SV_Send_FileTxferFailed(HostClient^, S)
-      else
+    SV_CheckDownloadCVars;
+
+    if (sv_allowdownload.Value <> 0) and IsSafeFile(S) then
+     if StrLComp(S, '!MD5', 4) = 0 then
+      if (sv_send_logos.Value <> 0) and MD5_IsValid(PLChar(UInt(S) + 4)) then
        begin
         MemSet(Res, SizeOf(Res), 0);
         Buffer := nil;
@@ -865,18 +844,28 @@ if (CmdSource = csClient) and (Cmd_Argc = 2) then
          begin
           Netchan_CreateFileFragmentsFromBuffer(HostClient.Netchan, S, Buffer, Size);
           Netchan_FragSend(HostClient.Netchan);
-         end
-        else
-         SV_Send_FileTxferFailed(HostClient^, S);
+          Mem_Free(Buffer);
+          Exit;
+         end;
 
         if Buffer <> nil then
          Mem_Free(Buffer);
+       end
+      else
+     else
+      if (sv_send_resources.Value <> 0) and Netchan_CreateFileFragments(HostClient.Netchan, S) then
+       begin
+        Netchan_FragSend(HostClient.Netchan);
+        Exit;
        end;
+
+    MSG_WriteByte(HostClient.Netchan.NetMessage, SVC_FILETXFERFAILED);
+    MSG_WriteString(HostClient.Netchan.NetMessage, S);
    end;
  end;
 end;
 
-procedure SV_AddResource(ResType: UInt; FileName: PLChar; DownloadSize: UInt; Flags: TResourceFlags; Index: UInt);
+procedure SV_AddResource(ResType: TResourceType; FileName: PLChar; DownloadSize: UInt; Flags: TResourceFlags; Index: UInt);
 var
  P: PResource;
 begin
@@ -902,7 +891,7 @@ var
  P: PPrecachedEvent;
 begin
 SV.NumResources := 0;
-for I := 1 to MAX_GENERIC_ITEMS - 1 do
+for I := 1 to MAX_GENERICS - 1 do
  begin
   S := SV.PrecachedGeneric[I];
   if S = nil then
@@ -933,7 +922,7 @@ for I := 1 to MAX_SOUNDS - 1 do
       SV_AddResource(RT_SOUND, S, FS_SizeByName(@Buf), [], I)
      end
     else
-     SV_AddResource(RT_SOUND, S, 0, [], I)   
+     SV_AddResource(RT_SOUND, S, 0, [], I);
  end;
 
 for I := 1 to MAX_MODELS - 1 do
@@ -969,6 +958,7 @@ var
  Buf: array[1..MAX_MAP_NAME] of LChar;
  P, P2: Pointer;
  S: PLChar;
+ I: UInt;
 begin
 COM_StripExtension(@SV.MapFileName, @Buf);
 COM_DefaultExtension(@Buf, '.res');
@@ -979,37 +969,50 @@ if P <> nil then
  begin
   P2 := P;
 
-  DPrint(['Precaching from "', PLChar(@Buf), '".' + LineBreak +
+  DPrint([LineBreak + 'Precaching from resource file "', PLChar(@Buf), '".' + LineBreak +
           '----------------------------------']);
   SV.NumResGeneric := 0;
-  
+  I := 0;
+
   while True do
    begin
     P := COM_Parse(P);
     if (P = nil) or (COM_Token[Low(COM_Token)] = #0) then
      Break
     else
-     if not IsSafeFile(@COM_Token) then
-      Print(['Resource "', PLChar(@COM_Token), '" from "', PLChar(@Buf), '" cannot be precached.'])
-     else
-      begin
-       S := @SV.PrecachedResGeneric[SV.NumResGeneric];
-       StrLCopy(S, @COM_Token, SizeOf(SV.PrecachedResGeneric[0]) - 1);
-       PF_PrecacheGeneric(S);
-       DPrint(['  ', S]);
-       Inc(SV.NumResGeneric);
-      end;      
+     begin
+      Inc(I);
+      COM_FixSlashes(@COM_Token);
+      if not IsSafeFile(@COM_Token) then
+       DPrint(['  ', PLChar(@COM_Token), ': cannot be precached'])
+      else
+       if not FS_FileExists(@COM_Token) then
+        DPrint(['  ', PLChar(@COM_Token), ': missing from the server'])
+       else
+        begin
+         S := @SV.PrecachedResGeneric[SV.NumResGeneric];
+         StrLCopy(S, @COM_Token, SizeOf(SV.PrecachedResGeneric[0]) - 1);
+         PF_PrecacheGeneric(S);
+         DPrint(['  ', S]);
+         Inc(SV.NumResGeneric);
+        end;
+     end;
    end;
 
-  DPrint('----------------------------------');
+  DPrint(['----------------------------------' + LineBreak,
+          'Total: ', SV.NumResGeneric, ' resources out of ', I, '.' + LineBreak]);
   COM_FreeFile(P2);
- end;
+ end
+else
+ DPrint(['Resource file "', PLChar(@Buf), '" is missing, no additional resources would be precached.']);
 end;
 
 procedure SV_ProcessFile(var C: TClient; Name: PLChar);
 var
  MD5Hash: TMD5Hash;
  P, P2: PResource;
+ Cust: PCustomization;
+ LumpCount: UInt;
 begin
 if Name = nil then
  Print('SV_ProcessFile: Bad name pointer.')
@@ -1031,22 +1034,20 @@ else
         if P.DownloadSize <> C.Netchan.TempBufferSize then
          Print(['SV_ProcessFile: Downloaded ', C.Netchan.TempBufferSize, ' bytes for ', P.DownloadSize, ' byte file (size mismatch) on "', PLChar(@C.NetName), '".'])
         else
-         begin
-          if IsResourceInCustom(@C.Customization, @P.MD5Hash) then
-           begin
-            DPrint('Duplicate resource received and ignored.');
-            SV_RemoveFromResourceList(P^);
-            Mem_Free(P);
-            Exit;
-           end;
+         if IsResourceInCustom(@C.Customization, @P.MD5Hash) then
+          DPrint('Duplicate resource received and ignored.')
+         else
+          begin
+           HPAK_AddLump(True, 'custom.hpk', P, C.Netchan.TempBuffer, nil);
+           Exclude(P.Flags, RES_WASMISSING);
+           SV_MoveToOnHandList(C, P^);
+           if not SV_CreateCustomization(C.Customization, P^, -1, [FCUST_FROMHPAK, FCUST_WIPEDATA, FCUST_IGNOREINIT], Cust, LumpCount) then
+            Print(['Error parsing custom decal from "', PLChar(@C.NetName), '".']);
+           Exit;
+          end;
 
-          HPAK_AddLump(True, 'custom.hpk', P, C.Netchan.TempBuffer, nil);
-          Exclude(P.Flags, RES_WASMISSING);
-          SV_MoveToOnHandList(C, P^);
-          if not COM_CreateCustomization(C.Customization, P^, -1, [FCUST_FROMHPAK, FCUST_WIPEDATA, FCUST_IGNOREINIT], PCustomization(nil^), PUInt32(nil)^) then
-           Print(['Error parsing custom decal from "', PLChar(@C.NetName), '".']);
-         end;
-
+        SV_RemoveFromResourceList(P^);
+        Mem_Free(P);
         Exit;
        end;
 

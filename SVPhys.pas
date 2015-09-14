@@ -47,7 +47,7 @@ var
  sv_skyvec_y: TCVar = (Name: 'sv_skyvec_y'; Data: '0');
  sv_skyvec_z: TCVar = (Name: 'sv_skyvec_z'; Data: '0');
 
- sv_rollangle: TCVar = (Name: 'sv_rollangle'; Data: '2');
+ sv_rollangle: TCVar = (Name: 'sv_rollangle'; Data: '0');
  sv_rollspeed: TCVar = (Name: 'sv_rollspeed'; Data: '200');
 
 type
@@ -60,7 +60,7 @@ var
  
 implementation
 
-uses Common, Console, Edict, GameLib, Host, MathLib, Model, Server, SVMove, SVSend, SVWorld, SysMain;
+uses Common, Console, Edict, GameLib, Host, MathLib, Model, SVMain, SVMove, SVSend, SVWorld, SysMain;
 
 procedure SV_CheckVelocity(var E: TEdict);
 const
@@ -420,12 +420,13 @@ for I := 1 to SV.NumEdicts - 1 do
   if P.V.MoveType <> MOVETYPE_WALK then
    P.V.Flags := P.V.Flags and not FL_ONGROUND;
 
+  if NumMoved >= SV.MaxEdicts then
+   Sys_Error('SV_PushMove: Out of edicts in simulator.');
+
   EntOrig := P.V.Origin;
   MovedFrom[NumMoved] := P.V.Origin;
   MovedEdict[NumMoved] := P;
-  Inc(NumMoved);  
-  if NumMoved >= SV.MaxEdicts then
-   Sys_Error('SV_PushMove: Out of edicts in simulator.');
+  Inc(NumMoved);
 
   Solid := E.V.Solid;
   E.V.Solid := SOLID_NOT;
@@ -513,11 +514,12 @@ for I := 1 to SV.NumEdicts - 1 do
    P.V.Flags := P.V.Flags and not FL_ONGROUND;
 
   EntOrig := P.V.Origin;
+  
+  if NumMoved >= SV.MaxEdicts then
+   Sys_Error('SV_PushRotate: Out of edicts in simulator.');
   MovedFrom[NumMoved] := P.V.Origin;
   MovedEdict[NumMoved] := P;
   Inc(NumMoved);
-  if NumMoved >= SV.MaxEdicts then
-   Sys_Error('SV_PushRotate: Out of edicts in simulator.');
 
   if P.V.MoveType = MOVETYPE_PUSHSTEP then
    for J := 0 to 2 do
@@ -781,8 +783,10 @@ else
  if (C > CONTENTS_WATER) or (C < CONTENTS_CURRENT_DOWN) then
   begin
    if E.V.WaterType <> CONTENTS_EMPTY then
-    SV_StartSound(False, E, CHAN_AUTO, 'player/pl_wade2.wav', 255, 1, 0, PITCH_NORM);
-   E.V.WaterType := CONTENTS_EMPTY;
+    begin
+     SV_StartSound(False, E, CHAN_AUTO, 'player/pl_wade2.wav', 255, 1, 0, PITCH_NORM);
+     E.V.WaterType := CONTENTS_EMPTY;
+    end;
    E.V.WaterLevel := 0;
   end
  else
@@ -1141,11 +1145,13 @@ function SV_Trace_Toss(out Trace: TTrace; const E: TEdict; IgnoreEnt: PEdict): P
 var
  SaveFrameTime: Double;
  TempEnt: TEdict;
+ I: UInt;
  V: TVec3;
 begin
 SaveFrameTime := HostFrameTime;
 HostFrameTime := 0.05;
 Move(E, TempEnt, SizeOf(TempEnt));
+I := 0;
 
 repeat
  SV_CheckVelocity(TempEnt);
@@ -1155,7 +1161,8 @@ repeat
  VectorAdd(V, TempEnt.V.Origin, V);
  SV_Move(Trace, TempEnt.V.Origin, TempEnt.V.MinS, TempEnt.V.MaxS, V, MOVE_NORMAL, @TempEnt, False);
  TempEnt.V.Origin := Trace.EndPos;
-until (Trace.Ent <> nil) and (Trace.Ent <> IgnoreEnt);
+ Inc(I);
+until ((Trace.Ent <> nil) and (Trace.Ent <> IgnoreEnt)) or (I >= 5000);
 
 HostFrameTime := SaveFrameTime;
 Result := @Trace;

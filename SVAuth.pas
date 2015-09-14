@@ -30,7 +30,7 @@ else
   if NET_IsReservedAdr(C.Netchan.Addr) then
    Result := 'STEAM_ID_LAN'
   else
-   Result := 'STEAM_0:0:12345';
+   Result := 'STEAM_0:0:1';
 end;
 
 end.

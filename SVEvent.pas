@@ -19,7 +19,7 @@ procedure SV_ClearClientEvents(var C: TClient);
 
 implementation
 
-uses Common, Console, Delta, Edict, Host, MathLib, Memory, MsgBuf, Network, Server, SVDelta, SVMove, SVSend;
+uses Common, Console, Delta, Edict, Host, MathLib, Memory, MsgBuf, Network, SVDelta, SVMain, SVMove, SVSend;
 
 procedure EV_PlayReliableEvent(var C: TClient; Index: Int; EventIndex: UInt16; Delay: Single; const Event: TEvent);
 var
@@ -149,13 +149,10 @@ else
       for J := 0 to MAX_EVENT_QUEUE - 1 do
        begin
         CE := @C.Events[J];
-        if (CE.Index = EventIndex) and (CE.EntityIndex = EntityNum) then
+        if (CE.Index = EventIndex) and (EntityNum <> -1) and (CE.EntityIndex = EntityNum) then
          begin
           CE.PacketIndex := -1;
-          if @E <> nil then
-           CE.EntityIndex := EntityNum
-          else
-           CE.EntityIndex := -1;
+          CE.EntityIndex := EntityNum;
           CE.FireTime := Delay;
           Move(Event, CE.Args, SizeOf(CE.Args));
           B := True;
@@ -226,7 +223,7 @@ else
          Host_Error(['EV_Precache: File "', PLChar(@Buf), '" is missing from server.']);
 
         E.Index := I;
-        E.Name := Name;
+        E.Name := Hunk_StrDup(Name);
         E.Size := Size;
         E.Data := P;
         Result := I;
@@ -260,14 +257,11 @@ for I := 1 to MAX_EVENTS - 1 do
   if E.Name = nil then
    Exit
   else
-   begin
-    E.Name := nil;
-    if E.Data <> nil then
-     begin
-      COM_FreeFile(E.Data);
-      E.Data := nil;
-     end;
-   end;
+   if E.Data <> nil then
+    begin
+     COM_FreeFile(E.Data);
+     E.Data := nil;
+    end;
  end;
 end;
 
@@ -278,8 +272,6 @@ var
  I, J, K: Int;
  E: PEventInfo;
 begin
-MemSet(OS, SizeOf(OS), 0);
-
 Count := 0;
 for I := 0 to MAX_EVENT_QUEUE - 1 do
  begin
@@ -311,17 +303,16 @@ for I := 0 to MAX_EVENT_QUEUE - 1 do
       if (E.Args.Flags and FEVENT_ANGLES) = 0 then
        E.Args.Angles := Vec3Origin;
      end;
-   end
-  else
-   begin
-    E.PacketIndex := -1;
-    E.EntityIndex := -1;
    end;
  end;
 
-if Count > 31 then
- Count := 31;
+if Count = 0 then
+ Exit
+else
+ if Count > 31 then
+  Count := 31;
 
+MemSet(OS, SizeOf(OS), 0);
 MSG_WriteByte(SB, SVC_EVENT);
 MSG_StartBitWriting(SB);
 MSG_WriteBits(Count, 5);
@@ -330,42 +321,46 @@ K := 0;
 for I := 0 to MAX_EVENT_QUEUE - 1 do
  begin
   E := @C.Events[I];
-  if E.Index > 0 then
+  if E.Index = 0 then
    begin
-    MSG_WriteBits(E.Index, 10);
-
-    if E.PacketIndex = -1 then
-     MSG_WriteBits(0, 1)
-    else
-     begin
-      MSG_WriteBits(1, 1);
-      MSG_WriteBits(E.PacketIndex, 11);
-
-      if CompareMem(@OS, @E.Args, SizeOf(E.Args)) then
-       MSG_WriteBits(0, 1)
-      else
-       begin
-        MSG_WriteBits(1, 1);
-        Delta_WriteDelta(@OS, @E.Args, True, EventDelta^, nil);
-       end;
-     end;
-
-    if E.FireTime = 0 then
-     MSG_WriteBits(0, 1)
-    else
-     begin
-      MSG_WriteBits(1, 1);
-      MSG_WriteBits(Trunc(E.FireTime * 100), 16);
-     end;
-
-    E.Index := 0;
     E.PacketIndex := -1;
     E.EntityIndex := -1;
+   end
+  else
+   if UInt(K) < Count then
+    begin
+     MSG_WriteBits(E.Index, 10);
 
-    Inc(K);
-    if UInt(K) >= Count then
-     Break;
-   end;
+     if E.PacketIndex = -1 then
+      MSG_WriteBits(0, 1)
+     else
+      begin
+       MSG_WriteBits(1, 1);
+       MSG_WriteBits(E.PacketIndex, 11);
+
+       if CompareMem(@OS, @E.Args, SizeOf(E.Args)) then
+        MSG_WriteBits(0, 1)
+       else
+        begin
+         MSG_WriteBits(1, 1);
+         Delta_WriteDelta(@OS, @E.Args, True, EventDelta^, nil);
+        end;
+      end;
+
+     if E.FireTime = 0 then
+      MSG_WriteBits(0, 1)
+     else
+      begin
+       MSG_WriteBits(1, 1);
+       MSG_WriteBits(Trunc(E.FireTime * 100), 16);
+      end;
+
+     E.Index := 0;
+     E.PacketIndex := -1;
+     E.EntityIndex := -1;
+
+     Inc(K);
+    end;
  end;
 
 MSG_EndBitWriting;

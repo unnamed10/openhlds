@@ -8,9 +8,10 @@ uses SysUtils, Default, SDK;
 
 function SV_CountPlayers: UInt;
 function SV_CountProxies: UInt;
-function SV_GetFakeClientCount: UInt;
+function SV_CountFakeClients: UInt;
 function SV_CalcPing(const C: TClient): UInt;
 
+procedure SV_InitClient(var C: TClient);
 procedure SV_ClearClient(var C: TClient);
 procedure SV_ClearClients;
 
@@ -28,7 +29,6 @@ procedure SV_SendBan;
 
 function SV_FilterPlayerName(Name: PLChar; IgnoreClient: Int = -1): Boolean;
 
-procedure SV_ClearFrames(var CF: TClientFrameArrayPtr);
 procedure SV_ExtractFromUserInfo(var C: TClient);
 
 procedure SV_FullClientUpdate(const C: TClient; var SB: TSizeBuf);
@@ -45,20 +45,20 @@ procedure SV_CmdPrint(const Msg: array of const); overload;
 procedure SV_WriteSpawn(var C: TClient; var SB: TSizeBuf);
 procedure SV_WriteVoiceCodec(var SB: TSizeBuf);
 
-procedure SV_SendUserReg(var SB: TSizeBuf);
 procedure SV_SendServerInfo(var SB: TSizeBuf; var C: TClient);
 procedure SV_SendResources(var SB: TSizeBuf);
 procedure SV_BuildReconnect(var SB: TSizeBuf);
 
 function SV_IsPlayerIndex(I: UInt): Boolean;
 
-procedure SV_AllocClientFrames;
-procedure SV_ClearClientFrames;
 procedure SV_ClearClientStates;
 procedure SV_InactivateClients;
 
 procedure SV_ClearPacketEntities(var Frame: TClientFrame; ForceFree: Boolean);
 procedure SV_AllocPacketEntities(var Frame: TClientFrame; NumEnts: UInt);
+procedure SV_ClearFrames(var C: TClient);
+procedure SV_AllocFrames(var C: TClient);
+procedure SV_ClearClientFrames;
 
 procedure SV_SetMaxClients;
 
@@ -83,12 +83,12 @@ var
  sv_defaultplayername: TCVar = (Name: 'sv_defaultplayername'; Data: 'unnamed');
  sv_use2asnameprefix: TCVar = (Name: 'sv_use2asnameprefix'; Data: '0');
 
- sv_defaultupdaterate: TCVar = (Name: 'sv_defaultupdaterate'; Data: '30');
- sv_maxupdaterate: TCVar = (Name: 'sv_maxupdaterate'; Data: '60'; Flags: [FCVAR_SERVER]);
+ sv_defaultupdaterate: TCVar = (Name: 'sv_defaultupdaterate'; Data: '45');
+ sv_maxupdaterate: TCVar = (Name: 'sv_maxupdaterate'; Data: '90'; Flags: [FCVAR_SERVER]);
  sv_minupdaterate: TCVar = (Name: 'sv_minupdaterate'; Data: '10'; Flags: [FCVAR_SERVER]);
 
  sv_defaultrate: TCVar = (Name: 'sv_defaultrate'; Data: '10000');
- sv_maxrate: TCVar = (Name: 'sv_maxrate'; Data: '20000'; Flags: [FCVAR_SERVER]);
+ sv_maxrate: TCVar = (Name: 'sv_maxrate'; Data: '25000'; Flags: [FCVAR_SERVER]);
  sv_minrate: TCVar = (Name: 'sv_minrate'; Data: '3500'; Flags: [FCVAR_SERVER]);
 
  sv_failuretime: TCVar = (Name: 'sv_failuretime'; Data: '0.5');
@@ -108,7 +108,7 @@ var
 
 implementation
 
-uses Common, Console, Delta, Edict, Encode, GameLib, Info, Host, Memory, MsgBuf, Network, PMove, Resource, Server, SVAuth, SVDelta, SVEdict, SVEvent, SVMove, SVPacket, SVSend, SysArgs, SysMain;
+uses Common, Console, Delta, Edict, Encode, GameLib, Info, Host, Memory, MsgBuf, Network, PMove, Resource, SVMain, SVAuth, SVDelta, SVEdict, SVEvent, SVMove, SVPacket, SVSend, SysArgs, SysMain;
 
 const
  CLCommands: array[1..19] of PLChar =
@@ -125,7 +125,7 @@ const
    (Index: 6; Name: 'clc_tmove'; Func: nil),
    (Index: 7; Name: 'clc_fileconsistency'; Func: SV_ParseConsistencyResponse),
    (Index: 8; Name: 'clc_voicedata'; Func: SV_ParseVoiceData),
-   (Index: 9; Name: 'clc_hltv'; Func: SV_IgnoreHLTV),
+   (Index: 9; Name: 'clc_hltv'; Func: nil),
    (Index: 10; Name: 'clc_cvarvalue'; Func: SV_ParseCVarValue),
    (Index: 11; Name: 'clc_cvarvalue2'; Func: SV_ParseCVarValue2));
  
@@ -157,7 +157,7 @@ for I := 0 to SVS.MaxClients - 1 do
  end;
 end;
 
-function SV_GetFakeClientCount: UInt;
+function SV_CountFakeClients: UInt;
 var
  I: Int;
  C: PClient; 
@@ -171,9 +171,14 @@ for I := 0 to SVS.MaxClients - 1 do
  end;
 end;
 
+procedure SV_InitClient(var C: TClient);
+begin
+SV_SetResourceLists(C);
+end;
+
 procedure SV_ClearClient(var C: TClient);
 begin
-COM_ClearCustomizationList(C.Customization);
+SV_ClearCustomizationList(C.Customization);
 SV_ClearResourceLists(C);
 SZ_Clear(C.UnreliableMessage);
 SV_ClearClientEvents(C);
@@ -230,7 +235,7 @@ C.NewCmdTime := 0;
 C.SpawnCmdTime := 0;
 C.FragSizeUpdated := False;
 
-SV_SetResourceLists(C);
+SV_InitClient(C);
 end;
 
 procedure SV_ClearClients;
@@ -241,11 +246,75 @@ for I := 0 to SVS.MaxClients - 1 do
  SV_ClearClient(SVS.Clients[I]);
 end;
 
+procedure SV_ClearPacketEntities(var Frame: TClientFrame; ForceFree: Boolean);
+begin
+if (Frame.Pack.Ents <> nil) and
+   ((sv_keepframes.Value = 0) or ForceFree or (Frame.Pack.EntLimit < MAX_PACKET_ENTITIES)) then
+ Mem_FreeAndNil(Frame.Pack.Ents);
+
+Frame.Pack.NumEnts := 0;
+end;
+
+procedure SV_AllocPacketEntities(var Frame: TClientFrame; NumEnts: UInt);
+begin
+if sv_keepframes.Value <> 0 then
+ begin
+  if (Frame.Pack.Ents <> nil) and (Frame.Pack.EntLimit < MAX_PACKET_ENTITIES) then
+   Frame.Pack.Ents := Mem_ReAlloc(Frame.Pack.Ents, SizeOf(TEntityState) * MAX_PACKET_ENTITIES)
+  else
+   if Frame.Pack.Ents = nil then
+    Frame.Pack.Ents := Mem_Alloc(SizeOf(TEntityState) * MAX_PACKET_ENTITIES);
+
+  Frame.Pack.EntLimit := MAX_PACKET_ENTITIES;
+ end
+else
+ begin
+  if Frame.Pack.Ents <> nil then
+   Mem_Free(Frame.Pack.Ents);
+
+  Frame.Pack.Ents := Mem_Alloc(SizeOf(TEntityState) * Max(NumEnts, 1));
+  Frame.Pack.EntLimit := NumEnts;
+ end;
+
+if Frame.Pack.Ents = nil then
+ Sys_Error(['SV_AllocPacketEntities: Failed to allocate entity states.'])
+else
+ Frame.Pack.NumEnts := NumEnts;
+end;
+
+procedure SV_ClearFrames(var C: TClient);
+var
+ I: Int;
+begin
+if C.Frames <> nil then
+ begin
+  for I := 0 to SVUpdateBackup - 1 do
+   SV_ClearPacketEntities(C.Frames[I], True);
+
+  Mem_FreeAndNil(C.Frames);
+ end;
+end;
+
+procedure SV_AllocFrames(var C: TClient);
+begin
+C.Frames := Mem_ZeroAlloc(SizeOf(TClientFrame) * SVUpdateBackup);
+end;
+
+procedure SV_ClearClientFrames;
+var
+ I: Int;
+begin
+if SVS.Clients <> nil then
+ for I := 0 to SVS.MaxClientsLimit - 1 do
+  SV_ClearFrames(SVS.Clients[I]);
+end;
+
 procedure SV_DropClient(var C: TClient; SkipNotify: Boolean; Msg: PLChar);
 var
  S: PLChar;
  B: Boolean;
  Buf: array[1..512] of LChar;
+ SB: TSizeBuf;
  L: UInt;
  TimePlaying: Single;
 begin
@@ -263,9 +332,11 @@ if not SkipNotify then
   if (C.Entity <> nil) and C.Spawned then
    DLLFunctions.ClientDisconnect(C.Entity^);
 
-  Print(['Dropped "', PLChar(@C.NetName), '" from server.' + LineBreak +
-         'Reason: ', Msg]);
-
+  if Msg^ > #0 then
+   Print(['Dropped "', PLChar(@C.NetName), '" from server.' + LineBreak + 'Reason: ', Msg])
+  else
+   Print(['Dropped "', PLChar(@C.NetName), '" from server.']);
+  
   if B then
    PLChar(UInt(S) - 1)^ := #10;
 
@@ -281,14 +352,24 @@ if not SkipNotify then
 
 TimePlaying := RealTime - C.ConnectTime;
 if TimePlaying > 0 then
- begin
-  Inc(SVS.Stats.NumDrops);
-  SVS.Stats.AccumTimePlaying := SVS.Stats.AccumTimePlaying + TimePlaying;
- end;
+ SV_RecordPlayingTime(TimePlaying);
+
+if @C = HostClient then
+ MSG_ReadCount := NetMessage.CurrentSize;
 
 MemSet(C.UserInfo, SizeOf(C.UserInfo), 0);
-SV_FullClientUpdate(C, SV.ReliableDatagram);
+
+SB.Name := 'dropclient tempbuf';
+SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
+SB.Data := @Buf;
+SB.MaxSize := SizeOf(Buf);
+SB.CurrentSize := 0;
+
+SV_FullClientUpdate(C, SB);
+if SV.ReliableDatagram.CurrentSize + SB.CurrentSize < SV.ReliableDatagram.MaxSize then
+ SZ_Write(SV.ReliableDatagram, SB.Data, SB.CurrentSize);
 SV_ClearClient(C);
+SV_ClearFrames(C);
 C.ConnectTime := RealTime;
 end;
 
@@ -326,22 +407,12 @@ procedure SV_BroadcastPrint(Msg: PLChar);
 var
  I: Int;
  C: PClient;
- Buf: array[1..514] of LChar;
- S: PLChar;
 begin
-if StrLen(Msg) > SizeOf(Buf) - 2 then
+if StrLen(Msg) > 512 then
  Print('SV_BroadcastPrint: The message is too long, ignoring.')
 else
  begin
-  S := StrECopy(@Buf, Msg);
-  if (UInt(S) > UInt(@Buf)) and (PLChar(UInt(S) - 1)^ = #10) then
-   begin
-    PLChar(UInt(S) - 1)^ := #0;
-    DPrint(@Buf);
-    PLChar(UInt(S) - 1)^ := #10;
-   end
-  else
-   DPrint(@Buf);
+  DPrint(Msg, False);
   
   if SV.Active then
    for I := 0 to SVS.MaxClients - 1 do
@@ -350,7 +421,7 @@ else
      if (C.Active or C.Spawned or C.Connected) and not C.FakeClient then
       begin
        MSG_WriteByte(C.Netchan.NetMessage, SVC_PRINT);
-       MSG_WriteString(C.Netchan.NetMessage, @Buf);
+       MSG_WriteString(C.Netchan.NetMessage, Msg);
       end;
     end;
  end;
@@ -372,59 +443,6 @@ end;
 procedure SV_CmdPrint(const Msg: array of const);
 begin
 SV_CmdPrint(PLChar(StringFromVarRec(Msg)));
-end;
-
-procedure SV_ClearPacketEntities(var Frame: TClientFrame; ForceFree: Boolean);
-begin
-if (Frame.Pack.Ents <> nil) and
-   ((sv_keepframes.Value = 0) or ForceFree or (Frame.Pack.EntLimit < MAX_PACKET_ENTITIES)) then
- Mem_FreeAndNil(Frame.Pack.Ents);
-
-Frame.Pack.NumEnts := 0;
-end;
-
-procedure SV_AllocPacketEntities(var Frame: TClientFrame; NumEnts: UInt);
-begin
-if sv_keepframes.Value <> 0 then
- begin
-  if (Frame.Pack.Ents <> nil) and (Frame.Pack.EntLimit < MAX_PACKET_ENTITIES) then
-   Frame.Pack.Ents := Mem_ReAlloc(Frame.Pack.Ents, SizeOf(TEntityState) * MAX_PACKET_ENTITIES)
-  else
-   if Frame.Pack.Ents = nil then
-    Frame.Pack.Ents := Mem_Alloc(SizeOf(TEntityState) * MAX_PACKET_ENTITIES);
-
-  Frame.Pack.EntLimit := MAX_PACKET_ENTITIES;
- end
-else
- begin
-  if Frame.Pack.Ents <> nil then
-   Mem_Free(Frame.Pack.Ents);
-
-  Frame.Pack.Ents := Mem_Alloc(SizeOf(TEntityState) * Max(NumEnts, 1));
-  Frame.Pack.EntLimit := NumEnts;
- end;
-
-if Frame.Pack.Ents = nil then
- Sys_Error(['SV_AllocPacketEntities: Failed to allocate ', NumEnts, ' bytes for ', Frame.Pack.EntLimit, ' entity states.'])
-else
- Frame.Pack.NumEnts := NumEnts;
-end;
-
-procedure SV_ClearFrames(var CF: TClientFrameArrayPtr);
-var
- I: Int;
-begin
-if (@CF <> nil) and (CF <> nil) then
- begin
-  for I := 0 to SVUpdateBackup - 1 do
-   begin
-    SV_ClearPacketEntities(CF[I], True);
-    CF[I].SentTime := 0;
-    CF[I].PingTime := -1;
-   end;
-  
-  Mem_FreeAndNil(CF);
- end;
 end;
 
 procedure SV_SkipUpdates;
@@ -725,13 +743,12 @@ begin
 SV_ClientPrint(HostClient^, PLChar(StringFromVarRec(Msg)), LineBreak);
 end;
 
-
 procedure SV_WriteClientDataToMessage(var C: TClient; var SB: TSizeBuf);
 var
  E: PEdict;
  Frame: PClientFrame;
  OS: Pointer;
- I: UInt;
+ I, Fields: UInt;
  NoDelta: Boolean;
  CD: TClientData;
  WD: TWeaponData;
@@ -799,11 +816,12 @@ if not C.HLTV then
       else
        OS := @C.Frames[SVUpdateMask and C.UpdateMask].WeaponData[I];
 
-      if Delta_CheckDelta(OS, @Frame.WeaponData[I], WeaponDelta^) <> 0 then
+      Fields := Delta_CheckDelta(OS, @Frame.WeaponData[I], WeaponDelta^);
+      if Fields > 0 then
        begin
         MSG_WriteBits(1, 1);
         MSG_WriteBits(I, 6); // <- ?
-        Delta_WriteDelta(OS, @Frame.WeaponData[I], True, WeaponDelta^, nil);
+        Delta_WriteMarkedDelta(OS, @Frame.WeaponData[I], True, WeaponDelta^, Fields, nil);
        end;
      end;
    end;
@@ -821,6 +839,8 @@ var
  SRD: TSaveRestoreData;
  Buf: array[1..MAX_PATH_A] of LChar;
 begin
+SZ_Clear(C.Netchan.NetMessage);
+SZ_Clear(C.UnreliableMessage);
 E := C.Entity;
 
 if SV.SavedGame then
@@ -849,9 +869,6 @@ else
   SV.State := SS_ACTIVE;
  end;
 
-SZ_Clear(C.Netchan.NetMessage);
-SZ_Clear(C.UnreliableMessage);
-
 MSG_WriteByte(SB, SVC_TIME);
 MSG_WriteFloat(SB, SV.Time);
 
@@ -868,7 +885,10 @@ for I := 0 to MAX_LIGHTSTYLES - 1 do
  begin
   MSG_WriteByte(SB, SVC_LIGHTSTYLE);
   MSG_WriteByte(SB, I);
-  MSG_WriteString(SB, SV.LightStyles[I]);
+  if SV.LightStyles[I] = nil then
+   MSG_WriteString(SB, EmptyString)
+  else
+   MSG_WriteString(SB, SV.LightStyles[I]);
  end;
 
 if not C.HLTV then
@@ -905,9 +925,7 @@ MSG_WriteByte(SB, 1);
 C.Active := True;
 C.Spawned := True;
 C.Connected := True;
-
 C.SendInfo := False;
-
 C.FirstCmd := 0;
 C.LastCmd := 0;
 C.NextCmd := 0;
@@ -928,21 +946,6 @@ MSG_WriteChar(NetMessage, S2C_PRINT);
 MSG_WriteString(NetMessage, 'You have been banned from this server.'#10);
 NET_SendPacket(NS_SERVER, NetMessage.CurrentSize, NetMessage.Data, NetFrom);
 SZ_Clear(NetMessage);
-end;
-
-procedure SV_SendUserReg(var SB: TSizeBuf);
-var
- P: PUserMsg;
-begin
-P := NewUserMsgs;
-while P <> nil do
- begin
-  MSG_WriteByte(SB, SVC_NEWUSERMSG);
-  MSG_WriteByte(SB, P.Index);
-  MSG_WriteByte(SB, P.Size);
-  MSG_WriteBuffer(SB, SizeOf(P.Name), @P.Name);
-  P := P.Prev;
- end;
 end;
 
 procedure SV_WriteMoveVarsToClient(var SB: TSizeBuf);
@@ -1024,17 +1027,13 @@ MSG_WriteString(SB, hostname.Data);
 MSG_WriteString(SB, @SV.MapFileName);
 
 P := COM_LoadFile(mapcyclefile.Data, FILE_ALLOC_MEMORY, @L);
-if P <> nil then
- begin
-  if (L > 0) and (L <= sv_mapcycle_length.Value) then
-   MSG_WriteString(SB, P)
-  else
-   MSG_WriteString(SB, 'mapcycle failure');
-
-  COM_FreeFile(P);
- end
+if (P <> nil) and (L > 0) then
+ MSG_WriteString(SB, P)
 else
  MSG_WriteString(SB, 'mapcycle failure');
+
+if P <> nil then
+ COM_FreeFile(P);
 
 MSG_WriteByte(SB, 0);
 
@@ -1081,7 +1080,7 @@ else
   for I := 0 to SV.NumResources - 1 do
    begin
     P := @SV.Resources[I];
-    if RES_CHECKFILE in P.Flags then
+    if (P <> nil) and (RES_CHECKFILE in P.Flags) then
      begin
       MSG_WriteBits(1, 1);
       if I - J >= 32 then
@@ -1125,7 +1124,7 @@ MSG_WriteBits(SV.NumResources, 12);
 for I := 0 to SV.NumResources - 1 do
  begin
   P := @SV.Resources[I];
-  MSG_WriteBits(P.ResourceType, 4);
+  MSG_WriteBits(Byte(P.ResourceType), 4);
   MSG_WriteBitString(@P.Name);
   MSG_WriteBits(P.Index, 12);
   MSG_WriteBits(P.DownloadSize, 24);
@@ -1146,26 +1145,6 @@ SV_SendConsistencyList;
 MSG_EndBitWriting;
 end;
 
-procedure SV_AllocClientFrames;
-var
- I: Int;
-begin
-for I := 0 to SVS.MaxClientsLimit - 1 do
- begin
-  SV_ClearFrames(SVS.Clients[I].Frames);
-  SVS.Clients[I].Frames := Mem_ZeroAlloc(SizeOf(TClientFrame) * SVUpdateBackup);
- end;
-end;
-
-procedure SV_ClearClientFrames;
-var
- I: Int;
-begin
-if SVS.Clients <> nil then
- for I := 0 to SVS.MaxClientsLimit - 1 do
-  SV_ClearFrames(SVS.Clients[I].Frames);
-end;
-
 procedure SV_ClearClientStates;
 var
  I: Int;
@@ -1174,8 +1153,10 @@ begin
 for I := 0 to SVS.MaxClients - 1 do
  begin
   C := @SVS.Clients[I];
-  COM_ClearCustomizationList(C.Customization);
+  SV_ClearCustomizationList(C.Customization);
   SV_ClearResourceLists(C^);
+  SV_SetResourceLists(C^);
+  // netchan clear?
  end;
 end;
 
@@ -1202,11 +1183,16 @@ for I := 0 to SVS.MaxClients - 1 do
      C.Connected := True;
      Netchan_Clear(C.Netchan);
      SZ_Clear(C.UnreliableMessage);
-     COM_ClearCustomizationList(C.Customization);
+     SV_ClearCustomizationList(C.Customization);
      MemSet(C.PhysInfo, SizeOf(C.PhysInfo), 0);
+     C.SendResTime := 0;
+     C.SendEntsTime := 0;
+     C.FullUpdateTime := 0;
+     C.NewCmdTime := 0;
+     C.SpawnCmdTime := 0;
     end
    else
-    SV_DropClient(C^, False, 'Dropping fakeclient on level change.');
+    SV_DropClient(C^, False, 'Dropping fakeclient on level change');
  end;
 end;
 
@@ -1218,7 +1204,7 @@ var
 begin
 Result := 0;
 
-if not C.FakeClient then
+if C.Connected and not C.FakeClient then
  begin
   Frames := SVUpdateBackup div 2;
   if Frames > 16 then
@@ -1243,8 +1229,11 @@ if not C.FakeClient then
    begin
     TotalPing := TotalPing / TotalFrames;
     if TotalPing > 0 then
-     Result := Trunc(TotalPing * 1000);
+     Result := Round(TotalPing * 1000);
    end;
+
+  if Result = 0 then
+   Result := 1;
  end;
 end;
 
@@ -1253,8 +1242,6 @@ var
  I: Int;
  S: PLChar;
 begin
-SV_ClearClientFrames;
-
 S := COM_ParmValueByName('-maxplayers');
 if (S <> nil) and (S^ > #0) then
  begin
@@ -1284,8 +1271,6 @@ if SVS.MaxClients <= 1 then
  CVar_DirectSet(deathmatch, '0')
 else
  CVar_DirectSet(deathmatch, '1');
-
-SV_AllocClientFrames;
 end;
 
 function SV_ValidateClientCommand(P: Pointer): Boolean;
@@ -1399,7 +1384,7 @@ var
 begin
 AlreadyMoved := False;
 Frame := @C.Frames[SVUpdateMask and C.Netchan.IncomingAcknowledged];
-Frame.PingTime := RealTime - Frame.SentTime - C.UpdateRate; // check
+Frame.PingTime := RealTime - Frame.SentTime - C.UpdateRate;
 if (Frame.SentTime = 0) or (RealTime - C.ConnectTime < 2) then
  Frame.PingTime := 0;
 
@@ -1466,7 +1451,7 @@ var
  I: Int;
  C: PClient;
  SB: TSizeBuf;
- SBData: array[1..4000] of Byte;
+ SBData: array[1..MAX_DATAGRAM] of Byte;
 begin
 SB.Name := 'Reliable tempbuffer';
 SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
@@ -1487,20 +1472,23 @@ for I := 0 to SVS.MaxClients - 1 do
       SV_ExtractFromUserInfo(C^);
       SV_FullClientUpdate(C^, SB);
 
-      if (SV.ReliableDatagram.CurrentSize + SB.CurrentSize < SV.ReliableDatagram.MaxSize) and not (FSB_OVERFLOWED in SB.AllowOverflow) then
-       begin
-        SZ_Write(SV.ReliableDatagram, SB.Data, SB.CurrentSize);
-        C.UpdateInfo := False;
-        C.UpdateInfoTime := RealTime + sv_updatetime.Value;
-       end
+      if FSB_OVERFLOWED in SB.AllowOverflow then
+       C.UpdateInfoTime := RealTime + sv_updatetime.Value
       else
-       C.UpdateInfoTime := RealTime + sv_updatetime.Value / (4 / 3); // 25% decrease if overflowed or was going to overflow
+       if SV.ReliableDatagram.CurrentSize + SB.CurrentSize < SV.ReliableDatagram.MaxSize then
+        begin
+         SZ_Write(SV.ReliableDatagram, SB.Data, SB.CurrentSize);
+         C.UpdateInfo := False;
+         C.UpdateInfoTime := RealTime + sv_updatetime.Value;
+        end
+       else
+        C.UpdateInfoTime := RealTime + sv_updatetime.Value / (4 / 3);
 
       SZ_Clear(SB);
      end;
 
     if (NewUserMsgs <> nil) and not C.FakeClient then
-     SV_SendUserReg(C.Netchan.NetMessage);
+     SV_SendUserReg(C.Netchan.NetMessage, NewUserMsgs);
    end;
  end;
 
@@ -1526,7 +1514,11 @@ for I := 0 to SVS.MaxClients - 1 do
     if SV.ReliableDatagram.CurrentSize + C.Netchan.NetMessage.CurrentSize < C.Netchan.NetMessage.MaxSize then
      SZ_Write(C.Netchan.NetMessage, SV.ReliableDatagram.Data, SV.ReliableDatagram.CurrentSize)
     else
-     Netchan_CreateFragments(C.Netchan, SV.ReliableDatagram);
+     begin
+      SZ_Clear(SB);
+      SZ_Write(SB, SV.ReliableDatagram.Data, SV.ReliableDatagram.CurrentSize);
+      Netchan_CreateFragments(C.Netchan, SB);
+     end;
 
     if SV.Datagram.CurrentSize + C.UnreliableMessage.CurrentSize < C.UnreliableMessage.MaxSize then
      SZ_Write(C.UnreliableMessage, SV.Datagram.Data, SV.Datagram.CurrentSize)
@@ -1572,7 +1564,7 @@ end;
 function SV_SendClientDatagram(var C: TClient): Boolean;
 var
  SB: TSizeBuf;
- SBData: array[1..4000] of Byte;
+ SBData: array[1..MAX_DATAGRAM] of Byte;
 begin
 SB.Name := 'Client Datagram';
 SB.AllowOverflow := [FSB_ALLOWOVERFLOW];
@@ -1585,18 +1577,16 @@ MSG_WriteFloat(SB, SV.Time);
 SV_WriteClientDataToMessage(C, SB);
 SV_WriteEntitiesToClient(C, SB);
 if FSB_OVERFLOWED in C.UnreliableMessage.AllowOverflow then
- Print(['Warning: Unreliable datagram overflowed for "', PLChar(@C.NetName), '".'])
+ DPrint(['Warning: Unreliable datagram overflowed for "', PLChar(@C.NetName), '".'])
 else
  SZ_Write(SB, C.UnreliableMessage.Data, C.UnreliableMessage.CurrentSize);
 SZ_Clear(C.UnreliableMessage);
 
 if FSB_OVERFLOWED in SB.AllowOverflow then
- begin
-  Print(['Warning: Message overflowed for "', PLChar(@C.NetName), '".']);
-  SZ_Clear(SB);
- end;
-
-Netchan_Transmit(C.Netchan, SB.CurrentSize, SB.Data);
+ DPrint(['Warning: Message overflowed for "', PLChar(@C.NetName), '".'])
+else
+ Netchan_Transmit(C.Netchan, SB.CurrentSize, SB.Data);
+ 
 Result := True;
 end;
 
@@ -1628,7 +1618,7 @@ for I := 0 to SVS.MaxClients - 1 do
        SZ_Clear(C.Netchan.NetMessage);
        SZ_Clear(C.UnreliableMessage);
        SV_BroadcastPrint(['"', PLChar(@C.NetName), '" overflowed.'#10]);
-       Print(['Warning: Reliable channel overflowed for "', PLChar(@C.NetName), '".']);
+       DPrint(['Warning: Reliable channel overflowed for "', PLChar(@C.NetName), '".']);
        SV_DropClient(C^, False, 'Reliable channel overflowed.');
        C.NeedUpdate := False;
        C.Netchan.ClearTime := 0;
